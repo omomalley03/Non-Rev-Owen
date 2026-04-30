@@ -1,0 +1,8 @@
+torch
+numpy
+scipy
+nlb-tools
+pynwb
+einops
+tqdm
+matplotlib
