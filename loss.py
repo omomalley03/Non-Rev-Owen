@@ -85,8 +85,3 @@ def loss_fn(F: torch.Tensor, lambda_bt: float = 5e-3, normalize_bt: bool = True)
     """
     F_hat = _batch_rms_normalize(F)
     return -non_reversibility_S(F_hat) + lambda_bt * barlow_twins_reg(F_hat, normalize=normalize_bt)
-
-if __name__=="__main__":
-    torch.manual_seed(42)
-    F = torch.rand((1,2,3))
-    print(F)

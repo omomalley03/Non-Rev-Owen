@@ -18,6 +18,7 @@ class Config:
     )
     bin_ms: int = 5                     # resampling bin width (ms)
     sigma_ms: float = 10.0              # Gaussian smoothing std (ms)
+    softnorm_method: str = "churchland"       # 'churchland', 'max', or 'none' (SCA-style per-neuron softnorm)
     # MC_Maze (Jenkins): trials are variable length (~2-4 s).  Each window is
     # aligned to align_field, taking pre_ms before and post_ms after, so
     # window_size = (pre_ms + post_ms) / bin_ms.
@@ -30,9 +31,9 @@ class Config:
     seed: int = 0
 
     # --- model ---
-    d: int = 8                       # embedding dimension (per snapshot)
+    d: int = 2                       # embedding dimension (per snapshot)
     hidden_dim: int = 256              # MLP hidden layer width
-    depth: int = 3                     # number of MLP layers
+    depth: int = 1                     # number of MLP layers (1 = pure linear, SCA-equivalent)
 
     # --- training ---
     batch_size: int = 256
@@ -64,8 +65,8 @@ class Config:
         os.makedirs(run_dir, exist_ok=True)
         fields = dataclasses.fields(self)
         groups = {
-            "data":     ["nwb_path", "bin_ms", "sigma_ms", "align_field",
-                         "pre_ms", "post_ms", "window_size",
+            "data":     ["nwb_path", "bin_ms", "sigma_ms", "softnorm_method",
+                         "align_field", "pre_ms", "post_ms", "window_size",
                          "window_strategy", "val_split", "seed"],
             "model":    ["d", "hidden_dim", "depth"],
             "training": ["batch_size", "epochs", "lr", "weight_decay", "lambda_bt"],

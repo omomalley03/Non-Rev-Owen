@@ -13,7 +13,7 @@ _TIME_COLS = [
 
 
 def load_mcmaze(nwb_path: str, bin_ms: int = 5):
-    """Load NLB MC_Maze NWB, resample to bin_ms, return spike array and trial info.
+    """Load NLB MC_Maze NWB, resample to bin_ms, return spikes + behaviour + trial info.
 
     Returns
     -------
@@ -27,6 +27,9 @@ def load_mcmaze(nwb_path: str, bin_ms: int = 5):
         the active target's position when available.
     time_index_s : np.ndarray
         Global time index in seconds for mapping trial times → bin indices.
+    hand_pos_raw : np.ndarray of shape (2, T_total), float32 — or None
+        Resampled hand_pos x/y aligned with `time_index_s`. NaNs filled with 0.
+        None if `hand_pos` isn't in the NWB (e.g. spikes-only file).
     """
     ds = NWBDataset(nwb_path)
 
@@ -81,12 +84,42 @@ def load_mcmaze(nwb_path: str, bin_ms: int = 5):
         delta = target_xy[idx] - cursor_xy[idx]
         trial_info["reach_angle"] = np.arctan2(delta[:, 1], delta[:, 0])
 
-    return spikes_raw, bin_width_s, trial_info, time_index_s
+    if "hand_pos" in ds.data.columns.get_level_values(0):
+        hand_xy = ds.data["hand_pos"][["x", "y"]].values
+        hand_xy = np.nan_to_num(hand_xy, nan=0.0)
+        hand_pos_raw = hand_xy.T.astype(np.float32)
+    else:
+        hand_pos_raw = None
+
+    return spikes_raw, bin_width_s, trial_info, time_index_s, hand_pos_raw
 
 
 def gaussian_smooth(X: np.ndarray, sigma_samples: float) -> np.ndarray:
     """Apply Gaussian smoothing independently along the time axis (last axis)."""
     return gaussian_filter1d(X, sigma=sigma_samples, axis=-1)
+
+
+def soft_normalize(X: np.ndarray, method: str = "churchland") -> np.ndarray:
+    """Per-neuron soft normalisation, matching SCA_project/utils.py:18-48.
+
+    X has shape (N, T_total). Returns the same shape with each neuron rescaled
+    so their dynamic ranges are comparable — preventing high-rate units from
+    dominating the loss when projecting into a low-d embedding.
+
+    method:
+      'churchland' — divide by (range + 5)
+      'max'        — divide by max(max, 0.1)
+      None or 'none' — no normalisation (returns X unchanged)
+    """
+    if method is None or method == "none":
+        return X
+    if method == "churchland":
+        rng = X.max(axis=1) - X.min(axis=1)
+        return X / (rng[:, None] + 5.0)
+    if method == "max":
+        m = np.maximum(X.max(axis=1), 0.1)
+        return X / m[:, None]
+    raise ValueError(f"unknown softnorm method: {method!r}")
 
 
 def make_windows(

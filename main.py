@@ -7,9 +7,10 @@ import numpy as np
 import torch
 
 from config import Config
-from data import load_mcmaze, gaussian_smooth, make_windows, train_val_split
+from data import load_mcmaze, gaussian_smooth, soft_normalize, make_windows, train_val_split
 from model import MLP
 from train import train
+from visualize import make_diagnostic_plots, _hand_windows_from_raw
 
 
 def set_seed(seed: int):
@@ -43,13 +44,19 @@ def main():
     set_seed(cfg.seed)
 
     print("Loading MC_Maze data …")
-    spikes_raw, bin_width_s, trial_info, time_index_s = load_mcmaze(cfg.nwb_path, cfg.bin_ms)
+    spikes_raw, bin_width_s, trial_info, time_index_s, hand_pos_raw = load_mcmaze(
+        cfg.nwb_path, cfg.bin_ms
+    )
     N = spikes_raw.shape[0]
     print(f"  Channels: {N}  |  Bin width: {cfg.bin_ms} ms  |  Trials: {len(trial_info)}")
 
     sigma_samples = round((cfg.sigma_ms * 1e-3) / bin_width_s)
     print(f"  Gaussian smoothing sigma: {cfg.sigma_ms} ms = {sigma_samples} bins")
     X_smooth = gaussian_smooth(spikes_raw, sigma_samples)
+
+    if cfg.softnorm_method and cfg.softnorm_method != "none":
+        print(f"  Soft-normalising per neuron (method={cfg.softnorm_method!r})")
+        X_smooth = soft_normalize(X_smooth, method=cfg.softnorm_method)
 
     print(f"Windowing ({cfg.window_strategy}, align={cfg.align_field}, "
           f"pre={cfg.pre_ms}ms, T={cfg.window_size}) …")
@@ -73,6 +80,17 @@ def main():
     history = train(model, train_ds, val_ds, cfg)
 
     print_summary(history, cfg)
+
+    print("\nGenerating diagnostic plots …")
+    hand_windows = _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s)
+    make_diagnostic_plots(
+        model=model,
+        val_ds=val_ds,
+        trial_info=trial_info,
+        cfg=cfg,
+        run_dir=run_dir,
+        hand_windows=hand_windows,
+    )
 
 
 if __name__ == "__main__":

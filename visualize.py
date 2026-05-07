@@ -470,27 +470,15 @@ def plot_embedding_norm_distribution(F_hat, out_path):
 
 # ── plot 0: condition-split diagnostic ───────────────────────────────────────
 
-def _load_hand_windows(cfg, trial_info, time_index_s, bin_width_s):
-    """Window hand_pos (x, y) using the same alignment as the spike windows.
+def _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s):
+    """Window hand_pos using the same alignment as the spike windows.
 
-    Returns (K_all, 2, T) or None if hand_pos isn't in the NWB.
+    Returns (K_all, 2, T) or None if hand_pos_raw is None.
     """
-    from nlb_tools.nwb_interface import NWBDataset
-    ds = NWBDataset(cfg.nwb_path)
-    try:
-        ds.resample(cfg.bin_ms)
-    except ValueError:
-        pass
-
-    if "hand_pos" not in ds.data.columns.get_level_values(0):
+    if hand_pos_raw is None:
         return None
-
-    hand_xy = ds.data["hand_pos"][["x", "y"]].values  # (T_total, 2)
-    hand_xy = np.nan_to_num(hand_xy, nan=0.0)
-    hand_arr = hand_xy.T.astype(np.float32)            # (2, T_total)
-
     return make_windows(
-        hand_arr, trial_info, time_index_s, bin_width_s,
+        hand_pos_raw, trial_info, time_index_s, bin_width_s,
         strategy=cfg.window_strategy, window_size=cfg.window_size,
         align_field=getattr(cfg, "align_field", "move_onset_time"),
         pre_ms=getattr(cfg, "pre_ms", 100),
@@ -564,76 +552,67 @@ def _resolve_run_dir(arg_run):
     return arg_run
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--run", default=None,
-                        help="Integer (1=most recent) or explicit path. Omit for most recent.")
-    parser.add_argument("--n_fwdrev", type=int, default=30,
-                        help="Trials shown in forward/reversed panel.")
-    parser.add_argument("--seed", type=int, default=42)
-    args = parser.parse_args()
-    rng = np.random.default_rng(args.seed)
+def make_diagnostic_plots(
+    model,
+    val_ds,
+    trial_info,
+    cfg: Config,
+    run_dir: str,
+    hand_windows=None,
+    n_fwdrev: int = 30,
+    rng=None,
+):
+    """Compute embeddings on val_ds and write all diagnostic PNGs to run_dir/outputs/.
 
-    run_dir = _resolve_run_dir(args.run)
-    print(f"Using run: {os.path.basename(run_dir)}")
+    Reusable from both visualize.py (post-hoc) and main.py (right after training).
+    Does not load any data; all heavy inputs come from caller.
 
-    ckpt_path = os.path.join(run_dir, "checkpoints", "best.pt")
+    Parameters
+    ----------
+    model         : trained MLP (any device; will be moved to CPU and put in eval())
+    val_ds        : torch Subset of the windows TensorDataset
+    trial_info    : full trial_info DataFrame (val_ds.indices selects from it)
+    cfg           : Config used to train the model
+    run_dir       : run directory; plots are written to {run_dir}/outputs/
+    hand_windows  : optional (K_all, 2, T) array; if given, plot 00 is generated
+    n_fwdrev      : trials to show in plot 06 (forward/reversed)
+    rng           : numpy Generator for the forward/reversed subsample
+    """
+    if rng is None:
+        rng = np.random.default_rng(42)
+
     out_dir = os.path.join(run_dir, "outputs")
     os.makedirs(out_dir, exist_ok=True)
-    if not os.path.exists(ckpt_path):
-        raise FileNotFoundError(f"No checkpoint at '{ckpt_path}'.")
 
-    # ── checkpoint + data ────────────────────────────────────────────────────
-    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-    cfg: Config = ckpt["config"]
-    print(f"Loaded checkpoint from epoch {ckpt['epoch']}")
-
-    print("Loading data…")
-    spikes_raw, bin_width_s, trial_info, time_index_s = load_mcmaze(cfg.nwb_path, cfg.bin_ms)
-    N = spikes_raw.shape[0]
-    sigma_samples = round((cfg.sigma_ms * 1e-3) / bin_width_s)
-    X_smooth = gaussian_smooth(spikes_raw, sigma_samples)
-    windows = make_windows(
-        X_smooth, trial_info, time_index_s, bin_width_s,
-        strategy=cfg.window_strategy, window_size=cfg.window_size,
-        align_field=getattr(cfg, "align_field", "move_onset_time"),
-        pre_ms=getattr(cfg, "pre_ms", 100),
-    )
-    _, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
     val_indices = list(val_ds.indices)
     trial_info_val = trial_info.iloc[val_indices].reset_index(drop=True)
     cond_groups, cond_colors = _get_condition_groups(trial_info_val)
 
-    # Condition-split sanity check using all trials' hand trajectories.
-    hand_windows = _load_hand_windows(cfg, trial_info, time_index_s, bin_width_s)
     if hand_windows is not None:
         plot_conditions_diagnostic(
             hand_windows, trial_info,
             out_path=os.path.join(out_dir, "00_conditions_diagnostic.png"),
         )
     else:
-        print("Skipping condition diagnostic: no hand_pos in NWB.")
+        print("Skipping condition diagnostic: no hand_pos available.")
+
+    # CPU is plenty for inference on a val set of a few hundred trials.
+    model = model.cpu().eval()
 
     loader = DataLoader(val_ds, batch_size=len(val_ds), shuffle=False)
     (val_tensor,) = next(iter(loader))
     val_np = val_tensor.numpy()
-    K = len(val_np)
+    K, N = val_np.shape[0], val_np.shape[1]
     n_per = float(np.mean([len(v) for v in cond_groups.values()]))
     print(f"Val set: {K} trials  |  N={N}  |  T={cfg.window_size}  |  "
           f"{len(cond_groups)} conditions ({n_per:.1f} trials/cond)")
 
-    # ── embed ────────────────────────────────────────────────────────────────
     print("Computing embeddings…")
-    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth)
-    model.load_state_dict(ckpt["model_state_dict"])
-    model.eval()
     with torch.no_grad():
         F_hat_t = model(val_tensor)
         s_ratio_val = compute_S_ratio(F_hat_t).item()
         F_hat = F_hat_t.numpy()
 
-    # ── phasor arrays ────────────────────────────────────────────────────────
     ch_var = val_np.var(axis=(0, 2))
     top2_ch = np.argsort(ch_var)[-2:][::-1]
     ch_a, ch_b = int(top2_ch[0]), int(top2_ch[1])
@@ -644,8 +623,7 @@ def main():
     pca_mean, pca_Vh2 = _fit_emb_pca(F_hat)
     phasors_emb = _apply_emb_pca(F_hat, pca_mean, pca_Vh2)
 
-    # forward vs reversed (subset for legibility)
-    idx_sub = rng.choice(K, size=min(args.n_fwdrev, K), replace=False)
+    idx_sub = rng.choice(K, size=min(n_fwdrev, K), replace=False)
     val_sub_rev = torch.flip(val_tensor[idx_sub], dims=[2])
     with torch.no_grad():
         F_rev_sub = model(val_sub_rev).numpy()
@@ -655,12 +633,10 @@ def main():
     areas_raw = all_signed_areas(phasors_raw)
     areas_emb = all_signed_areas(phasors_emb)
 
-    # variance captured by 2D embedding
     Z_emb = F_hat.transpose(0, 2, 1).reshape(-1, F_hat.shape[1])
     sv = np.linalg.svd(Z_emb - Z_emb.mean(axis=0), full_matrices=False, compute_uv=False)
     pct_top2 = 100.0 * (sv[:2] ** 2).sum() / (sv ** 2).sum()
 
-    # ── 10 separate plots ────────────────────────────────────────────────────
     _plot_time_coded(
         phasors_raw, cond_groups,
         title=f"Raw — condition-avg, time-coded  (ch {ch_a} vs ch {ch_b})",
@@ -707,12 +683,67 @@ def main():
         F_hat, out_path=os.path.join(out_dir, "10_embedding_norm_distribution.png"),
     )
 
-    # ── console summary ──────────────────────────────────────────────────────
     print(f"\nS_ratio (embedding, all val pairs): {s_ratio_val:.4f}")
     print(f"Signed area:  raw  μ={areas_raw.mean():+.4f}  σ={areas_raw.std():.4f}"
           f"  |μ|/σ = {abs(areas_raw.mean()) / (areas_raw.std() + 1e-12):.3f}")
     print(f"              emb  μ={areas_emb.mean():+.4f}  σ={areas_emb.std():.4f}"
           f"  |μ|/σ = {abs(areas_emb.mean()) / (areas_emb.std() + 1e-12):.3f}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--run", default=None,
+                        help="Integer (1=most recent) or explicit path. Omit for most recent.")
+    parser.add_argument("--n_fwdrev", type=int, default=30,
+                        help="Trials shown in forward/reversed panel.")
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+
+    run_dir = _resolve_run_dir(args.run)
+    print(f"Using run: {os.path.basename(run_dir)}")
+
+    ckpt_path = os.path.join(run_dir, "checkpoints", "best.pt")
+    if not os.path.exists(ckpt_path):
+        raise FileNotFoundError(f"No checkpoint at '{ckpt_path}'.")
+
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    cfg: Config = ckpt["config"]
+    print(f"Loaded checkpoint from epoch {ckpt['epoch']}")
+
+    print("Loading data…")
+    spikes_raw, bin_width_s, trial_info, time_index_s, hand_pos_raw = load_mcmaze(
+        cfg.nwb_path, cfg.bin_ms
+    )
+    N = spikes_raw.shape[0]
+    sigma_samples = round((cfg.sigma_ms * 1e-3) / bin_width_s)
+    X_smooth = gaussian_smooth(spikes_raw, sigma_samples)
+    softnorm = getattr(cfg, "softnorm_method", "none")
+    if softnorm and softnorm != "none":
+        from data import soft_normalize
+        X_smooth = soft_normalize(X_smooth, method=softnorm)
+    windows = make_windows(
+        X_smooth, trial_info, time_index_s, bin_width_s,
+        strategy=cfg.window_strategy, window_size=cfg.window_size,
+        align_field=getattr(cfg, "align_field", "move_onset_time"),
+        pre_ms=getattr(cfg, "pre_ms", 100),
+    )
+    _, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
+    hand_windows = _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s)
+
+    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth)
+    model.load_state_dict(ckpt["model_state_dict"])
+
+    make_diagnostic_plots(
+        model=model,
+        val_ds=val_ds,
+        trial_info=trial_info,
+        cfg=cfg,
+        run_dir=run_dir,
+        hand_windows=hand_windows,
+        n_fwdrev=args.n_fwdrev,
+        rng=np.random.default_rng(args.seed),
+    )
 
 
 if __name__ == "__main__":
