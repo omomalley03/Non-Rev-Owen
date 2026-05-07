@@ -13,28 +13,34 @@ def _fmt(x):
 class Config:
     # --- data ---
     nwb_path: str = (
-        "/Users/omomalley03/Documents/Dissertation/Data/000129/sub-Indy/"
-        "sub-Indy_desc-train_behavior+ecephys.nwb"
+        "/Users/omomalley03/Documents/Dissertation/Data/000128/sub-Jenkins/"
+        "sub-Jenkins_ses-full_desc-train_behavior+ecephys.nwb"
     )
     bin_ms: int = 5                     # resampling bin width (ms)
-    sigma_ms: float = 10.0             # Gaussian smoothing std (ms)
-    # All 1080 trials are exactly 120 bins (600 ms); each trial = one window.
-    window_size: int = 120             # timesteps per window (bins)
+    sigma_ms: float = 10.0              # Gaussian smoothing std (ms)
+    # MC_Maze (Jenkins): trials are variable length (~2-4 s).  Each window is
+    # aligned to align_field, taking pre_ms before and post_ms after, so
+    # window_size = (pre_ms + post_ms) / bin_ms.
+    align_field: str = "move_onset_time"
+    pre_ms: int = 100                   # ms before align_field
+    post_ms: int = 500                  # ms after align_field
+    window_size: int = 120              # = (pre_ms + post_ms) / bin_ms
     window_strategy: str = "trial_aligned"
-    val_split: float = 0.1
+    val_split: float = 0.1              # only used if dataset has no `split` column
     seed: int = 0
 
     # --- model ---
-    d: int = 10                       # embedding dimension (per snapshot)
+    d: int = 8                       # embedding dimension (per snapshot)
     hidden_dim: int = 256              # MLP hidden layer width
     depth: int = 3                     # number of MLP layers
 
     # --- training ---
-    batch_size: int = 64
+    batch_size: int = 256
     epochs: int = 50
-    lr: float = 1e-3
+    lr: float = 1e-2
     weight_decay: float = 1e-4
-    lambda_bt: float = 5e-9            # Barlow Twins covariance regularisation weight default 5e-3
+    lambda_bt: float = 1e-2            # Barlow Twins covariance regularisation weight default 5e-3
+    normalize_bt: bool = False         # whether to internally normalise before Barlow Twins term
 
     # --- LR scheduler (CosineAnnealingWarmRestarts) ---
     T_0: int = 10
@@ -58,7 +64,8 @@ class Config:
         os.makedirs(run_dir, exist_ok=True)
         fields = dataclasses.fields(self)
         groups = {
-            "data":     ["nwb_path", "bin_ms", "sigma_ms", "window_size",
+            "data":     ["nwb_path", "bin_ms", "sigma_ms", "align_field",
+                         "pre_ms", "post_ms", "window_size",
                          "window_strategy", "val_split", "seed"],
             "model":    ["d", "hidden_dim", "depth"],
             "training": ["batch_size", "epochs", "lr", "weight_decay", "lambda_bt"],

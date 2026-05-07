@@ -1,27 +1,25 @@
 """
 Visualise non-reversibility quality from a trained checkpoint.
 
-Produces two figures:
+Each diagnostic plot is saved as its own PNG in the run's `outputs/` dir:
 
-Figure 1 — SCA-style trajectory plots (outputs/visualize.png)
-  [0,0] Raw    — time-coloured (viridis), all K trials, top-2 variance channels
-  [0,1] Embed  — time-coloured (viridis), all K trials, top-2 PCA dims
-  [1,0] Raw    — trial-coded  (coolwarm), all K trials
-  [1,1] Embed  — trial-coded  (coolwarm), all K trials, S_ratio in title
-  [2,0] Signed-area histogram — raw vs embedding
-  [2,1] Forward vs time-reversed overlay — embedding space
-
-Figure 2 — Collapse diagnostics (outputs/collapse.png)
-  [0,0] PCA explained variance of d=128 embedding (dimensional collapse check)
-  [0,1] Covariance matrix heatmap (Barlow Twins target = identity)
-  [1,0] Between-trial vs within-trial variance ratio per timepoint (trial collapse check)
-  [1,1] Embedding norm distribution across trials
+  00_conditions_diagnostic.png     — per-condition mean hand trajectory (sanity check)
+  01_raw_time_coded.png            — raw, condition-avg, time-coded
+  02_embed_time_coded.png          — embedding, condition-avg, time-coded
+  03_raw_condition_hsv.png         — raw, condition-avg, HSV by reach angle
+  04_embed_condition_hsv.png       — embedding, condition-avg, HSV
+  05_signed_area_histogram.png     — shoelace area, raw vs embedding
+  06_forward_reversed.png          — f(X) vs f(time-reversed X)
+  07_pca_explained_variance.png    — embedding PCA cumvar
+  08_covariance_heatmap.png        — embedding correlation matrix
+  09_between_within_variance.png   — trial-discriminability over time
+  10_embedding_norm_distribution.png — ‖F_k‖_F histogram
 
 Usage
 -----
-    python visualize.py                        # uses checkpoints/best.pt
-    python visualize.py --ckpt path/to.pt      # custom checkpoint
-    python visualize.py --out outputs/vis.png  # custom output path
+    python visualize.py                   # most recent run
+    python visualize.py --run 2           # 2nd most recent run
+    python visualize.py --run runs/foo    # explicit path
 """
 
 import argparse
@@ -32,7 +30,6 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
 from torch.utils.data import DataLoader
 
@@ -49,30 +46,33 @@ def signed_area(x, y):
     return 0.5 * float(np.sum(x[:-1] * y[1:] - x[1:] * y[:-1]))
 
 
-def pca2(Z):
-    """Project (M, d) array onto its top-2 principal directions. Returns (M, 2)."""
-    Z_c = Z - Z.mean(axis=0)
-    _, _, Vh = np.linalg.svd(Z_c, full_matrices=False)
-    return Z_c @ Vh[:2].T
+def _fit_emb_pca(F_hat):
+    """Fit top-2 PCA on all (K*T, d) embedding snapshots.
+
+    Returns (mean, Vh2) so reversed embeddings can use the same axes.
+    """
+    K, d, T = F_hat.shape
+    Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
+    mean = Z.mean(axis=0)
+    _, _, Vh = np.linalg.svd(Z - mean, full_matrices=False)
+    return mean, Vh[:2]
 
 
-# ── phasor builders ───────────────────────────────────────────────────────────
+def _apply_emb_pca(F_sub, mean, Vh2):
+    """Project (K', d, T) embeddings onto precomputed top-2 PCA axes → (K', 2, T)."""
+    K, d, T = F_sub.shape
+    Z = F_sub.transpose(0, 2, 1).reshape(K * T, d)
+    proj = (Z - mean) @ Vh2.T
+    return proj.reshape(K, T, 2).transpose(0, 2, 1)
+
 
 def raw_phasors(windows, ch_a, ch_b):
-    """Z-score two channels → (K, 2, T)."""
+    """Z-score two channels per trial → (K, 2, T)."""
     x = windows[:, ch_a, :].astype(np.float32)
     y = windows[:, ch_b, :].astype(np.float32)
     x = (x - x.mean(-1, keepdims=True)) / (x.std(-1, keepdims=True) + 1e-6)
     y = (y - y.mean(-1, keepdims=True)) / (y.std(-1, keepdims=True) + 1e-6)
-    return np.stack([x, y], axis=1)   # (K, 2, T)
-
-
-def emb_phasors(F_hat):
-    """Global PCA on (K, d, T) embeddings → top-2 dims → (K, 2, T)."""
-    K, d, T = F_hat.shape
-    Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
-    Z2 = pca2(Z)
-    return Z2.reshape(K, T, 2).transpose(0, 2, 1)   # (K, 2, T)
+    return np.stack([x, y], axis=1)
 
 
 def all_signed_areas(phasors):
@@ -80,135 +80,253 @@ def all_signed_areas(phasors):
     return np.array([signed_area(p[0], p[1]) for p in phasors])
 
 
-# ── SCA-style plot helpers ────────────────────────────────────────────────────
+# ── condition grouping ───────────────────────────────────────────────────────
 
-def plot_2D(ax, phasors, title, xlabel="Dim 1", ylabel="Dim 2"):
-    """Replicate SCA utils.plot_2D: all K trials, time-coloured viridis.
+def _reach_angle_for_row(row):
+    """Return arctan2(y, x) of the active target, or NaN if unavailable."""
+    try:
+        tgt_pos = np.asarray(row["target_pos"])
+        act_idx = int(row["active_target"])
+        x, y = tgt_pos[act_idx]
+        return float(np.arctan2(y, x))
+    except Exception:
+        return float("nan")
 
-    Each segment is coloured by its position in time (early=dark, late=bright).
-    Matching the SCA implementation exactly.
+
+def _get_condition_groups(trial_info_val, n_bins: int = 8):
+    """Group val trials into conditions and assign each a colour.
+
+    Priority:
+      1. `(trial_type, trial_version)` — NLB MC_Maze canonical condition key.
+         Each (type, version) pair defines one maze layout. Coloured by mean
+         reach angle within the group via HSV.
+      2. `reach_angle` column — bin into `n_bins` directional bins (Indy/Sabes
+         continuous-reach data, or any dataset without trial_type).
+      3. `trial_type` alone — fallback if version is absent.
+      4. Per-trial fallback.
+
+    Returns
+    -------
+    groups : dict[hashable, list[int]]
+        condition key → list of row indices into trial_info_val.
+    colors : dict[hashable, RGBA tuple]
     """
-    K, _, T = phasors.shape
-    cmap = plt.get_cmap("viridis")
+    n = len(trial_info_val)
+    cols = trial_info_val.columns
 
-    for k in range(K):
-        x = phasors[k, 0, :]
-        y = phasors[k, 1, :]
+    # Priority 1: NLB MC_Maze (trial_type, trial_version)
+    if "trial_type" in cols and "trial_version" in cols:
+        groups: dict = {}
+        for i in range(n):
+            row = trial_info_val.iloc[i]
+            key = (int(row["trial_type"]), int(row["trial_version"]))
+            groups.setdefault(key, []).append(i)
+
+        colors = {}
+        for key, idx_list in groups.items():
+            angles = [_reach_angle_for_row(trial_info_val.iloc[i]) for i in idx_list]
+            angles = [a for a in angles if not np.isnan(a)]
+            if angles:
+                # circular mean
+                ang = float(np.arctan2(np.mean(np.sin(angles)), np.mean(np.cos(angles))))
+                colors[key] = plt.cm.hsv(ang / (2 * np.pi) + 0.5)
+            else:
+                colors[key] = plt.cm.hsv(hash(key) % 1000 / 1000.0)
+        return groups, colors
+
+    # Priority 2: continuous reach_angle
+    if "reach_angle" in cols:
+        angles = trial_info_val["reach_angle"].to_numpy(dtype=float)
+        edges = np.linspace(-np.pi, np.pi, n_bins + 1)
+        bin_idx = np.clip(np.digitize(angles, edges) - 1, 0, n_bins - 1)
+
+        groups = {}
+        for i, b in enumerate(bin_idx):
+            groups.setdefault(int(b), []).append(i)
+
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        colors = {b: plt.cm.hsv(centers[b] / (2 * np.pi) + 0.5)
+                  for b in groups.keys()}
+        return groups, colors
+
+    # Priority 3: trial_type alone
+    if "trial_type" in cols:
+        groups = {}
+        for i in range(n):
+            key = int(trial_info_val.iloc[i]["trial_type"])
+            groups.setdefault(key, []).append(i)
+        unique = sorted(groups.keys())
+        colors = {k: plt.cm.hsv(unique.index(k) / max(len(unique), 1))
+                  for k in unique}
+        return groups, colors
+
+    # Priority 4: per-trial
+    groups = {i: [i] for i in range(n)}
+    colors = {i: plt.cm.hsv(i / max(n, 1)) for i in range(n)}
+    return groups, colors
+
+
+# ── plot 1 / 2: condition-averaged, time-coded ───────────────────────────────
+
+def _plot_time_coded(phasors, groups, title, xlabel, ylabel, out_path,
+                     cmap_name="coolwarm"):
+    """One mean trajectory per condition, segments coloured by time bin.
+
+    Math
+    ----
+    For condition c:  μ^c[t] = (1/|c|) Σ_{k ∈ c} phasors[k, :, t]
+    Each line segment (μ^c[t], μ^c[t+1]) is coloured by t / (T-1).
+    """
+    fig, ax = plt.subplots(figsize=(6, 5))
+    cmap = plt.get_cmap(cmap_name)
+    T = phasors.shape[2]
+
+    for cond_key in sorted(groups.keys(), key=lambda k: str(k)):
+        idx_list = groups[cond_key]
+        mean_traj = phasors[idx_list].mean(axis=0)
+        x, y = mean_traj[0], mean_traj[1]
         for t in range(T - 1):
-            ax.plot(x[t:t+2], y[t:t+2], color=cmap(t / (T - 1)), lw=0.6, alpha=0.6)
+            ax.plot(x[t:t+2], y[t:t+2], color=cmap(t / (T - 1)),
+                    lw=1.1, alpha=0.85)
 
+    ax.axhline(0, color="k", lw=0.4, alpha=0.25)
+    ax.axvline(0, color="k", lw=0.4, alpha=0.25)
     ax.spines[["top", "right"]].set_visible(False)
-    ax.set_title(title, fontsize=9)
-    ax.set_xlabel(xlabel, fontsize=8)
-    ax.set_ylabel(ylabel, fontsize=8)
-    ax.tick_params(labelsize=7)
+    ax.set_title(title, fontsize=10)
+    ax.set_xlabel(xlabel, fontsize=9)
+    ax.set_ylabel(ylabel, fontsize=9)
+    ax.tick_params(labelsize=8)
+    ax.set_aspect("equal", adjustable="datalim")
 
-    # Colourbar
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(0, T - 1))
     sm.set_array([])
     plt.colorbar(sm, ax=ax, label="time (bins)", fraction=0.046, pad=0.04)
 
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
 
-def plot_2D_K_coded(ax, phasors, s_ratio_val, title, xlabel="Dim 1", ylabel="Dim 2"):
-    """Replicate SCA utils.plot_2D_K_coded: all K trials, trial-coded coolwarm.
 
-    Each trial gets a fixed colour from coolwarm so you can track individual
-    trajectories. S_ratio shown in title, matching SCA convention.
-    """
-    K, _, T = phasors.shape
-    cmap = plt.get_cmap("coolwarm", K)
+# ── plot 3 / 4: condition-averaged, HSV by reach angle ───────────────────────
 
-    for k in range(K):
-        x = phasors[k, 0, :]
-        y = phasors[k, 1, :]
-        color = cmap(k / (K - 1))
-        ax.plot(x, y, linestyle="-", marker=".", markersize=1.5,
-                linewidth=0.7, color=color, alpha=0.7)
+def _plot_condition_hsv(phasors, groups, colors, title, xlabel, ylabel, out_path):
+    """One mean trajectory per condition, single HSV colour per condition."""
+    fig, ax = plt.subplots(figsize=(6, 5))
 
+    for cond_key in sorted(groups.keys(), key=lambda k: str(k)):
+        idx_list = groups[cond_key]
+        mean_traj = phasors[idx_list].mean(axis=0)
+        color = colors[cond_key]
+        ax.plot(mean_traj[0], mean_traj[1], lw=1.4, color=color, alpha=0.9)
+        ax.scatter(mean_traj[0, 0], mean_traj[1, 0], color=color, s=25, zorder=5)
+
+    n_conds = len(groups)
+    n_per = float(np.mean([len(v) for v in groups.values()]))
     ax.spines[["top", "right"]].set_visible(False)
-    ax.set_title(f"{title}\nS_ratio = {s_ratio_val:.4f}", fontsize=9)
-    ax.set_xlabel(xlabel, fontsize=8)
-    ax.set_ylabel(ylabel, fontsize=8)
-    ax.tick_params(labelsize=7)
+    ax.set_title(f"{title}\n{n_conds} conditions  ({n_per:.1f} trials/cond avg)",
+                 fontsize=10)
+    ax.set_xlabel(xlabel, fontsize=9)
+    ax.set_ylabel(ylabel, fontsize=9)
+    ax.tick_params(labelsize=8)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
 
 
-def plot_area_histogram(ax, areas_raw, areas_emb):
-    """Signed-area distributions for raw vs embedding."""
+# ── plot 5: signed-area histogram ────────────────────────────────────────────
+
+def plot_signed_area_histogram(areas_raw, areas_emb, out_path):
+    """Distribution of shoelace signed area, raw vs embedding.
+
+    Math
+    ----
+    A_k = ½ Σ_{t=0}^{T-2} (x_k[t]·y_k[t+1] − x_k[t+1]·y_k[t])
+    Histogram across trials k. |μ_A|/σ_A > 1 ⇒ consistent net circulation.
+    """
+    fig, ax = plt.subplots(figsize=(7, 4))
     kw = dict(bins=30, alpha=0.55, density=True, edgecolor="none")
     ax.hist(areas_raw, color="steelblue",
-            label=f"raw  μ={areas_raw.mean():.3f}  σ={areas_raw.std():.3f}", **kw)
+            label=f"raw  μ={areas_raw.mean():+.3f}  σ={areas_raw.std():.3f}", **kw)
     ax.hist(areas_emb, color="darkorange",
-            label=f"emb  μ={areas_emb.mean():.3f}  σ={areas_emb.std():.3f}", **kw)
+            label=f"emb  μ={areas_emb.mean():+.3f}  σ={areas_emb.std():.3f}", **kw)
     ax.axvline(0, color="k", lw=0.8, ls=":")
-    ax.set_xlabel("Signed area (shoelace formula)", fontsize=8)
-    ax.set_ylabel("Density", fontsize=8)
-    ax.set_title("Signed-area distribution\n(non-zero mean → net circulation)", fontsize=9)
-    ax.legend(fontsize=7)
-    ax.tick_params(labelsize=7)
+    ax.set_xlabel("Signed area  A_k  (shoelace formula)", fontsize=9)
+    ax.set_ylabel("Density", fontsize=9)
+    ax.set_title("Signed-area distribution\n(non-zero mean → net circulation)",
+                 fontsize=10)
+    ax.legend(fontsize=8)
+    ax.tick_params(labelsize=8)
     ax.spines[["top", "right"]].set_visible(False)
 
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
 
-def plot_forward_reversed(ax, phasors, n_show, rng):
-    """Forward (solid blue) vs time-reversed (dashed red) overlay, n_show trials."""
-    idx = rng.choice(len(phasors), size=min(n_show, len(phasors)), replace=False)
-    for i in idx:
-        x_f, y_f = phasors[i, 0], phasors[i, 1]
-        ax.plot(x_f, y_f, color="steelblue", alpha=0.3, lw=0.7)
-        ax.plot(x_f[::-1], y_f[::-1], color="tomato", alpha=0.3, lw=0.7, ls="--")
+
+# ── plot 6: forward vs reversed embedding ────────────────────────────────────
+
+def plot_forward_reversed(phasors_fwd, phasors_rev, out_path):
+    """Embedding of forward input vs time-reversed input, on shared PCA axes.
+
+    Math
+    ----
+    F_k       = model(X_k)            (forward)
+    F_k^rev   = model(X_k[::-1])       (reverse along time axis t)
+    Both projected onto the *same* top-2 PCA axes (fit on forward set).
+    Distinct shapes ⇒ model encodes temporal asymmetry.
+    """
+    fig, ax = plt.subplots(figsize=(6, 5))
+    n = len(phasors_fwd)
+    for i in range(n):
+        ax.plot(phasors_fwd[i, 0], phasors_fwd[i, 1],
+                color="steelblue", alpha=0.35, lw=0.8)
+        ax.plot(phasors_rev[i, 0], phasors_rev[i, 1],
+                color="tomato", alpha=0.35, lw=0.8, ls="--")
 
     legend = [
-        Line2D([0], [0], color="steelblue", lw=1.4, label="forward"),
-        Line2D([0], [0], color="tomato",    lw=1.4, ls="--", label="time-reversed"),
+        Line2D([0], [0], color="steelblue", lw=1.4, label="forward  f(X_k)"),
+        Line2D([0], [0], color="tomato", lw=1.4, ls="--", label="reversed  f(X_k[::-1])"),
     ]
-    ax.legend(handles=legend, fontsize=7, loc="upper right")
-    ax.set_title("Embedding — forward vs time-reversed", fontsize=9)
-    ax.set_xlabel("PC 1", fontsize=8)
-    ax.set_ylabel("PC 2", fontsize=8)
-    ax.tick_params(labelsize=7)
+    ax.legend(handles=legend, fontsize=8, loc="upper right")
+    ax.set_title(
+        f"Embedding: f(X_k) vs f(time-reversed X_k)  [{n} trials]\n"
+        "(distinct shapes → temporal asymmetry encoded)",
+        fontsize=10,
+    )
+    ax.set_xlabel("PC 1", fontsize=9)
+    ax.set_ylabel("PC 2", fontsize=9)
+    ax.tick_params(labelsize=8)
     ax.set_aspect("equal", adjustable="datalim")
     ax.spines[["top", "right"]].set_visible(False)
 
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
 
-# ── collapse diagnostics ──────────────────────────────────────────────────────
 
-def plot_collapse_diagnostics(F_hat, out_path):
-    """Four-panel figure checking for dimensional and trial collapse.
+# ── plot 7: PCA explained variance ───────────────────────────────────────────
 
-    F_hat : (K, d, T) numpy array — raw MLP embeddings
+def plot_pca_explained_variance(F_hat, out_path):
+    """Cumulative PCA explained variance of the (K*T, d) embedding snapshots.
 
-    Panel [0,0] — PCA explained variance
-        Fit PCA on all (K*T, d) embedding snapshots. Plot cumulative explained
-        variance vs number of PCs. Healthy: gradual ramp. Collapsed: step
-        function where PC1 alone explains ~100%.
-
-    Panel [0,1] — Embedding covariance matrix
-        Normalise embeddings to zero mean / unit variance per dimension (same
-        as the Barlow Twins regulariser), then plot the (d, d) cross-correlation
-        matrix as a heatmap. Healthy: near-identity (diagonal, white off-diags).
-        Collapsed: large off-diagonal blocks (redundant dimensions).
-
-    Panel [1,0] — Between-trial vs within-trial variance ratio
-        At each timepoint t, compute:
-          between[t] = var of trial-mean embedding across trials     (signal)
-          within[t]  = mean of per-trial variance across time        (noise proxy)
-        Plot ratio between/(between+within) across time. Near 1 = trials are
-        distinct; near 0 = all trials look the same (trial collapse).
-
-    Panel [1,1] — Embedding norm distribution
-        Histogram of ‖F_k‖_F per trial. If all norms are identical the model
-        has found a trivial constant-magnitude solution.
+    Math
+    ----
+    Z ∈ R^(M×d) with M = K*T, rows = embedding snapshots.
+    Centred Z̄ = Z − mean.   Eigenvalues λ₁ ≥ … ≥ λ_d of (1/M) Z̄ᵀZ̄.
+    cumvar(j) = (Σ_{i≤j} λ_i) / (Σ_{i≤d} λ_i).
+    Step at PC1 ⇒ dimensional collapse.
     """
     from sklearn.decomposition import PCA
 
     K, d, T = F_hat.shape
-    # (K*T, d) — all snapshots flattened
     Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
 
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
-    fig.suptitle("Embedding collapse diagnostics", fontsize=11, fontweight="bold")
-
-    # ── [0,0] PCA explained variance ─────────────────────────────────────────
-    ax = axes[0, 0]
+    fig, ax = plt.subplots(figsize=(6, 4))
     pca = PCA(n_components=min(d, K * T))
     pca.fit(Z)
     cumvar = np.cumsum(pca.explained_variance_ratio_) * 100
@@ -218,82 +336,200 @@ def plot_collapse_diagnostics(F_hat, out_path):
     ax.axhline(99, color="darkorange", lw=0.8, ls="--", label="99%")
     n95 = int(np.searchsorted(cumvar, 95)) + 1
     n99 = int(np.searchsorted(cumvar, 99)) + 1
-    ax.set_xlabel("Number of PCs", fontsize=8)
-    ax.set_ylabel("Cumulative explained variance (%)", fontsize=8)
+    ax.set_xlabel("Number of PCs", fontsize=9)
+    ax.set_ylabel("Cumulative explained variance (%)", fontsize=9)
     ax.set_title(
-        f"PCA explained variance (d={d})\n"
-        f"95% in {n95} PCs,  99% in {n99} PCs",
-        fontsize=9,
+        f"PCA explained variance  (d={d})\n"
+        f"95 % in {n95} PCs,  99 % in {n99} PCs",
+        fontsize=10,
     )
-    ax.legend(fontsize=7)
-    ax.tick_params(labelsize=7)
+    ax.legend(fontsize=8)
+    ax.tick_params(labelsize=8)
     ax.spines[["top", "right"]].set_visible(False)
 
-    # ── [0,1] Covariance matrix heatmap ──────────────────────────────────────
-    ax = axes[0, 1]
-    Z_norm = Z - Z.mean(axis=0)
-    Z_norm = Z_norm / (Z_norm.std(axis=0) + 1e-6)
-    Cov = (Z_norm.T @ Z_norm) / Z_norm.shape[0]   # (d, d)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
 
-    # Show top-32 dims for readability if d is large
+
+# ── plot 8: covariance heatmap ───────────────────────────────────────────────
+
+def plot_covariance_heatmap(F_hat, out_path):
+    """Empirical correlation matrix of the d embedding dims.
+
+    Math
+    ----
+    Z̃_{m,i} = (Z_{m,i} − μ_i) / σ_i
+    Corr_{ij} = (1/M) Σ_m Z̃_{m,i} Z̃_{m,j}
+    Barlow-Twins target: Corr = I.  Off-diagonal mass ⇒ redundant dims.
+    """
+    K, d, T = F_hat.shape
+    Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
+    Z = Z - Z.mean(axis=0)
+    Z = Z / (Z.std(axis=0) + 1e-6)
+    Cov = (Z.T @ Z) / Z.shape[0]
+
     n_show = min(d, 32)
+    fig, ax = plt.subplots(figsize=(6, 5))
     im = ax.imshow(Cov[:n_show, :n_show], cmap="RdBu_r", vmin=-1, vmax=1,
                    interpolation="nearest", aspect="auto")
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     off_diag_mean = float(np.abs(Cov - np.eye(d)).mean())
     ax.set_title(
-        f"Embedding covariance (top {n_show} dims)\n"
-        f"mean |Cov − I| = {off_diag_mean:.4f}  (0 = identity)",
-        fontsize=9,
+        f"Embedding correlation  (top {n_show} of {d} dims)\n"
+        f"mean |Corr − I| = {off_diag_mean:.4f}  (0 = identity)",
+        fontsize=10,
     )
-    ax.set_xlabel("Embedding dim", fontsize=8)
-    ax.set_ylabel("Embedding dim", fontsize=8)
-    ax.tick_params(labelsize=7)
+    ax.set_xlabel("Embedding dim", fontsize=9)
+    ax.set_ylabel("Embedding dim", fontsize=9)
+    ax.tick_params(labelsize=8)
 
-    # ── [1,0] Between vs within trial variance ────────────────────────────────
-    ax = axes[1, 0]
-    # F_hat: (K, d, T) — compute per-timepoint stats across trials
-    trial_mean = F_hat.mean(axis=0, keepdims=True)          # (1, d, T)
-    between = ((F_hat - trial_mean) ** 2).mean(axis=(0, 1)) # (T,) — var across trials & dims
-    within  = F_hat.var(axis=2).mean(axis=(0, 1))           # scalar — mean temporal var
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
 
-    ratio = between / (between + within + 1e-8)             # (T,) ∈ [0, 1]
+
+# ── plot 9: between vs within trial variance ─────────────────────────────────
+
+def plot_between_within_variance(F_hat, out_path):
+    """Trial-discriminability ratio over time.
+
+    Math
+    ----
+    F̄[i,t] = (1/K) Σ_k F_k[i,t]
+    B(t)   = (1/Kd) Σ_{k,i} (F_k[i,t] − F̄[i,t])²        across-trial spread
+    W      = (1/Kd) Σ_{k,i} Var_t(F_k[i,:])              avg per-trial temporal var
+    r(t)   = B(t) / (B(t) + W)   ∈ [0, 1]
+    r → 1: trials distinct (signal).  r → 0: all trials identical (collapse).
+    """
+    T = F_hat.shape[2]
+    trial_mean = F_hat.mean(axis=0, keepdims=True)
+    between = ((F_hat - trial_mean) ** 2).mean(axis=(0, 1))
+    within = F_hat.var(axis=2).mean(axis=(0, 1))
+    ratio = between / (between + within + 1e-8)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
     t_axis = np.arange(T)
     ax.plot(t_axis, ratio, lw=1.2, color="steelblue")
     ax.axhline(ratio.mean(), color="tomato", lw=0.8, ls="--",
                label=f"mean = {ratio.mean():.3f}")
     ax.set_ylim(0, 1)
-    ax.set_xlabel("Time bin", fontsize=8)
-    ax.set_ylabel("Between / (Between + Within)", fontsize=8)
+    ax.set_xlabel("Time bin", fontsize=9)
+    ax.set_ylabel("B(t) / (B(t) + W)", fontsize=9)
     ax.set_title(
         "Trial discriminability over time\n"
-        "(1 = fully distinct trials,  0 = all trials identical)",
-        fontsize=9,
+        "(1 = fully distinct trials, 0 = all trials identical)",
+        fontsize=10,
     )
-    ax.legend(fontsize=7)
-    ax.tick_params(labelsize=7)
-    ax.spines[["top", "right"]].set_visible(False)
-
-    # ── [1,1] Embedding norm distribution ────────────────────────────────────
-    ax = axes[1, 1]
-    norms = np.linalg.norm(F_hat.reshape(K, -1), axis=1)   # (K,) Frobenius norm per trial
-    ax.hist(norms, bins=30, color="steelblue", alpha=0.8, edgecolor="none")
-    ax.axvline(norms.mean(), color="tomato", lw=1, ls="--",
-               label=f"mean = {norms.mean():.2f}")
-    ax.set_xlabel("‖F_k‖_F  (Frobenius norm per trial)", fontsize=8)
-    ax.set_ylabel("Count", fontsize=8)
-    cv = norms.std() / norms.mean()
-    ax.set_title(
-        f"Embedding norm distribution\n"
-        f"CV = {cv:.3f}  (0 = all trials identical magnitude)",
-        fontsize=9,
-    )
-    ax.legend(fontsize=7)
-    ax.tick_params(labelsize=7)
+    ax.legend(fontsize=8)
+    ax.tick_params(labelsize=8)
     ax.spines[["top", "right"]].set_visible(False)
 
     fig.tight_layout()
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
+# ── plot 10: embedding norm distribution ─────────────────────────────────────
+
+def plot_embedding_norm_distribution(F_hat, out_path):
+    """Distribution of per-trial Frobenius norms.
+
+    Math
+    ----
+    ‖F_k‖_F = √(Σ_{i,t} F_k[i,t]²),  CV = std/mean across k.
+    CV → 0 ⇒ trivial constant-magnitude solution (all trials same scale).
+    """
+    K = F_hat.shape[0]
+    norms = np.linalg.norm(F_hat.reshape(K, -1), axis=1)
+    cv = norms.std() / (norms.mean() + 1e-12)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.hist(norms, bins=30, color="steelblue", alpha=0.8, edgecolor="none")
+    ax.axvline(norms.mean(), color="tomato", lw=1, ls="--",
+               label=f"mean = {norms.mean():.2f}")
+    ax.set_xlabel("‖F_k‖_F", fontsize=9)
+    ax.set_ylabel("Count", fontsize=9)
+    ax.set_title(
+        f"Embedding norm distribution\n"
+        f"CV = {cv:.3f}  (0 = identical magnitudes)",
+        fontsize=10,
+    )
+    ax.legend(fontsize=8)
+    ax.tick_params(labelsize=8)
+    ax.spines[["top", "right"]].set_visible(False)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
+# ── plot 0: condition-split diagnostic ───────────────────────────────────────
+
+def _load_hand_windows(cfg, trial_info, time_index_s, bin_width_s):
+    """Window hand_pos (x, y) using the same alignment as the spike windows.
+
+    Returns (K_all, 2, T) or None if hand_pos isn't in the NWB.
+    """
+    from nlb_tools.nwb_interface import NWBDataset
+    ds = NWBDataset(cfg.nwb_path)
+    try:
+        ds.resample(cfg.bin_ms)
+    except ValueError:
+        pass
+
+    if "hand_pos" not in ds.data.columns.get_level_values(0):
+        return None
+
+    hand_xy = ds.data["hand_pos"][["x", "y"]].values  # (T_total, 2)
+    hand_xy = np.nan_to_num(hand_xy, nan=0.0)
+    hand_arr = hand_xy.T.astype(np.float32)            # (2, T_total)
+
+    return make_windows(
+        hand_arr, trial_info, time_index_s, bin_width_s,
+        strategy=cfg.window_strategy, window_size=cfg.window_size,
+        align_field=getattr(cfg, "align_field", "move_onset_time"),
+        pre_ms=getattr(cfg, "pre_ms", 100),
+    )
+
+
+def plot_conditions_diagnostic(hand_windows, trial_info, out_path):
+    """Sanity-check condition splitting using physical hand trajectories.
+
+    For each condition (using the same priority as `_get_condition_groups`,
+    over *all* trials — not just val), plot the trial-averaged hand path
+    coloured by the condition's HSV reach angle. Distinct curved reach paths
+    in different directions ⇒ conditions are splitting on a meaningful axis.
+    """
+    groups, colors = _get_condition_groups(trial_info)
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+    for cond_key in sorted(groups.keys(), key=lambda k: str(k)):
+        idx_list = groups[cond_key]
+        mean_hand = hand_windows[idx_list].mean(axis=0)   # (2, T)
+        color = colors[cond_key]
+        ax.plot(mean_hand[0], mean_hand[1], lw=0.9, color=color, alpha=0.85)
+        ax.scatter(mean_hand[0, 0], mean_hand[1, 0], color=color, s=18, zorder=5)
+
+    cond_sizes = [len(v) for v in groups.values()]
+    ax.set_title(
+        f"Condition-split diagnostic: trial-avg hand trajectories\n"
+        f"{len(groups)} conditions  |  trials/cond: "
+        f"min={min(cond_sizes)}, median={int(np.median(cond_sizes))}, "
+        f"max={max(cond_sizes)}",
+        fontsize=10,
+    )
+    ax.set_xlabel("hand_x", fontsize=9)
+    ax.set_ylabel("hand_y", fontsize=9)
+    ax.set_aspect("equal", adjustable="datalim")
+    ax.tick_params(labelsize=8)
+    ax.spines[["top", "right"]].set_visible(False)
+
+    fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {out_path}")
@@ -301,65 +537,58 @@ def plot_collapse_diagnostics(F_hat, out_path):
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--run", default=None,
-                        help="Run to visualise: an integer (1 = most recent) or "
-                             "a full path (e.g. runs/20260429_143022_d10_...). "
-                             "Omit to use the most recent run.")
-    parser.add_argument("--n_fwdrev", type=int, default=30,
-                        help="Trials to show in forward/reversed panel")
-    parser.add_argument("--seed", type=int, default=42)
-    args = parser.parse_args()
-
-    rng = np.random.default_rng(args.seed)
-
-    # ── discover runs ─────────────────────────────────────────────────────────
+def _resolve_run_dir(arg_run):
     runs_root = "runs"
     if not os.path.isdir(runs_root):
-        raise FileNotFoundError("No 'runs/' directory found. Run `python main.py` first.")
-
+        raise FileNotFoundError("No 'runs/' directory. Run `python main.py` first.")
     completed = sorted(
         [os.path.join(runs_root, d) for d in os.listdir(runs_root)
          if os.path.isfile(os.path.join(runs_root, d, "checkpoints", "best.pt"))],
-        key=os.path.getmtime, reverse=True,   # newest first
+        key=os.path.getmtime, reverse=True,
     )
     if not completed:
-        raise FileNotFoundError("No completed runs found in 'runs/'. Run `python main.py` first.")
+        raise FileNotFoundError("No completed runs found in 'runs/'.")
 
     print("Available runs (newest first):")
     for i, r in enumerate(completed, 1):
         print(f"  [{i}] {os.path.basename(r)}")
     print()
 
-    # ── resolve run directory ─────────────────────────────────────────────────
-    if args.run is None:
-        run_dir = completed[0]
-        print(f"Using most recent run: {os.path.basename(run_dir)}")
-    elif args.run.isdigit():
-        idx = int(args.run) - 1
+    if arg_run is None:
+        return completed[0]
+    if arg_run.isdigit():
+        idx = int(arg_run) - 1
         if idx < 0 or idx >= len(completed):
-            raise ValueError(f"--run {args.run} out of range (1–{len(completed)})")
-        run_dir = completed[idx]
-        print(f"Using run [{args.run}]: {os.path.basename(run_dir)}")
-    else:
-        run_dir = args.run
-        print(f"Using run: {os.path.basename(run_dir)}")
+            raise ValueError(f"--run {arg_run} out of range (1–{len(completed)})")
+        return completed[idx]
+    return arg_run
 
-    ckpt_path    = os.path.join(run_dir, "checkpoints", "best.pt")
-    out_path     = os.path.join(run_dir, "outputs", "visualize.png")
-    collapse_out = os.path.join(run_dir, "outputs", "collapse.png")
 
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--run", default=None,
+                        help="Integer (1=most recent) or explicit path. Omit for most recent.")
+    parser.add_argument("--n_fwdrev", type=int, default=30,
+                        help="Trials shown in forward/reversed panel.")
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+    rng = np.random.default_rng(args.seed)
+
+    run_dir = _resolve_run_dir(args.run)
+    print(f"Using run: {os.path.basename(run_dir)}")
+
+    ckpt_path = os.path.join(run_dir, "checkpoints", "best.pt")
+    out_dir = os.path.join(run_dir, "outputs")
+    os.makedirs(out_dir, exist_ok=True)
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(f"No checkpoint at '{ckpt_path}'.")
 
-    # ── load checkpoint + config ──────────────────────────────────────────────
+    # ── checkpoint + data ────────────────────────────────────────────────────
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     cfg: Config = ckpt["config"]
     print(f"Loaded checkpoint from epoch {ckpt['epoch']}")
 
-    # ── reproduce data pipeline ───────────────────────────────────────────────
     print("Loading data…")
     spikes_raw, bin_width_s, trial_info, time_index_s = load_mcmaze(cfg.nwb_path, cfg.bin_ms)
     N = spikes_raw.shape[0]
@@ -368,93 +597,122 @@ def main():
     windows = make_windows(
         X_smooth, trial_info, time_index_s, bin_width_s,
         strategy=cfg.window_strategy, window_size=cfg.window_size,
+        align_field=getattr(cfg, "align_field", "move_onset_time"),
+        pre_ms=getattr(cfg, "pre_ms", 100),
     )
-    _, val_ds = train_val_split(windows, cfg.val_split, cfg.seed)
+    _, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
+    val_indices = list(val_ds.indices)
+    trial_info_val = trial_info.iloc[val_indices].reset_index(drop=True)
+    cond_groups, cond_colors = _get_condition_groups(trial_info_val)
+
+    # Condition-split sanity check using all trials' hand trajectories.
+    hand_windows = _load_hand_windows(cfg, trial_info, time_index_s, bin_width_s)
+    if hand_windows is not None:
+        plot_conditions_diagnostic(
+            hand_windows, trial_info,
+            out_path=os.path.join(out_dir, "00_conditions_diagnostic.png"),
+        )
+    else:
+        print("Skipping condition diagnostic: no hand_pos in NWB.")
 
     loader = DataLoader(val_ds, batch_size=len(val_ds), shuffle=False)
     (val_tensor,) = next(iter(loader))
-    val_np = val_tensor.numpy()   # (K, N, T)
+    val_np = val_tensor.numpy()
     K = len(val_np)
-    print(f"Val set: {K} trials  |  N={N}  |  T={cfg.window_size}")
+    n_per = float(np.mean([len(v) for v in cond_groups.values()]))
+    print(f"Val set: {K} trials  |  N={N}  |  T={cfg.window_size}  |  "
+          f"{len(cond_groups)} conditions ({n_per:.1f} trials/cond)")
 
-    # ── embed with trained model ──────────────────────────────────────────────
+    # ── embed ────────────────────────────────────────────────────────────────
     print("Computing embeddings…")
     model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
     with torch.no_grad():
-        F_hat = model(val_tensor)                        # (K, d, T) tensor
-        s_ratio_val = compute_S_ratio(F_hat).item()
-        F_hat = F_hat.numpy()
+        F_hat_t = model(val_tensor)
+        s_ratio_val = compute_S_ratio(F_hat_t).item()
+        F_hat = F_hat_t.numpy()
 
-    # ── collapse diagnostics ──────────────────────────────────────────────────
-    plot_collapse_diagnostics(F_hat, collapse_out)
-
-    # ── phasor arrays ─────────────────────────────────────────────────────────
-    ch_var = val_np.var(axis=(0, 2))                     # (N,) variance per channel
+    # ── phasor arrays ────────────────────────────────────────────────────────
+    ch_var = val_np.var(axis=(0, 2))
     top2_ch = np.argsort(ch_var)[-2:][::-1]
     ch_a, ch_b = int(top2_ch[0]), int(top2_ch[1])
     print(f"Raw phasor channels: {ch_a} (var={ch_var[ch_a]:.4f}),  "
           f"{ch_b} (var={ch_var[ch_b]:.4f})")
+    phasors_raw = raw_phasors(val_np, ch_a, ch_b)
 
-    phasors_raw = raw_phasors(val_np, ch_a, ch_b)       # (K, 2, T)
-    phasors_emb = emb_phasors(F_hat)                     # (K, 2, T)
+    pca_mean, pca_Vh2 = _fit_emb_pca(F_hat)
+    phasors_emb = _apply_emb_pca(F_hat, pca_mean, pca_Vh2)
 
-    areas_raw = all_signed_areas(phasors_raw)            # (K,)
-    areas_emb = all_signed_areas(phasors_emb)            # (K,)
+    # forward vs reversed (subset for legibility)
+    idx_sub = rng.choice(K, size=min(args.n_fwdrev, K), replace=False)
+    val_sub_rev = torch.flip(val_tensor[idx_sub], dims=[2])
+    with torch.no_grad():
+        F_rev_sub = model(val_sub_rev).numpy()
+    phasors_fwd_sub = phasors_emb[idx_sub]
+    phasors_rev_sub = _apply_emb_pca(F_rev_sub, pca_mean, pca_Vh2)
 
-    s_ratio_raw_val = float(np.sum(areas_raw > 0)) / K  # fraction with positive area (proxy)
+    areas_raw = all_signed_areas(phasors_raw)
+    areas_emb = all_signed_areas(phasors_emb)
 
-    # ── figure ────────────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(3, 2, figsize=(11, 13))
-    fig.suptitle(
-        f"SCA-style non-reversibility diagnostics\n"
-        f"(checkpoint epoch {ckpt['epoch']}, {K} val trials,  "
-        f"S_ratio={s_ratio_val:.4f})",
-        fontsize=11, fontweight="bold",
+    # variance captured by 2D embedding
+    Z_emb = F_hat.transpose(0, 2, 1).reshape(-1, F_hat.shape[1])
+    sv = np.linalg.svd(Z_emb - Z_emb.mean(axis=0), full_matrices=False, compute_uv=False)
+    pct_top2 = 100.0 * (sv[:2] ** 2).sum() / (sv ** 2).sum()
+
+    # ── 10 separate plots ────────────────────────────────────────────────────
+    _plot_time_coded(
+        phasors_raw, cond_groups,
+        title=f"Raw — condition-avg, time-coded  (ch {ch_a} vs ch {ch_b})",
+        xlabel=f"Ch {ch_a} (z-scored)", ylabel=f"Ch {ch_b} (z-scored)",
+        out_path=os.path.join(out_dir, "01_raw_time_coded.png"),
+    )
+    _plot_time_coded(
+        phasors_emb, cond_groups,
+        title=f"Embedding — condition-avg, time-coded  "
+              f"(ζ = {s_ratio_val:.2f},  top-2 PCs = {pct_top2:.1f}%)",
+        xlabel="PC 1", ylabel="PC 2",
+        out_path=os.path.join(out_dir, "02_embed_time_coded.png"),
+    )
+    _plot_condition_hsv(
+        phasors_raw, cond_groups, cond_colors,
+        title=f"Raw — condition-averaged (ch {ch_a} vs ch {ch_b})",
+        xlabel=f"Ch {ch_a} (z-scored)", ylabel=f"Ch {ch_b} (z-scored)",
+        out_path=os.path.join(out_dir, "03_raw_condition_hsv.png"),
+    )
+    _plot_condition_hsv(
+        phasors_emb, cond_groups, cond_colors,
+        title="Embedding — condition-averaged (top-2 PCA)",
+        xlabel="PC 1", ylabel="PC 2",
+        out_path=os.path.join(out_dir, "04_embed_condition_hsv.png"),
+    )
+    plot_signed_area_histogram(
+        areas_raw, areas_emb,
+        out_path=os.path.join(out_dir, "05_signed_area_histogram.png"),
+    )
+    plot_forward_reversed(
+        phasors_fwd_sub, phasors_rev_sub,
+        out_path=os.path.join(out_dir, "06_forward_reversed.png"),
+    )
+    plot_pca_explained_variance(
+        F_hat, out_path=os.path.join(out_dir, "07_pca_explained_variance.png"),
+    )
+    plot_covariance_heatmap(
+        F_hat, out_path=os.path.join(out_dir, "08_covariance_heatmap.png"),
+    )
+    plot_between_within_variance(
+        F_hat, out_path=os.path.join(out_dir, "09_between_within_variance.png"),
+    )
+    plot_embedding_norm_distribution(
+        F_hat, out_path=os.path.join(out_dir, "10_embedding_norm_distribution.png"),
     )
 
-    # Row 0 — time-coloured (viridis): replicates SCA plot_2D
-    plot_2D(axes[0, 0], phasors_raw,
-            title=f"Raw — time-coloured (ch {ch_a} vs ch {ch_b})",
-            xlabel=f"Channel {ch_a} (z-scored)",
-            ylabel=f"Channel {ch_b} (z-scored)")
-
-    plot_2D(axes[0, 1], phasors_emb,
-            title="Embedding — time-coloured (top-2 PCA)",
-            xlabel="PC 1", ylabel="PC 2")
-
-    # Row 1 — trial-coded (coolwarm): replicates SCA plot_2D_K_coded
-    plot_2D_K_coded(axes[1, 0], phasors_raw,
-                    s_ratio_val=s_ratio_raw_val,
-                    title=f"Raw — trial-coded (ch {ch_a} vs ch {ch_b})",
-                    xlabel=f"Channel {ch_a} (z-scored)",
-                    ylabel=f"Channel {ch_b} (z-scored)")
-
-    plot_2D_K_coded(axes[1, 1], phasors_emb,
-                    s_ratio_val=s_ratio_val,
-                    title="Embedding — trial-coded (top-2 PCA)",
-                    xlabel="PC 1", ylabel="PC 2")
-
-    # Row 2 — our irreversibility diagnostics
-    plot_area_histogram(axes[2, 0], areas_raw, areas_emb)
-
-    plot_forward_reversed(axes[2, 1], phasors_emb, args.n_fwdrev, rng)
-
-    fig.tight_layout()
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved → {out_path}")
-
-    # ── console summary ───────────────────────────────────────────────────────
+    # ── console summary ──────────────────────────────────────────────────────
     print(f"\nS_ratio (embedding, all val pairs): {s_ratio_val:.4f}")
-    print(f"\nSigned-area summary ({K} val trials):")
-    print(f"  Raw       μ={areas_raw.mean():+.4f}  σ={areas_raw.std():.4f}"
-          f"  |μ|/σ = {abs(areas_raw.mean()) / areas_raw.std():.3f}")
-    print(f"  Embedding μ={areas_emb.mean():+.4f}  σ={areas_emb.std():.4f}"
-          f"  |μ|/σ = {abs(areas_emb.mean()) / areas_emb.std():.3f}")
-    print("  (|μ|/σ > 1 suggests consistent circulation across trials)")
+    print(f"Signed area:  raw  μ={areas_raw.mean():+.4f}  σ={areas_raw.std():.4f}"
+          f"  |μ|/σ = {abs(areas_raw.mean()) / (areas_raw.std() + 1e-12):.3f}")
+    print(f"              emb  μ={areas_emb.mean():+.4f}  σ={areas_emb.std():.4f}"
+          f"  |μ|/σ = {abs(areas_emb.mean()) / (areas_emb.std() + 1e-12):.3f}")
 
 
 if __name__ == "__main__":

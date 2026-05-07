@@ -24,8 +24,8 @@ def print_summary(history: dict, cfg: Config):
     print()
     print("=" * 50)
     print("Training complete")
-    print(f"  Final train S_ratio : {history['train_S_ratio'][-1]:.4f}")
-    print(f"  Best val S_ratio    : {history['best_val_S_ratio']:.4f}")
+    print(f"  Final train loss    : {history['train_loss'][-1]:.4f}")
+    print(f"  Best val loss       : {history['best_val_loss']:.4f}")
     print(f"  Wall-clock time     : {history['elapsed_s']:.1f} s  ({history['elapsed_s']/60:.1f} min)")
     print(f"  Checkpoint          : {cfg.ckpt_dir}/best.pt")
     print(f"  Loss curve          : {cfg.out_dir}/loss_curve.png")
@@ -51,15 +51,19 @@ def main():
     print(f"  Gaussian smoothing sigma: {cfg.sigma_ms} ms = {sigma_samples} bins")
     X_smooth = gaussian_smooth(spikes_raw, sigma_samples)
 
-    print(f"Windowing ({cfg.window_strategy}, T={cfg.window_size}) …")
+    print(f"Windowing ({cfg.window_strategy}, align={cfg.align_field}, "
+          f"pre={cfg.pre_ms}ms, T={cfg.window_size}) …")
     windows = make_windows(
         X_smooth, trial_info, time_index_s, bin_width_s,
         strategy=cfg.window_strategy, window_size=cfg.window_size,
+        align_field=cfg.align_field, pre_ms=cfg.pre_ms,
     )
     print(f"  Windows shape: {windows.shape}  (K, N, T)")
 
-    train_ds, val_ds = train_val_split(windows, cfg.val_split, cfg.seed)
-    print(f"  Train: {len(train_ds)}  |  Val: {len(val_ds)}")
+    train_ds, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
+    using_split_col = "split" in trial_info.columns
+    print(f"  Train: {len(train_ds)}  |  Val: {len(val_ds)}  "
+          f"({'dataset split column' if using_split_col else f'random {cfg.val_split:.0%}'})")
 
     model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth)
     n_params = sum(p.numel() for p in model.parameters())

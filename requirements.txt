@@ -6,3 +6,4 @@ pynwb
 einops
 tqdm
 matplotlib
+seaborn
