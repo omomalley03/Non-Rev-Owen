@@ -9,8 +9,7 @@ Each diagnostic plot is saved as its own PNG in the run's `outputs/` dir:
   03_raw_condition_hsv.png         — raw, condition-avg, HSV by reach angle
   04_embed_condition_hsv.png       — embedding, condition-avg, HSV
   05_signed_area_histogram.png     — shoelace area, raw vs embedding
-  06_forward_reversed.png          — f(X) vs f(time-reversed X)
-  07_pca_explained_variance.png    — embedding PCA cumvar
+  06_pca_explained_variance.png    — embedding PCA cumvar
   08_covariance_heatmap.png        — embedding correlation matrix
   09_between_within_variance.png   — trial-discriminability over time
   10_embedding_norm_distribution.png — ‖F_k‖_F histogram
@@ -30,7 +29,6 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
 from torch.utils.data import DataLoader
 
 from config import Config
@@ -267,49 +265,7 @@ def plot_signed_area_histogram(areas_raw, areas_emb, out_path):
     print(f"Saved → {out_path}")
 
 
-# ── plot 6: forward vs reversed embedding ────────────────────────────────────
-
-def plot_forward_reversed(phasors_fwd, phasors_rev, out_path):
-    """Embedding of forward input vs time-reversed input, on shared PCA axes.
-
-    Math
-    ----
-    F_k       = model(X_k)            (forward)
-    F_k^rev   = model(X_k[::-1])       (reverse along time axis t)
-    Both projected onto the *same* top-2 PCA axes (fit on forward set).
-    Distinct shapes ⇒ model encodes temporal asymmetry.
-    """
-    fig, ax = plt.subplots(figsize=(6, 5))
-    n = len(phasors_fwd)
-    for i in range(n):
-        ax.plot(phasors_fwd[i, 0], phasors_fwd[i, 1],
-                color="steelblue", alpha=0.35, lw=0.8)
-        ax.plot(phasors_rev[i, 0], phasors_rev[i, 1],
-                color="tomato", alpha=0.35, lw=0.8, ls="--")
-
-    legend = [
-        Line2D([0], [0], color="steelblue", lw=1.4, label="forward  f(X_k)"),
-        Line2D([0], [0], color="tomato", lw=1.4, ls="--", label="reversed  f(X_k[::-1])"),
-    ]
-    ax.legend(handles=legend, fontsize=8, loc="upper right")
-    ax.set_title(
-        f"Embedding: f(X_k) vs f(time-reversed X_k)  [{n} trials]\n"
-        "(distinct shapes → temporal asymmetry encoded)",
-        fontsize=10,
-    )
-    ax.set_xlabel("PC 1", fontsize=9)
-    ax.set_ylabel("PC 2", fontsize=9)
-    ax.tick_params(labelsize=8)
-    ax.set_aspect("equal", adjustable="datalim")
-    ax.spines[["top", "right"]].set_visible(False)
-
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved → {out_path}")
-
-
-# ── plot 7: PCA explained variance ───────────────────────────────────────────
+# ── plot 6: PCA explained variance ───────────────────────────────────────────
 
 def plot_pca_explained_variance(F_hat, out_path):
     """Cumulative PCA explained variance of the (K*T, d) embedding snapshots.
@@ -559,8 +515,6 @@ def make_diagnostic_plots(
     cfg: Config,
     run_dir: str,
     hand_windows=None,
-    n_fwdrev: int = 30,
-    rng=None,
 ):
     """Compute embeddings on val_ds and write all diagnostic PNGs to run_dir/outputs/.
 
@@ -575,11 +529,7 @@ def make_diagnostic_plots(
     cfg           : Config used to train the model
     run_dir       : run directory; plots are written to {run_dir}/outputs/
     hand_windows  : optional (K_all, 2, T) array; if given, plot 00 is generated
-    n_fwdrev      : trials to show in plot 06 (forward/reversed)
-    rng           : numpy Generator for the forward/reversed subsample
     """
-    if rng is None:
-        rng = np.random.default_rng(42)
 
     out_dir = os.path.join(run_dir, "outputs")
     os.makedirs(out_dir, exist_ok=True)
@@ -623,13 +573,6 @@ def make_diagnostic_plots(
     pca_mean, pca_Vh2 = _fit_emb_pca(F_hat)
     phasors_emb = _apply_emb_pca(F_hat, pca_mean, pca_Vh2)
 
-    idx_sub = rng.choice(K, size=min(n_fwdrev, K), replace=False)
-    val_sub_rev = torch.flip(val_tensor[idx_sub], dims=[2])
-    with torch.no_grad():
-        F_rev_sub = model(val_sub_rev).numpy()
-    phasors_fwd_sub = phasors_emb[idx_sub]
-    phasors_rev_sub = _apply_emb_pca(F_rev_sub, pca_mean, pca_Vh2)
-
     areas_raw = all_signed_areas(phasors_raw)
     areas_emb = all_signed_areas(phasors_emb)
 
@@ -666,21 +609,17 @@ def make_diagnostic_plots(
         areas_raw, areas_emb,
         out_path=os.path.join(out_dir, "05_signed_area_histogram.png"),
     )
-    plot_forward_reversed(
-        phasors_fwd_sub, phasors_rev_sub,
-        out_path=os.path.join(out_dir, "06_forward_reversed.png"),
-    )
     plot_pca_explained_variance(
-        F_hat, out_path=os.path.join(out_dir, "07_pca_explained_variance.png"),
+        F_hat, out_path=os.path.join(out_dir, "06_pca_explained_variance.png"),
     )
     plot_covariance_heatmap(
-        F_hat, out_path=os.path.join(out_dir, "08_covariance_heatmap.png"),
+        F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
     )
     plot_between_within_variance(
-        F_hat, out_path=os.path.join(out_dir, "09_between_within_variance.png"),
+        F_hat, out_path=os.path.join(out_dir, "08_between_within_variance.png"),
     )
     plot_embedding_norm_distribution(
-        F_hat, out_path=os.path.join(out_dir, "10_embedding_norm_distribution.png"),
+        F_hat, out_path=os.path.join(out_dir, "09_embedding_norm_distribution.png"),
     )
 
     print(f"\nS_ratio (embedding, all val pairs): {s_ratio_val:.4f}")
@@ -695,8 +634,6 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--run", default=None,
                         help="Integer (1=most recent) or explicit path. Omit for most recent.")
-    parser.add_argument("--n_fwdrev", type=int, default=30,
-                        help="Trials shown in forward/reversed panel.")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -728,6 +665,9 @@ def main():
         align_field=getattr(cfg, "align_field", "move_onset_time"),
         pre_ms=getattr(cfg, "pre_ms", 100),
     )
+    grand_mean = windows.mean(axis=0, keepdims=True)  # (1, N, T)
+    windows = windows - grand_mean
+    
     _, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
     hand_windows = _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s)
 
@@ -741,8 +681,6 @@ def main():
         cfg=cfg,
         run_dir=run_dir,
         hand_windows=hand_windows,
-        n_fwdrev=args.n_fwdrev,
-        rng=np.random.default_rng(args.seed),
     )
 
 

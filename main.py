@@ -65,6 +65,10 @@ def main():
         strategy=cfg.window_strategy, window_size=cfg.window_size,
         align_field=cfg.align_field, pre_ms=cfg.pre_ms,
     )
+
+    grand_mean = windows.mean(axis=0, keepdims=True)  # (1, N, T)
+    windows = windows - grand_mean
+
     print(f"  Windows shape: {windows.shape}  (K, N, T)")
 
     train_ds, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
@@ -72,7 +76,7 @@ def main():
     print(f"  Train: {len(train_ds)}  |  Val: {len(val_ds)}  "
           f"({'dataset split column' if using_split_col else f'random {cfg.val_split:.0%}'})")
 
-    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth)
+    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
 

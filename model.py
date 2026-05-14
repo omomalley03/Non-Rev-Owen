@@ -10,7 +10,7 @@ class MLP(nn.Module):
 
     """
 
-    def __init__(self, in_channels: int, d: int = 128, hidden_dim: int = 256, depth: int = 3):
+    def __init__(self, in_channels: int, d: int = 128, hidden_dim: int = 256, depth: int = 3, dropout: float = 0.0):
         super().__init__()
         assert depth >= 1, "depth must be at least 1"
 
@@ -18,6 +18,8 @@ class MLP(nn.Module):
         in_dim = in_channels
         for _ in range(depth - 1):
             layers += [nn.Linear(in_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU()]
+            if dropout > 0.0:
+                layers.append(nn.Dropout(dropout))
             in_dim = hidden_dim
         layers.append(nn.Linear(in_dim, d))   # final projection, no activation
 

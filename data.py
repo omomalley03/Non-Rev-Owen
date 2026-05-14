@@ -100,11 +100,10 @@ def gaussian_smooth(X: np.ndarray, sigma_samples: float) -> np.ndarray:
 
 
 def soft_normalize(X: np.ndarray, method: str = "churchland") -> np.ndarray:
-    """Per-neuron soft normalisation, matching SCA_project/utils.py:18-48.
+    """Per-neuron soft normalisation
 
     X has shape (N, T_total). Returns the same shape with each neuron rescaled
-    so their dynamic ranges are comparable — preventing high-rate units from
-    dominating the loss when projecting into a low-d embedding.
+    so their dynamic ranges are comparable
 
     method:
       'churchland' — divide by (range + 5)

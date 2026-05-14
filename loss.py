@@ -17,8 +17,8 @@ def _pair_terms(F: torch.Tensor):
     # trace_2 = torch.einsum("kim,ljm,kjn,lin->kl", F, F, F, F)  # (K, K)
     Z_squared = torch.einsum("klnm,klmj->klnj",Z,Z) # (K, K, N, N)
     trace_2 = torch.einsum("klnn->kl",Z_squared)
-
-    return (trace_1 ** 2 - trace_2).sum(), (trace_1 ** 2 + trace_2).sum()
+    # TODO: can we compute these more efficiently without forming the full (K, K, N, N) Z?
+    return (trace_1 ** 2 - trace_2).sum(), (trace_1 ** 2 + trace_2).sum() 
 
 
 def S_ratio(F: torch.Tensor) -> torch.Tensor:
@@ -40,23 +40,21 @@ def non_reversibility_S(F: torch.Tensor) -> torch.Tensor:
     return (2.0 / K ** 2) * minus_sum
 
 
-def barlow_twins_reg(F: torch.Tensor, eps: float = 1e-6, normalize: bool = True) -> torch.Tensor:
+def barlow_twins_reg(F: torch.Tensor, eps: float = 1e-6, normalize: bool = False) -> torch.Tensor:
     """Barlow Twins covariance regularizer on the per-timepoint embeddings.
 
     Flattens F from (K, d, T) → (M, d) where M = K*T, treating every
-    (trial, timestep) pair as an independent sample. Normalises each
-    embedding dimension to zero mean and unit variance, then computes the
-    empirical (d, d) cross-correlation matrix Cov. Returns ‖Cov - I‖_F², which
+    (trial, timestep) pair as an independent sample. Computes the
+    empirical (d, d) Cov. Returns ‖Cov - I‖_F², which
     is zero when all dimensions are uncorrelated with unit variance.
 
-    Internally normalises, so it is also scale-invariant. lambda_bt=5e-3
-    stays meaningful alongside S_ratio ∈ [0, 1] without further tuning.
     """
     K, d, T = F.shape
     Z = F.permute(0, 2, 1).reshape(K * T, d)          # (M, d)
-    if normalize:
-        Z = Z - Z.mean(dim=0, keepdim=True)               # zero-mean per dim
-        Z = Z / (Z.std(dim=0, keepdim=True) + eps)        # unit-variance per dim
+
+    # if normalize:
+    #     Z = Z - Z.mean(dim=0, keepdim=True)               # zero-mean per dim
+    #     Z = Z / (Z.std(dim=0, keepdim=True) + eps)        # unit-variance per dim
 
     M = Z.shape[0]
 
@@ -72,16 +70,43 @@ def _batch_rms_normalize(F: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     batch is rescaled identically by 1/r^4.  
     """
     mean_sq_norm = F.pow(2).sum(dim=(1, 2)).mean()    # scalar 
-    return F / (mean_sq_norm + eps).sqrt()
+    return F / (mean_sq_norm + eps).sqrt() # divide by RMS across the batch
 
 
-def loss_fn(F: torch.Tensor, lambda_bt: float = 5e-3, normalize_bt: bool = True) -> torch.Tensor:
-    """Training loss: −S(F̂) + λ·‖Cov(F̂) − I‖_F², with F̂ = F / batch_RMS.
+# def _detrend(F: torch.Tensor) -> torch.Tensor:
+#     """Project out the linear trend (constant + ramp) from each trial's embedding."""
+#     T = F.shape[2]
+#     e0 = torch.ones(T, dtype=F.dtype, device=F.device)
+#     e0 = e0 / e0.norm()
+#     e1 = torch.arange(T, dtype=F.dtype, device=F.device)
+#     e1 = e1 - e1.mean()
+#     e1 = e1 / e1.norm()
+#     basis = torch.stack([e0, e1])                        # (2, T)
+#     return F - (F @ basis.T) @ basis                     # (K, d, T)
 
-    Batch-RMS normalisation bounds the loss magnitude (otherwise both terms
-    scale as ‖F‖⁴ and diverge) without introducing the per-trial bias that
-    plagues S_ratio: every trial in the batch is divided by the same scalar,
-    so pair-wise gradients keep their correct relative weights.
+
+def _detrend(F: torch.Tensor) -> torch.Tensor:
+    """Subtract the best-fit line (a + b·t) from each embedding dimension per trial."""
+    T = F.shape[2]
+    t = torch.arange(T, dtype=F.dtype, device=F.device) - (T - 1) / 2  # zero-mean time axis
+
+    intercept = F.mean(dim=2, keepdim=True)                        # (K, d, 1)
+    slope = (F * t).sum(dim=2, keepdim=True) / (t * t).sum()      # (K, d, 1)
+
+    return F - intercept - slope * t                               # (K, d, T)
+
+
+def loss_fn(F: torch.Tensor, lambda_bt: float = 5e-3, normalize_bt: bool = False) -> torch.Tensor:
+    """Training loss: −S(detrend(F̂)) + λ·BT(F).
+
+    Detrending projects out the linear ramp from each trial's embedding
+    before computing S, so the score only sees oscillatory (rotational)
+    structure.  Unlike temporal differentiation, detrending does not
+    amplify noise.
     """
-    F_hat = _batch_rms_normalize(F)
-    return -non_reversibility_S(F_hat) + lambda_bt * barlow_twins_reg(F_hat, normalize=normalize_bt)
+    F_dt = _detrend(F)
+    # F_dt = F
+    F_dt_hat = _batch_rms_normalize(F_dt)
+    return -non_reversibility_S(F_dt_hat) + lambda_bt * barlow_twins_reg(F, normalize=normalize_bt)
+
+

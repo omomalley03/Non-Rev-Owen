@@ -16,7 +16,7 @@ class Config:
         "/Users/omomalley03/Documents/Dissertation/Data/000128/sub-Jenkins/"
         "sub-Jenkins_ses-full_desc-train_behavior+ecephys.nwb"
     )
-    bin_ms: int = 5                     # resampling bin width (ms)
+    bin_ms: int = 10                     # resampling bin width (ms)
     sigma_ms: float = 10.0              # Gaussian smoothing std (ms)
     softnorm_method: str = "churchland"       # 'churchland', 'max', or 'none' (SCA-style per-neuron softnorm)
     # MC_Maze (Jenkins): trials are variable length (~2-4 s).  Each window is
@@ -31,17 +31,21 @@ class Config:
     seed: int = 0
 
     # --- model ---
-    d: int = 2                       # embedding dimension (per snapshot)
+    d: int = 8                       # embedding dimension (per snapshot)
     hidden_dim: int = 256              # MLP hidden layer width
-    depth: int = 1                     # number of MLP layers (1 = pure linear, SCA-equivalent)
+    depth: int = 3                     # number of MLP layers (1 = pure linear, SCA-equivalent)
+    dropout: float = 0.2              # dropout probability applied after each hidden activation
 
     # --- training ---
     batch_size: int = 256
     epochs: int = 50
     lr: float = 1e-2
     weight_decay: float = 1e-4
-    lambda_bt: float = 1e-2            # Barlow Twins covariance regularisation weight default 5e-3
-    normalize_bt: bool = False         # whether to internally normalise before Barlow Twins term
+    # lambda_bt_unnormed: float = 0.01
+    lambda_bt: float = 0.00014
+    # lambda_bt: float = 1.4e-4            # Barlow Twins covariance regularisation weight default 5e-3
+    # lambda_bt: float = 0.00224
+    normalize_bt: bool = False         # never internally normalise before Barlow Twins term
 
     # --- LR scheduler (CosineAnnealingWarmRestarts) ---
     T_0: int = 10
@@ -68,7 +72,7 @@ class Config:
             "data":     ["nwb_path", "bin_ms", "sigma_ms", "softnorm_method",
                          "align_field", "pre_ms", "post_ms", "window_size",
                          "window_strategy", "val_split", "seed"],
-            "model":    ["d", "hidden_dim", "depth"],
+            "model":    ["d", "hidden_dim", "depth", "dropout"],
             "training": ["batch_size", "epochs", "lr", "weight_decay", "lambda_bt"],
             "scheduler":["T_0", "T_mult"],
         }

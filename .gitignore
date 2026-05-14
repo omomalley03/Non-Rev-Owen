@@ -2,3 +2,12 @@
 .venv
 __pycache__
 *.md
+save_data.py
+*.npz
+*.npy
+*.csv
+
+runs/
+synth_runs/
+
+*.ipynb
