@@ -96,6 +96,15 @@ def main():
         hand_windows=hand_windows,
     )
 
+    # from evaluate import run_linear_probe, plot_confusion_matrix
+
+    # probe_results = run_linear_probe(model, train_ds, val_ds, trial_info, cfg, run_dir)
+    # plot_confusion_matrix(
+    #     probe_results["y_val"], probe_results["y_pred"],
+    #     probe_results["label_encoder"], probe_results["val_acc"],
+    #     out_path=os.path.join(cfg.out_dir, "11_condition_classifier.png"),
+    # )
+
 
 if __name__ == "__main__":
     main()

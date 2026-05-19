@@ -3,16 +3,14 @@ Visualise non-reversibility quality from a trained checkpoint.
 
 Each diagnostic plot is saved as its own PNG in the run's `outputs/` dir:
 
-  00_conditions_diagnostic.png     — per-condition mean hand trajectory (sanity check)
-  01_raw_time_coded.png            — raw, condition-avg, time-coded
-  02_embed_time_coded.png          — embedding, condition-avg, time-coded
-  03_raw_condition_hsv.png         — raw, condition-avg, HSV by reach angle
-  04_embed_condition_hsv.png       — embedding, condition-avg, HSV
-  05_signed_area_histogram.png     — shoelace area, raw vs embedding
-  06_pca_explained_variance.png    — embedding PCA cumvar
-  08_covariance_heatmap.png        — embedding correlation matrix
-  09_between_within_variance.png   — trial-discriminability over time
-  10_embedding_norm_distribution.png — ‖F_k‖_F histogram
+  00_conditions_diagnostic.png          — per-condition mean hand trajectory (sanity check)
+  01_raw_time_coded.png                 — raw, condition-avg, time-coded
+  02_embed_planes_time_coded.png        — per rotation plane, condition-avg, time-coded
+  03_raw_condition_hsv.png              — raw, condition-avg, HSV by reach angle
+  04_embed_planes_condition_hsv.png     — per rotation plane, condition-avg, HSV
+  07_covariance_heatmap.png             — embedding correlation matrix
+  08_between_within_variance.png        — trial-discriminability over time
+  09_embedding_norm_distribution.png    — ‖F_k‖_F histogram
 
 Usage
 -----
@@ -206,6 +204,90 @@ def _plot_time_coded(phasors, groups, title, xlabel, ylabel, out_path,
     print(f"Saved → {out_path}")
 
 
+# ── plot 2 / 4: per-plane condition-averaged ────────────────────────────────
+
+def _plot_planes_time_coded(F_hat, groups, s_ratio, out_path, cmap_name="coolwarm"):
+    """Subplot grid: one panel per 2D rotation plane, condition-avg, time-coded."""
+    K, d, T = F_hat.shape
+    D = d // 2
+    planes = F_hat.reshape(K, D, 2, T)
+    cmap = plt.get_cmap(cmap_name)
+
+    ncols = min(D, 4)
+    nrows = (D + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 4 * nrows),
+                             squeeze=False)
+
+    for p in range(D):
+        ax = axes[p // ncols, p % ncols]
+        for cond_key in sorted(groups.keys(), key=lambda k: str(k)):
+            idx_list = groups[cond_key]
+            mean_traj = planes[idx_list, p].mean(axis=0)  # (2, T)
+            x, y = mean_traj[0], mean_traj[1]
+            for t in range(T - 1):
+                ax.plot(x[t:t+2], y[t:t+2], color=cmap(t / (T - 1)),
+                        lw=1.1, alpha=0.85)
+
+        ax.axhline(0, color="k", lw=0.4, alpha=0.25)
+        ax.axvline(0, color="k", lw=0.4, alpha=0.25)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})", fontsize=9)
+        ax.set_xlabel(f"dim {2*p}", fontsize=8)
+        ax.set_ylabel(f"dim {2*p+1}", fontsize=8)
+        ax.tick_params(labelsize=7)
+        ax.set_aspect("equal", adjustable="datalim")
+
+    for p in range(D, nrows * ncols):
+        axes[p // ncols, p % ncols].set_visible(False)
+
+    fig.suptitle(f"Embedding — condition-avg, time-coded  (ζ = {s_ratio:.2f})",
+                 fontsize=11)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
+def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path):
+    """Subplot grid: one panel per 2D rotation plane, condition-avg, HSV-colored."""
+    K, d, T = F_hat.shape
+    D = d // 2
+    planes = F_hat.reshape(K, D, 2, T)
+
+    ncols = min(D, 4)
+    nrows = (D + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 4 * nrows),
+                             squeeze=False)
+
+    for p in range(D):
+        ax = axes[p // ncols, p % ncols]
+        for cond_key in sorted(groups.keys(), key=lambda k: str(k)):
+            idx_list = groups[cond_key]
+            mean_traj = planes[idx_list, p].mean(axis=0)  # (2, T)
+            color = colors[cond_key]
+            ax.plot(mean_traj[0], mean_traj[1], lw=1.4, color=color, alpha=0.9)
+            ax.scatter(mean_traj[0, 0], mean_traj[1, 0], color=color, s=25, zorder=5)
+
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})", fontsize=9)
+        ax.set_xlabel(f"dim {2*p}", fontsize=8)
+        ax.set_ylabel(f"dim {2*p+1}", fontsize=8)
+        ax.tick_params(labelsize=7)
+        ax.set_aspect("equal", adjustable="datalim")
+
+    for p in range(D, nrows * ncols):
+        axes[p // ncols, p % ncols].set_visible(False)
+
+    n_conds = len(groups)
+    n_per = float(np.mean([len(v) for v in groups.values()]))
+    fig.suptitle(f"Embedding — condition-avg, HSV  (ζ = {s_ratio:.2f},  "
+                 f"{n_conds} conditions, {n_per:.1f} trials/cond)", fontsize=11)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
 # ── plot 3 / 4: condition-averaged, HSV by reach angle ───────────────────────
 
 def _plot_condition_hsv(phasors, groups, colors, title, xlabel, ylabel, out_path):
@@ -322,9 +404,10 @@ def plot_covariance_heatmap(F_hat, out_path):
     """
     K, d, T = F_hat.shape
     Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
-    Z = Z - Z.mean(axis=0)
-    Z = Z / (Z.std(axis=0) + 1e-6)
+    # Z = Z - Z.mean(axis=0)
+    # Z = Z / (Z.std(axis=0) + 1e-6)
     Cov = (Z.T @ Z) / Z.shape[0]
+
 
     n_show = min(d, 32)
     fig, ax = plt.subplots(figsize=(6, 5))
@@ -570,15 +653,7 @@ def make_diagnostic_plots(
           f"{ch_b} (var={ch_var[ch_b]:.4f})")
     phasors_raw = raw_phasors(val_np, ch_a, ch_b)
 
-    pca_mean, pca_Vh2 = _fit_emb_pca(F_hat)
-    phasors_emb = _apply_emb_pca(F_hat, pca_mean, pca_Vh2)
-
     areas_raw = all_signed_areas(phasors_raw)
-    areas_emb = all_signed_areas(phasors_emb)
-
-    Z_emb = F_hat.transpose(0, 2, 1).reshape(-1, F_hat.shape[1])
-    sv = np.linalg.svd(Z_emb - Z_emb.mean(axis=0), full_matrices=False, compute_uv=False)
-    pct_top2 = 100.0 * (sv[:2] ** 2).sum() / (sv ** 2).sum()
 
     _plot_time_coded(
         phasors_raw, cond_groups,
@@ -586,12 +661,9 @@ def make_diagnostic_plots(
         xlabel=f"Ch {ch_a} (z-scored)", ylabel=f"Ch {ch_b} (z-scored)",
         out_path=os.path.join(out_dir, "01_raw_time_coded.png"),
     )
-    _plot_time_coded(
-        phasors_emb, cond_groups,
-        title=f"Embedding — condition-avg, time-coded  "
-              f"(ζ = {s_ratio_val:.2f},  top-2 PCs = {pct_top2:.1f}%)",
-        xlabel="PC 1", ylabel="PC 2",
-        out_path=os.path.join(out_dir, "02_embed_time_coded.png"),
+    _plot_planes_time_coded(
+        F_hat, cond_groups, s_ratio_val,
+        out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
     )
     _plot_condition_hsv(
         phasors_raw, cond_groups, cond_colors,
@@ -599,18 +671,9 @@ def make_diagnostic_plots(
         xlabel=f"Ch {ch_a} (z-scored)", ylabel=f"Ch {ch_b} (z-scored)",
         out_path=os.path.join(out_dir, "03_raw_condition_hsv.png"),
     )
-    _plot_condition_hsv(
-        phasors_emb, cond_groups, cond_colors,
-        title="Embedding — condition-averaged (top-2 PCA)",
-        xlabel="PC 1", ylabel="PC 2",
-        out_path=os.path.join(out_dir, "04_embed_condition_hsv.png"),
-    )
-    plot_signed_area_histogram(
-        areas_raw, areas_emb,
-        out_path=os.path.join(out_dir, "05_signed_area_histogram.png"),
-    )
-    plot_pca_explained_variance(
-        F_hat, out_path=os.path.join(out_dir, "06_pca_explained_variance.png"),
+    _plot_planes_condition_hsv(
+        F_hat, cond_groups, cond_colors, s_ratio_val,
+        out_path=os.path.join(out_dir, "04_embed_planes_condition_hsv.png"),
     )
     plot_covariance_heatmap(
         F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
@@ -623,10 +686,8 @@ def make_diagnostic_plots(
     )
 
     print(f"\nS_ratio (embedding, all val pairs): {s_ratio_val:.4f}")
-    print(f"Signed area:  raw  μ={areas_raw.mean():+.4f}  σ={areas_raw.std():.4f}"
+    print(f"Signed area (raw):  μ={areas_raw.mean():+.4f}  σ={areas_raw.std():.4f}"
           f"  |μ|/σ = {abs(areas_raw.mean()) / (areas_raw.std() + 1e-12):.3f}")
-    print(f"              emb  μ={areas_emb.mean():+.4f}  σ={areas_emb.std():.4f}"
-          f"  |μ|/σ = {abs(areas_emb.mean()) / (areas_emb.std() + 1e-12):.3f}")
 
 
 def main():
@@ -671,7 +732,7 @@ def main():
     _, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
     hand_windows = _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s)
 
-    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth)
+    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout)
     model.load_state_dict(ckpt["model_state_dict"])
 
     make_diagnostic_plots(

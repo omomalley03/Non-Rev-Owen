@@ -2,23 +2,28 @@ import torch
 
 
 def _pair_terms(F: torch.Tensor):
-    """Compute sum over K^2 pairs in batch, including the plus and minus terms.
-    F (aka Y) is shape (K, N, T)
+    """Compute sum over K^2 pairs in batch, per 2D rotation plane.
+
+    F is shape (K, 2D, T) where 2D = d must be even.
+    Each consecutive pair of dimensions forms one rotation plane.
+
     Returns
     -------
-    minus_sum, plus_sum : scalar tensors
+    minus_sum, plus_sum : scalar tensors  (summed over all planes and pairs)
     """
-    Z = torch.einsum("knt,lmt->klnm",F, F) # (K, K, N, N) -- K^2 NxN matrices 
-    # trace_1[k,l] — trace of Z[k,l]
+    K, d, T = F.shape
+    assert d % 2 == 0, f"d must be even for per-plane decomposition, got {d}"
+    D = d // 2
 
-    trace_1 = torch.einsum("klnn->kl", Z)        # (K, K)
+    F_p = F.reshape(K, D, 2, T)                                  # (K, D, 2, T)
 
-    # trace_2[k,l] - trace of Z^2
-    # trace_2 = torch.einsum("kim,ljm,kjn,lin->kl", F, F, F, F)  # (K, K)
-    Z_squared = torch.einsum("klnm,klmj->klnj",Z,Z) # (K, K, N, N)
-    trace_2 = torch.einsum("klnn->kl",Z_squared)
-    # TODO: can we compute these more efficiently without forming the full (K, K, N, N) Z?
-    return (trace_1 ** 2 - trace_2).sum(), (trace_1 ** 2 + trace_2).sum() 
+    Z = torch.einsum("kpit,lpmt->klpim", F_p, F_p)               # (K, K, D, 2, 2)
+    trace_1 = torch.einsum("klpii->klp", Z)                      # (K, K, D)
+
+    Z_squared = torch.einsum("klpim,klpmj->klpij", Z, Z)         # (K, K, D, 2, 2)
+    trace_2 = torch.einsum("klpii->klp", Z_squared)              # (K, K, D)
+
+    return (trace_1 ** 2 - trace_2).sum(), (trace_1 ** 2 + trace_2).sum()
 
 
 def S_ratio(F: torch.Tensor) -> torch.Tensor:
@@ -64,49 +69,21 @@ def barlow_twins_reg(F: torch.Tensor, eps: float = 1e-6, normalize: bool = False
 
 
 def _batch_rms_normalize(F: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
-    """Divide F by a single batch-wide scalar r = sqrt(mean_k |F_k|_F^2). 
-
-    All K trials rescaled by same r, so every pair term inside the
-    batch is rescaled identically by 1/r^4.  
-    """
-    mean_sq_norm = F.pow(2).sum(dim=(1, 2)).mean()    # scalar 
-    return F / (mean_sq_norm + eps).sqrt() # divide by RMS across the batch
-
-
-# def _detrend(F: torch.Tensor) -> torch.Tensor:
-#     """Project out the linear trend (constant + ramp) from each trial's embedding."""
-#     T = F.shape[2]
-#     e0 = torch.ones(T, dtype=F.dtype, device=F.device)
-#     e0 = e0 / e0.norm()
-#     e1 = torch.arange(T, dtype=F.dtype, device=F.device)
-#     e1 = e1 - e1.mean()
-#     e1 = e1 / e1.norm()
-#     basis = torch.stack([e0, e1])                        # (2, T)
-#     return F - (F @ basis.T) @ basis                     # (K, d, T)
-
-
-def _detrend(F: torch.Tensor) -> torch.Tensor:
-    """Subtract the best-fit line (a + b·t) from each embedding dimension per trial."""
-    T = F.shape[2]
-    t = torch.arange(T, dtype=F.dtype, device=F.device) - (T - 1) / 2  # zero-mean time axis
-
-    intercept = F.mean(dim=2, keepdim=True)                        # (K, d, 1)
-    slope = (F * t).sum(dim=2, keepdim=True) / (t * t).sum()      # (K, d, 1)
-
-    return F - intercept - slope * t                               # (K, d, T)
+    """Per-plane RMS normalization: each 2D plane gets its own scalar."""
+    K, d, T = F.shape
+    D = d // 2
+    F_p = F.reshape(K, D, 2, T)                          # (K, D, 2, T)
+    sq_norms = F_p.pow(2).sum(dim=(2, 3))                 # (K, D)
+    mean_sq = sq_norms.mean(dim=0)                         # (D,)
+    rms = (mean_sq + eps).sqrt().reshape(1, D, 1, 1)       # (1, D, 1, 1)
+    return (F_p / rms).reshape(K, d, T)
 
 
 def loss_fn(F: torch.Tensor, lambda_bt: float = 5e-3, normalize_bt: bool = False) -> torch.Tensor:
-    """Training loss: −S(detrend(F̂)) + λ·BT(F).
+    """Training loss: −S(F̂) + λ·BT(F).
 
-    Detrending projects out the linear ramp from each trial's embedding
-    before computing S, so the score only sees oscillatory (rotational)
-    structure.  Unlike temporal differentiation, detrending does not
-    amplify noise.
+    S is computed per 2D rotation plane on RMS-normalised embeddings.
+    BT decorrelates across all d dimensions.
     """
-    F_dt = _detrend(F)
-    # F_dt = F
-    F_dt_hat = _batch_rms_normalize(F_dt)
-    return -non_reversibility_S(F_dt_hat) + lambda_bt * barlow_twins_reg(F, normalize=normalize_bt)
-
-
+    F_hat = _batch_rms_normalize(F)
+    return -non_reversibility_S(F_hat) + lambda_bt * barlow_twins_reg(F, normalize=normalize_bt)

@@ -4,10 +4,8 @@ Visualise non-reversibility quality for synthetic rotation data.
 Each diagnostic plot is saved as its own PNG in the run's `outputs/` dir:
 
   01_raw_time_coded.png           — raw input, all trials, time-coded (top-2 input PCA)
-  02_embed_time_coded.png         — embedding, all trials, time-coded (top-2 embed PCA)
-  03_signed_area_histogram.png    — shoelace area, raw vs embedding
-  04_pca_explained_variance.png   — embedding PCA cumulative variance
-  05_norm_distribution.png        — per-trial embedding Frobenius norm
+  02_embed_planes.png             — one subplot per 2D rotation plane, time-coded
+  07_covariance_heatmap.png       — embedding correlation matrix
 
 Usage
 -----
@@ -108,6 +106,56 @@ def _plot_all_trials_time_coded(phasors, title, xlabel, ylabel, out_path,
     print(f"Saved → {out_path}")
 
 
+def _plot_planes_time_coded(F_hat, s_ratio, out_path,
+                            n_show=60, cmap_name="viridis", seed=0):
+    """Subplot grid: one panel per 2D rotation plane, trials time-coded."""
+    K, d, T = F_hat.shape
+    D = d // 2
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(K, size=min(n_show, K), replace=False)
+    cmap = plt.get_cmap(cmap_name)
+
+    ncols = min(D, 4)
+    nrows = (D + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 4 * nrows),
+                             squeeze=False)
+
+    planes = F_hat.reshape(K, D, 2, T)
+    per_plane_areas = np.array([
+        [signed_area(planes[k, p, 0], planes[k, p, 1]) for k in range(K)]
+        for p in range(D)
+    ])
+
+    for p in range(D):
+        ax = axes[p // ncols, p % ncols]
+        for k in idx:
+            x, y = planes[k, p, 0], planes[k, p, 1]
+            for t in range(T - 1):
+                ax.plot(x[t:t+2], y[t:t+2], color=cmap(t / (T - 1)),
+                        lw=0.8, alpha=0.5)
+
+        ax.axhline(0, color="k", lw=0.4, alpha=0.25)
+        ax.axvline(0, color="k", lw=0.4, alpha=0.25)
+        ax.spines[["top", "right"]].set_visible(False)
+        mu_a = per_plane_areas[p].mean()
+        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})\n"
+                     f"mean area = {mu_a:+.3f}", fontsize=9)
+        ax.set_xlabel(f"dim {2*p}", fontsize=8)
+        ax.set_ylabel(f"dim {2*p+1}", fontsize=8)
+        ax.tick_params(labelsize=7)
+        ax.set_aspect("equal", adjustable="datalim")
+
+    for p in range(D, nrows * ncols):
+        axes[p // ncols, p % ncols].set_visible(False)
+
+    fig.suptitle(f"Embedding rotation planes  (ζ = {s_ratio:.4f},  "
+                 f"{min(n_show, K)} of {K} trials)", fontsize=11)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
 def plot_signed_area_histogram(areas_raw, areas_emb, out_path):
     """Distribution of shoelace signed area per trial, raw PCA vs embedding PCA.
 
@@ -175,6 +223,43 @@ def plot_pca_explained_variance(F_hat, out_path):
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {out_path}")
+
+def plot_covariance_heatmap(F_hat, out_path):
+    """Empirical correlation matrix of the d embedding dims.
+
+    Math
+    ----
+    Z̃_{m,i} = (Z_{m,i} − μ_i) / σ_i
+    Corr_{ij} = (1/M) Σ_m Z̃_{m,i} Z̃_{m,j}
+    Barlow-Twins target: Corr = I.  Off-diagonal mass ⇒ redundant dims.
+    """
+    K, d, T = F_hat.shape
+    Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
+    # Z = Z - Z.mean(axis=0)
+    # Z = Z / (Z.std(axis=0) + 1e-6)
+    Cov = (Z.T @ Z) / Z.shape[0]
+
+
+    n_show = min(d, 32)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(Cov[:n_show, :n_show], cmap="RdBu_r", vmin=-1, vmax=1,
+                   interpolation="nearest", aspect="auto")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    off_diag_mean = float(np.abs(Cov - np.eye(d)).mean())
+    ax.set_title(
+        f"Embedding correlation  (top {n_show} of {d} dims)\n"
+        f"mean |Corr − I| = {off_diag_mean:.4f}  (0 = identity)",
+        fontsize=10,
+    )
+    ax.set_xlabel("Embedding dim", fontsize=9)
+    ax.set_ylabel("Embedding dim", fontsize=9)
+    ax.tick_params(labelsize=8)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
 
 
 def plot_norm_distribution(F_hat, out_path):
@@ -246,9 +331,6 @@ def make_diagnostic_plots_synth(
         F_hat = F_hat_t.numpy()          # (K, d, T)
 
     # ── raw input PCA (spike channels only — first N cols if velocity was used) ──
-    # If velocity augmentation was on, val_np is (K, 2N, T). The first N channels
-    # are the original spikes; we use only those for the raw visualisation so the
-    # axes are interpretable as neural state, not concatenated derivatives.
     N_in = val_np.shape[1]
     N_spikes = N_in // 2 if getattr(cfg, "use_velocity", False) else N_in
     spikes_only = val_np[:, :N_spikes, :]   # (K, N_spikes, T)
@@ -257,19 +339,6 @@ def make_diagnostic_plots_synth(
     raw_pca_mean, raw_pca_Vh2 = _fit_pca2(raw_flat)
     phasors_raw = _windows_to_pca2(spikes_only, raw_pca_mean, raw_pca_Vh2)  # (K, 2, T)
 
-    # ── embedding PCA ────────────────────────────────────────────────────────
-    emb_flat = F_hat.transpose(0, 2, 1).reshape(K * F_hat.shape[2], F_hat.shape[1])
-    emb_pca_mean, emb_pca_Vh2 = _fit_pca2(emb_flat)
-    phasors_emb = _windows_to_pca2(F_hat, emb_pca_mean, emb_pca_Vh2)       # (K, 2, T)
-
-    # ── singular value ratio: how much variance is in the top 2 embedding dims ──
-    sv = np.linalg.svd(emb_flat - emb_flat.mean(axis=0), full_matrices=False, compute_uv=False)
-    pct_top2 = 100.0 * (sv[:2] ** 2).sum() / ((sv ** 2).sum() + 1e-12)
-
-    # ── signed areas ─────────────────────────────────────────────────────────
-    areas_raw = all_signed_areas(phasors_raw)
-    areas_emb = all_signed_areas(phasors_emb)
-
     # ── plots ─────────────────────────────────────────────────────────────────
     _plot_all_trials_time_coded(
         phasors_raw,
@@ -277,31 +346,15 @@ def make_diagnostic_plots_synth(
         xlabel="PC 1", ylabel="PC 2",
         out_path=os.path.join(out_dir, "01_raw_time_coded.png"),
     )
-    _plot_all_trials_time_coded(
-        phasors_emb,
-        title=(f"Embedding — top-2 PCA\n"
-               f"ζ = {s_ratio_val:.4f},  top-2 PCs = {pct_top2:.1f}%"),
-        xlabel="PC 1", ylabel="PC 2",
-        out_path=os.path.join(out_dir, "02_embed_time_coded.png"),
+    _plot_planes_time_coded(
+        F_hat, s_ratio_val,
+        out_path=os.path.join(out_dir, "02_embed_planes.png"),
     )
-    # plot_signed_area_histogram(
-    #     areas_raw, areas_emb,
-    #     out_path=os.path.join(out_dir, "03_signed_area_histogram.png"),
-    # )
-    # plot_pca_explained_variance(
-    #     F_hat,
-    #     out_path=os.path.join(out_dir, "04_pca_explained_variance.png"),
-    # )
-    # plot_norm_distribution(
-    #     F_hat,
-    #     out_path=os.path.join(out_dir, "05_norm_distribution.png"),
-    # )
+    plot_covariance_heatmap(
+        F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
+    )
 
     print(f"\nS_ratio (all val pairs): {s_ratio_val:.4f}  (max ≈ 1.0 for perfect rotation)")
-    print(f"Signed area:  raw  μ={areas_raw.mean():+.4f}  σ={areas_raw.std():.4f}"
-          f"  |μ|/σ = {abs(areas_raw.mean()) / (areas_raw.std() + 1e-12):.3f}")
-    print(f"              emb  μ={areas_emb.mean():+.4f}  σ={areas_emb.std():.4f}"
-          f"  |μ|/σ = {abs(areas_emb.mean()) / (areas_emb.std() + 1e-12):.3f}")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────

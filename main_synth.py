@@ -48,7 +48,7 @@ def main():
     windows = np.load("rotations.npy")
     windows = windows.astype(np.float32)
     windows = np.transpose(windows, (0, 2, 1)) # (K,N,T)
-    windows = windows + 0.5 * np.random.randn(*windows.shape).astype(np.float32) # add some noise
+    windows = windows + 0.1 * np.random.randn(*windows.shape).astype(np.float32) # add some noise
 
 
     # LOADING MONKEY DATA NPZ
