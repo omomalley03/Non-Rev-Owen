@@ -16,7 +16,7 @@ def _pair_terms(F: torch.Tensor):
     # trace_2[k,l] - trace of Z^2
     # trace_2 = torch.einsum("kim,ljm,kjn,lin->kl", F, F, F, F)  # (K, K)
     Z_squared = torch.einsum("klnm,klmj->klnj",Z,Z) # (K, K, N, N)
-    trace_2 = torch.einsum("klnn->kl",Z_squared)
+    trace_2 = torch.einsum("klnn->kl",Z_squared)     # (K, K)
     # TODO: can we compute these more efficiently without forming the full (K, K, N, N) Z?
     return (trace_1 ** 2 - trace_2).sum(), (trace_1 ** 2 + trace_2).sum() 
 
