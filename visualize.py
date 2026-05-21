@@ -644,6 +644,7 @@ def make_diagnostic_plots(
     print("Computing embeddings…")
     with torch.no_grad():
         F_hat_t = model(val_tensor)
+        F_hat_t = F_hat_t - F_hat_t.mean(dim=[0, 2], keepdim=True)  # zero-mean per dim across batch and time
         s_ratio_val = compute_S_ratio(F_hat_t).item()
         F_hat = F_hat_t.numpy()
 
