@@ -31,18 +31,18 @@ class Config:
     seed: int = 0
 
     # --- model ---
-    d: int = 4                       # embedding dimension (per snapshot)
+    d: int = 2                     # embedding dimension (per snapshot)
     hidden_dim: int = 256              # MLP hidden layer width
     depth: int = 3                     # number of MLP layers (1 = pure linear, SCA-equivalent)
     dropout: float = 0.2              # dropout probability applied after each hidden activation
 
     # --- training ---
     batch_size: int = 256
-    epochs: int = 50
+    epochs: int = 100
     lr: float = 1e-2
     weight_decay: float = 1e-4
     # lambda_bt_unnormed: float = 0.01
-    lambda_bt: float = 0
+    lambda_bt: float = 0.1
     # lambda_bt: float = 1.4e-4            # Barlow Twins covariance regularisation weight default 5e-3
     # lambda_bt: float = 0.00224
     normalize_bt: bool = False         # never internally normalise before Barlow Twins term

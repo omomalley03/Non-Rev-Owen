@@ -406,6 +406,7 @@ def plot_covariance_heatmap(F_hat, out_path):
     Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
     # Z = Z - Z.mean(axis=0)
     # Z = Z / (Z.std(axis=0) + 1e-6)
+    Z = Z-Z.mean(axis=0)
     Cov = (Z.T @ Z) / Z.shape[0]
 
 
@@ -729,7 +730,7 @@ def main():
     grand_mean = windows.mean(axis=0, keepdims=True)  # (1, N, T)
     windows = windows - grand_mean
     
-    _, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
+    train_ds, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
     hand_windows = _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s)
 
     model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout)
@@ -737,7 +738,7 @@ def main():
 
     make_diagnostic_plots(
         model=model,
-        val_ds=val_ds,
+        val_ds=train_ds, # WARNING
         trial_info=trial_info,
         cfg=cfg,
         run_dir=run_dir,

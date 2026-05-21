@@ -62,7 +62,7 @@ def barlow_twins_reg(F: torch.Tensor, eps: float = 1e-6, normalize: bool = False
     #     Z = Z / (Z.std(dim=0, keepdim=True) + eps)        # unit-variance per dim
 
     M = Z.shape[0]
-
+    Z = Z-Z.mean(dim=0, keepdims=True)               # zero-mean per dim
     Cov = (Z.T @ Z) / M
 
     return ((Cov - torch.eye(d, device=F.device)) ** 2).sum()
@@ -85,5 +85,7 @@ def loss_fn(F: torch.Tensor, lambda_bt: float = 5e-3, normalize_bt: bool = False
     S is computed per 2D rotation plane on RMS-normalised embeddings.
     BT decorrelates across all d dimensions.
     """
+    # F = F-F.mean(dim=[0,2], keepdims=True)  # zero-mean per dim across batch and time
     F_hat = _batch_rms_normalize(F)
     return -non_reversibility_S(F_hat) + lambda_bt * barlow_twins_reg(F, normalize=normalize_bt)
+    # return lambda_bt * barlow_twins_reg(F, normalize=normalize_bt)

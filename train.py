@@ -63,6 +63,7 @@ def train(model, train_ds, val_ds, cfg: Config) -> dict:
             batch = batch.to(device)                    # (K, N, T)
             optimizer.zero_grad()
             F = model(batch)                            # (K, d, T)
+            F = F - F.mean(dim=[0, 2], keepdim=True)  # zero-mean per dim across batch and time
             loss = loss_fn(F, cfg.lambda_bt, cfg.normalize_bt)  # scalar
             loss.backward()
             optimizer.step()
