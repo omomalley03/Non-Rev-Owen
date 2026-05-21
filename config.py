@@ -42,7 +42,7 @@ class Config:
     lr: float = 1e-2
     weight_decay: float = 1e-4
     # lambda_bt_unnormed: float = 0.01
-    lambda_bt: float = 1e-2
+    lambda_bt: float = 0
     # lambda_bt: float = 1.4e-4            # Barlow Twins covariance regularisation weight default 5e-3
     # lambda_bt: float = 0.00224
     normalize_bt: bool = False         # never internally normalise before Barlow Twins term
