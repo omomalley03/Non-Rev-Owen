@@ -1,8 +1,14 @@
+import os
+import pickle
+import warnings
+
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset, Subset, random_split
 from scipy.ndimage import gaussian_filter1d
 from nlb_tools.nwb_interface import NWBDataset
+
+_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 
 
 # NLB time-related fields stored as timedelta64[ns]; convert to seconds
@@ -92,6 +98,27 @@ def load_mcmaze(nwb_path: str, bin_ms: int = 5):
         hand_pos_raw = None
 
     return spikes_raw, bin_width_s, trial_info, time_index_s, hand_pos_raw
+
+
+def load_mcmaze_cached(nwb_path: str, bin_ms: int = 5):
+    """Load MC_Maze data from a pickle cache if available, else fall back to NWB.
+
+    The cache is created by running ``python cache_data.py``. Cache files live
+    in ``cache/mcmaze_bin{bin_ms}ms.pkl`` next to this source file.
+    """
+    cache_file = os.path.join(_CACHE_DIR, f"mcmaze_bin{bin_ms}ms.pkl")
+    if os.path.exists(cache_file):
+        with open(cache_file, "rb") as f:
+            d = pickle.load(f)
+        return (d["spikes_raw"], d["bin_width_s"], d["trial_info"],
+                d["time_index_s"], d["hand_pos_raw"])
+
+    warnings.warn(
+        f"No cache found at {cache_file}. Falling back to NWB "
+        f"(run `python cache_data.py` to speed up future loads).",
+        stacklevel=2,
+    )
+    return load_mcmaze(nwb_path, bin_ms)
 
 
 def gaussian_smooth(X: np.ndarray, sigma_samples: float) -> np.ndarray:

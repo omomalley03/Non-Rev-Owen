@@ -32,7 +32,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
 from config import Config
-from data import load_mcmaze, gaussian_smooth, make_windows, train_val_split
+from data import load_mcmaze_cached, gaussian_smooth, make_windows, train_val_split
 from model import MLP
 from loss import S_ratio as compute_S_ratio
 
@@ -560,6 +560,7 @@ def make_diagnostic_plots(
     print("Computing embeddings…")
     with torch.no_grad():
         F_hat_t = model(val_tensor)
+        F_hat_t = F_hat_t - F_hat_t.mean(dim=[0, 2], keepdim=True)
         s_ratio_val = compute_S_ratio(F_hat_t).item()
         F_hat = F_hat_t.numpy()
 
@@ -649,7 +650,7 @@ def main():
     print(f"Loaded checkpoint from epoch {ckpt['epoch']}")
 
     print("Loading data…")
-    spikes_raw, bin_width_s, trial_info, time_index_s, hand_pos_raw = load_mcmaze(
+    spikes_raw, bin_width_s, trial_info, time_index_s, hand_pos_raw = load_mcmaze_cached(
         cfg.nwb_path, cfg.bin_ms
     )
     N = spikes_raw.shape[0]

@@ -31,7 +31,7 @@ class Config:
     seed: int = 0
 
     # --- model ---
-    d: int = 8                       # embedding dimension (per snapshot)
+    d: int = 2                       # embedding dimension (per snapshot)
     hidden_dim: int = 256              # MLP hidden layer width
     depth: int = 3                     # number of MLP layers (1 = pure linear, SCA-equivalent)
     dropout: float = 0.2              # dropout probability applied after each hidden activation
