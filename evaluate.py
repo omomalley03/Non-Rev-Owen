@@ -46,11 +46,12 @@ def run_linear_probe(model, train_ds, val_ds, trial_info, cfg: Config, run_dir: 
         train_loader = DataLoader(train_ds, batch_size=len(train_ds), shuffle=False)
         (train_tensor,) = next(iter(train_loader))
         F_train = model(train_tensor).numpy()
+        F_train = F_train - F_train.mean(axis=0, keepdims=True)  # zero-mean per dim across batch and time
 
         val_loader = DataLoader(val_ds, batch_size=len(val_ds), shuffle=False)
         (val_tensor,) = next(iter(val_loader))
         F_val = model(val_tensor).numpy()
-
+        F_val = F_val - F_val.mean(axis=0, keepdims=True)  # zero-mean per dim across batch and time
     X_train = F_train.mean(axis=2)
     X_val = F_val.mean(axis=2)
 

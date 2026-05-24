@@ -9,5 +9,6 @@ save_data.py
 
 runs/
 synth_runs/
+cache/
 
 *.ipynb

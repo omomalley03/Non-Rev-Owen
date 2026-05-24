@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from config import Config
-from data import load_mcmaze, gaussian_smooth, soft_normalize, make_windows, train_val_split
+from data import load_mcmaze_cached, gaussian_smooth, soft_normalize, make_windows, train_val_split
 from model import MLP
 from train import train
 from visualize import make_diagnostic_plots, _hand_windows_from_raw
@@ -44,7 +44,7 @@ def main():
     set_seed(cfg.seed)
 
     print("Loading MC_Maze data …")
-    spikes_raw, bin_width_s, trial_info, time_index_s, hand_pos_raw = load_mcmaze(
+    spikes_raw, bin_width_s, trial_info, time_index_s, hand_pos_raw = load_mcmaze_cached(
         cfg.nwb_path, cfg.bin_ms
     )
     N = spikes_raw.shape[0]
