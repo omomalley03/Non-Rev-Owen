@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
 from config import Config
-from data import load_mcmaze, gaussian_smooth, make_windows, train_val_split
+from data import load_mcmaze_cached, gaussian_smooth, make_windows, train_val_split
 from model import MLP
 from loss import S_ratio as compute_S_ratio
 
@@ -525,38 +525,62 @@ def _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_widt
     )
 
 
-def plot_conditions_diagnostic(hand_windows, trial_info, out_path):
+def plot_conditions_diagnostic(hand_windows, trial_info, val_indices, out_path):
     """Sanity-check condition splitting using physical hand trajectories.
 
-    For each condition (using the same priority as `_get_condition_groups`,
-    over *all* trials — not just val), plot the trial-averaged hand path
-    coloured by the condition's HSV reach angle. Distinct curved reach paths
-    in different directions ⇒ conditions are splitting on a meaningful axis.
+    Left panel: all trials. Right panel: val-only trials.
     """
-    groups, colors = _get_condition_groups(trial_info)
+    groups_all, colors_all = _get_condition_groups(trial_info)
 
-    fig, ax = plt.subplots(figsize=(7, 7))
-    for cond_key in sorted(groups.keys(), key=lambda k: str(k)):
-        idx_list = groups[cond_key]
-        mean_hand = hand_windows[idx_list].mean(axis=0)   # (2, T)
-        color = colors[cond_key]
-        ax.plot(mean_hand[0], mean_hand[1], lw=0.9, color=color, alpha=0.85)
-        ax.scatter(mean_hand[0, 0], mean_hand[1, 0], color=color, s=18, zorder=5)
+    trial_info_val = trial_info.iloc[val_indices].reset_index(drop=True)
+    hand_windows_val = hand_windows[val_indices]
+    groups_val, colors_val = _get_condition_groups(trial_info_val)
 
-    cond_sizes = [len(v) for v in groups.values()]
-    ax.set_title(
-        f"Condition-split diagnostic: trial-avg hand trajectories\n"
-        f"{len(groups)} conditions  |  trials/cond: "
-        f"min={min(cond_sizes)}, median={int(np.median(cond_sizes))}, "
-        f"max={max(cond_sizes)}",
+    fig, (ax_all, ax_val) = plt.subplots(1, 2, figsize=(14, 6))
+
+    for cond_key in sorted(groups_all.keys(), key=lambda k: str(k)):
+        idx_list = groups_all[cond_key]
+        mean_hand = hand_windows[idx_list].mean(axis=0)
+        color = colors_all[cond_key]
+        ax_all.plot(mean_hand[0], mean_hand[1], lw=0.9, color=color, alpha=0.85)
+        ax_all.scatter(mean_hand[0, 0], mean_hand[1, 0], color=color, s=18, zorder=5)
+
+    cond_sizes_all = [len(v) for v in groups_all.values()]
+    ax_all.set_title(
+        f"All trials ({hand_windows.shape[0]})\n"
+        f"{len(groups_all)} conditions  |  trials/cond: "
+        f"min={min(cond_sizes_all)}, median={int(np.median(cond_sizes_all))}, "
+        f"max={max(cond_sizes_all)}",
         fontsize=10,
     )
-    ax.set_xlabel("hand_x", fontsize=9)
-    ax.set_ylabel("hand_y", fontsize=9)
-    ax.set_aspect("equal", adjustable="datalim")
-    ax.tick_params(labelsize=8)
-    ax.spines[["top", "right"]].set_visible(False)
+    ax_all.set_xlabel("hand_x", fontsize=9)
+    ax_all.set_ylabel("hand_y", fontsize=9)
+    ax_all.set_aspect("equal", adjustable="datalim")
+    ax_all.tick_params(labelsize=8)
+    ax_all.spines[["top", "right"]].set_visible(False)
 
+    for cond_key in sorted(groups_val.keys(), key=lambda k: str(k)):
+        idx_list = groups_val[cond_key]
+        mean_hand = hand_windows_val[idx_list].mean(axis=0)
+        color = colors_val[cond_key]
+        ax_val.plot(mean_hand[0], mean_hand[1], lw=0.9, color=color, alpha=0.85)
+        ax_val.scatter(mean_hand[0, 0], mean_hand[1, 0], color=color, s=18, zorder=5)
+
+    cond_sizes_val = [len(v) for v in groups_val.values()]
+    ax_val.set_title(
+        f"Val trials ({hand_windows_val.shape[0]})\n"
+        f"{len(groups_val)} conditions  |  trials/cond: "
+        f"min={min(cond_sizes_val)}, median={int(np.median(cond_sizes_val))}, "
+        f"max={max(cond_sizes_val)}",
+        fontsize=10,
+    )
+    ax_val.set_xlabel("hand_x", fontsize=9)
+    ax_val.set_ylabel("hand_y", fontsize=9)
+    ax_val.set_aspect("equal", adjustable="datalim")
+    ax_val.tick_params(labelsize=8)
+    ax_val.spines[["top", "right"]].set_visible(False)
+
+    fig.suptitle("Condition-split diagnostic: trial-avg hand trajectories", fontsize=11)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -624,7 +648,7 @@ def make_diagnostic_plots(
 
     if hand_windows is not None:
         plot_conditions_diagnostic(
-            hand_windows, trial_info,
+            hand_windows, trial_info, val_indices,
             out_path=os.path.join(out_dir, "00_conditions_diagnostic.png"),
         )
     else:
@@ -644,7 +668,7 @@ def make_diagnostic_plots(
     print("Computing embeddings…")
     with torch.no_grad():
         F_hat_t = model(val_tensor)
-        F_hat_t = F_hat_t - F_hat_t.mean(dim=0, keepdim=True)  # zero-mean per dim across batch and time
+        F_hat_t = F_hat_t - F_hat_t.mean(dim=cfg.F_mean_axis, keepdim=True)  # zero-mean per dim across batch and time
         s_ratio_val = compute_S_ratio(F_hat_t).item()
         F_hat = F_hat_t.numpy()
 
@@ -712,7 +736,7 @@ def main():
     print(f"Loaded checkpoint from epoch {ckpt['epoch']}")
 
     print("Loading data…")
-    spikes_raw, bin_width_s, trial_info, time_index_s, hand_pos_raw = load_mcmaze(
+    spikes_raw, bin_width_s, trial_info, time_index_s, hand_pos_raw = load_mcmaze_cached(
         cfg.nwb_path, cfg.bin_ms
     )
     N = spikes_raw.shape[0]
@@ -728,9 +752,10 @@ def main():
         align_field=getattr(cfg, "align_field", "move_onset_time"),
         pre_ms=getattr(cfg, "pre_ms", 100),
     )
-    grand_mean = windows.mean(axis=0, keepdims=True)  # (1, N, T)
-    windows = windows - grand_mean
-    
+    # grand_mean = windows.mean(axis=(0,2), keepdims=True)  # (1, N, T)
+    # windows = windows - grand_mean
+    if cfg.split == "random":
+        trial_info = trial_info.drop(columns=["split"], errors="ignore")
     train_ds, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
     hand_windows = _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s)
 

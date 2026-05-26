@@ -23,26 +23,28 @@ class Config:
     # aligned to align_field, taking pre_ms before and post_ms after, so
     # window_size = (pre_ms + post_ms) / bin_ms.
     align_field: str = "move_onset_time"
-    pre_ms: int = 100                   # ms before align_field
-    post_ms: int = 500                  # ms after align_field
-    window_size: int = 120              # = (pre_ms + post_ms) / bin_ms
+    pre_ms: int = 200                   # ms before align_field
+    post_ms: int = 140                  # ms after align_field
+    window_size: int = 90              # = (pre_ms + post_ms) / bin_ms
     window_strategy: str = "trial_aligned"
     val_split: float = 0.1              # only used if dataset has no `split` column
     seed: int = 0
+    split: str = "dataset"                   # "random" or "dataset" (use `split` column if present, else random split)
 
     # --- model ---
-    d: int = 2                     # embedding dimension (per snapshot)
+    d: int = 8                     # embedding dimension (per snapshot)
     hidden_dim: int = 256              # MLP hidden layer width
     depth: int = 3                     # number of MLP layers (1 = pure linear, SCA-equivalent)
-    dropout: float = 0.2              # dropout probability applied after each hidden activation
+    dropout: float = 0.2            # dropout probability applied after each hidden activation
 
+    F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
     batch_size: int = 256
     epochs: int = 100
     lr: float = 1e-2
     weight_decay: float = 1e-4
     # lambda_bt_unnormed: float = 0.01
-    lambda_bt: float = 0.1
+    lambda_bt: float = 2e-1
     # lambda_bt: float = 1.4e-4            # Barlow Twins covariance regularisation weight default 5e-3
     # lambda_bt: float = 0.00224
     normalize_bt: bool = False         # never internally normalise before Barlow Twins term
