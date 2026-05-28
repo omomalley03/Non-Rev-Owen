@@ -3,11 +3,10 @@ Visualise non-reversibility quality from a trained checkpoint.
 
 Each diagnostic plot is saved as its own PNG in the run's `outputs/` dir:
 
-  00_conditions_diagnostic.png          — per-condition mean hand trajectory (sanity check)
   01_raw_time_coded.png                 — raw, condition-avg, time-coded
   02_embed_planes_time_coded.png        — per rotation plane, condition-avg, time-coded
   03_raw_condition_hsv.png              — raw, condition-avg, HSV by reach angle
-  04_embed_planes_condition_hsv.png     — per rotation plane, condition-avg, HSV
+  04_embed_planes_condition_hsv.png     — hand traj + embedding planes, same HSV colours
   07_covariance_heatmap.png             — embedding correlation matrix
   08_between_within_variance.png        — trial-discriminability over time
   09_embedding_norm_distribution.png    — ‖F_k‖_F histogram
@@ -118,16 +117,25 @@ def _get_condition_groups(trial_info_val, n_bins: int = 8):
             key = (int(row["trial_type"]), int(row["trial_version"]))
             groups.setdefault(key, []).append(i)
 
-        colors = {}
+        cond_angles = {}
         for key, idx_list in groups.items():
             angles = [_reach_angle_for_row(trial_info_val.iloc[i]) for i in idx_list]
             angles = [a for a in angles if not np.isnan(a)]
             if angles:
-                # circular mean
-                ang = float(np.arctan2(np.mean(np.sin(angles)), np.mean(np.cos(angles))))
-                colors[key] = plt.cm.hsv(ang / (2 * np.pi) + 0.5)
+                cond_angles[key] = float(np.arctan2(
+                    np.mean(np.sin(angles)), np.mean(np.cos(angles))))
             else:
-                colors[key] = plt.cm.hsv(hash(key) % 1000 / 1000.0)
+                cond_angles[key] = float("inf")
+
+        sorted_keys = sorted(groups.keys(), key=lambda k: cond_angles[k])
+        groups = {k: groups[k] for k in sorted_keys}
+        colors = {}
+        for k in sorted_keys:
+            ang = cond_angles[k]
+            if ang != float("inf"):
+                colors[k] = plt.cm.hsv(ang / (2 * np.pi) + 0.5)
+            else:
+                colors[k] = plt.cm.hsv(hash(k) % 1000 / 1000.0)
         return groups, colors
 
     # Priority 2: continuous reach_angle
@@ -140,9 +148,11 @@ def _get_condition_groups(trial_info_val, n_bins: int = 8):
         for i, b in enumerate(bin_idx):
             groups.setdefault(int(b), []).append(i)
 
+        sorted_bins = sorted(groups.keys())
+        groups = {b: groups[b] for b in sorted_bins}
         centers = 0.5 * (edges[:-1] + edges[1:])
         colors = {b: plt.cm.hsv(centers[b] / (2 * np.pi) + 0.5)
-                  for b in groups.keys()}
+                  for b in sorted_bins}
         return groups, colors
 
     # Priority 3: trial_type alone
@@ -177,7 +187,7 @@ def _plot_time_coded(phasors, groups, title, xlabel, ylabel, out_path,
     cmap = plt.get_cmap(cmap_name)
     T = phasors.shape[2]
 
-    for cond_key in sorted(groups.keys(), key=lambda k: str(k)):
+    for cond_key in groups:
         idx_list = groups[cond_key]
         mean_traj = phasors[idx_list].mean(axis=0)
         x, y = mean_traj[0], mean_traj[1]
@@ -220,7 +230,7 @@ def _plot_planes_time_coded(F_hat, groups, s_ratio, out_path, cmap_name="coolwar
 
     for p in range(D):
         ax = axes[p // ncols, p % ncols]
-        for cond_key in sorted(groups.keys(), key=lambda k: str(k)):
+        for cond_key in groups:
             idx_list = groups[cond_key]
             mean_traj = planes[idx_list, p].mean(axis=0)  # (2, T)
             x, y = mean_traj[0], mean_traj[1]
@@ -248,20 +258,47 @@ def _plot_planes_time_coded(F_hat, groups, s_ratio, out_path, cmap_name="coolwar
     print(f"Saved → {out_path}")
 
 
-def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path):
-    """Subplot grid: one panel per 2D rotation plane, condition-avg, HSV-colored."""
+def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
+                               hand_windows_val=None):
+    """Subplot grid: hand trajectories (if available) + one panel per 2D rotation plane.
+
+    When hand_windows_val is provided the first panel shows val-set hand
+    trajectories using the *same* condition groups and HSV colours as the
+    embedding planes, giving a direct side-by-side comparison.
+    """
     K, d, T = F_hat.shape
     D = d // 2
     planes = F_hat.reshape(K, D, 2, T)
 
-    ncols = min(D, 4)
-    nrows = (D + ncols - 1) // ncols
+    has_hand = hand_windows_val is not None
+    n_panels = (1 if has_hand else 0) + D
+    ncols = min(n_panels, 5)
+    nrows = (n_panels + ncols - 1) // ncols
     fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 4 * nrows),
                              squeeze=False)
 
+    panel = 0
+
+    if has_hand:
+        ax = axes[0, 0]
+        for cond_key in groups:
+            idx_list = groups[cond_key]
+            mean_hand = hand_windows_val[idx_list].mean(axis=0)
+            color = colors[cond_key]
+            ax.plot(mean_hand[0], mean_hand[1], lw=1.4, color=color, alpha=0.9)
+            ax.scatter(mean_hand[0, 0], mean_hand[1, 0], color=color, s=25, zorder=5)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.set_title("Hand trajectory (val)", fontsize=9)
+        ax.set_xlabel("hand_x", fontsize=8)
+        ax.set_ylabel("hand_y", fontsize=8)
+        ax.tick_params(labelsize=7)
+        ax.set_aspect("equal", adjustable="datalim")
+        panel = 1
+
     for p in range(D):
-        ax = axes[p // ncols, p % ncols]
-        for cond_key in sorted(groups.keys(), key=lambda k: str(k)):
+        idx = panel + p
+        ax = axes[idx // ncols, idx % ncols]
+        for cond_key in groups:
             idx_list = groups[cond_key]
             mean_traj = planes[idx_list, p].mean(axis=0)  # (2, T)
             color = colors[cond_key]
@@ -275,12 +312,12 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path):
         ax.tick_params(labelsize=7)
         ax.set_aspect("equal", adjustable="datalim")
 
-    for p in range(D, nrows * ncols):
-        axes[p // ncols, p % ncols].set_visible(False)
+    for i in range(n_panels, nrows * ncols):
+        axes[i // ncols, i % ncols].set_visible(False)
 
     n_conds = len(groups)
     n_per = float(np.mean([len(v) for v in groups.values()]))
-    fig.suptitle(f"Embedding — condition-avg, HSV  (ζ = {s_ratio:.2f},  "
+    fig.suptitle(f"Embeddings coded by trial (ζ = {s_ratio:.2f},  "
                  f"{n_conds} conditions, {n_per:.1f} trials/cond)", fontsize=11)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -294,7 +331,7 @@ def _plot_condition_hsv(phasors, groups, colors, title, xlabel, ylabel, out_path
     """One mean trajectory per condition, single HSV colour per condition."""
     fig, ax = plt.subplots(figsize=(6, 5))
 
-    for cond_key in sorted(groups.keys(), key=lambda k: str(k)):
+    for cond_key in groups:
         idx_list = groups[cond_key]
         mean_traj = phasors[idx_list].mean(axis=0)
         color = colors[cond_key]
@@ -538,7 +575,7 @@ def plot_conditions_diagnostic(hand_windows, trial_info, val_indices, out_path):
 
     fig, (ax_all, ax_val) = plt.subplots(1, 2, figsize=(14, 6))
 
-    for cond_key in sorted(groups_all.keys(), key=lambda k: str(k)):
+    for cond_key in groups_all:
         idx_list = groups_all[cond_key]
         mean_hand = hand_windows[idx_list].mean(axis=0)
         color = colors_all[cond_key]
@@ -559,7 +596,7 @@ def plot_conditions_diagnostic(hand_windows, trial_info, val_indices, out_path):
     ax_all.tick_params(labelsize=8)
     ax_all.spines[["top", "right"]].set_visible(False)
 
-    for cond_key in sorted(groups_val.keys(), key=lambda k: str(k)):
+    for cond_key in groups_val:
         idx_list = groups_val[cond_key]
         mean_hand = hand_windows_val[idx_list].mean(axis=0)
         color = colors_val[cond_key]
@@ -623,6 +660,9 @@ def make_diagnostic_plots(
     cfg: Config,
     run_dir: str,
     hand_windows=None,
+    cond_start: int | None = None,
+    cond_stop: int | None = None,
+    cond_skip: int | None = None,
 ):
     """Compute embeddings on val_ds and write all diagnostic PNGs to run_dir/outputs/.
 
@@ -636,7 +676,10 @@ def make_diagnostic_plots(
     trial_info    : full trial_info DataFrame (val_ds.indices selects from it)
     cfg           : Config used to train the model
     run_dir       : run directory; plots are written to {run_dir}/outputs/
-    hand_windows  : optional (K_all, 2, T) array; if given, plot 00 is generated
+    hand_windows  : optional (K_all, 2, T) array; if given, plot 04 includes hand panel
+    cond_start    : first condition index to plot (angle-sorted order)
+    cond_stop     : one-past-last condition index to plot
+    cond_skip     : step size for condition selection
     """
 
     out_dir = os.path.join(run_dir, "outputs")
@@ -646,13 +689,15 @@ def make_diagnostic_plots(
     trial_info_val = trial_info.iloc[val_indices].reset_index(drop=True)
     cond_groups, cond_colors = _get_condition_groups(trial_info_val)
 
-    if hand_windows is not None:
-        plot_conditions_diagnostic(
-            hand_windows, trial_info, val_indices,
-            out_path=os.path.join(out_dir, "00_conditions_diagnostic.png"),
-        )
-    else:
-        print("Skipping condition diagnostic: no hand_pos available.")
+    if cond_start is not None or cond_stop is not None or cond_skip is not None:
+        all_keys = list(cond_groups.keys())
+        keep = all_keys[cond_start:cond_stop:cond_skip]
+        print(f"Condition slice [{cond_start}:{cond_stop}:{cond_skip}]: "
+              f"plotting {len(keep)} of {len(all_keys)} conditions")
+        cond_groups = {k: cond_groups[k] for k in keep}
+        cond_colors = {k: cond_colors[k] for k in keep}
+
+    hand_windows_val = hand_windows[val_indices] if hand_windows is not None else None
 
     # CPU is plenty for inference on a val set of a few hundred trials.
     model = model.cpu().eval()
@@ -700,6 +745,7 @@ def make_diagnostic_plots(
     _plot_planes_condition_hsv(
         F_hat, cond_groups, cond_colors, s_ratio_val,
         out_path=os.path.join(out_dir, "04_embed_planes_condition_hsv.png"),
+        hand_windows_val=hand_windows_val,
     )
     plot_covariance_heatmap(
         F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
@@ -722,6 +768,12 @@ def main():
     parser.add_argument("--run", default=None,
                         help="Integer (1=most recent) or explicit path. Omit for most recent.")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--start", type=int, default=None,
+                        help="First condition index to plot (sorted order). Default: 0.")
+    parser.add_argument("--stop", type=int, default=None,
+                        help="One-past-last condition index to plot (sorted order). Default: all.")
+    parser.add_argument("--skip", type=int, default=None,
+                        help="Step size for condition selection (e.g. --start 0 --stop 100 --skip 10).")
     args = parser.parse_args()
 
     run_dir = _resolve_run_dir(args.run)
@@ -764,11 +816,14 @@ def main():
 
     make_diagnostic_plots(
         model=model,
-        val_ds=val_ds, 
+        val_ds=val_ds,
         trial_info=trial_info,
         cfg=cfg,
         run_dir=run_dir,
         hand_windows=hand_windows,
+        cond_start=args.start,
+        cond_stop=args.stop,
+        cond_skip=args.skip,
     )
 
 

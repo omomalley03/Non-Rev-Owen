@@ -45,6 +45,11 @@ def non_reversibility_S(F: torch.Tensor) -> torch.Tensor:
     return (2.0 / K ** 2) * minus_sum
 
 
+def non_rev_regularizer(F: torch.Tensor) -> torch.Tensor:
+    """Regularize by minimizing cross-plane non-reversibility score"""
+    F_shuff = F[F.randperm(F.shape[0])]  # shuffle batch dimension to break within-plane structure
+    return non_reversibility_S(F_shuff)
+
 def barlow_twins_reg(F: torch.Tensor, eps: float = 1e-6, normalize: bool = False) -> torch.Tensor:
     """Barlow Twins covariance regularizer on the per-timepoint embeddings.
 
