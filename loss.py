@@ -98,9 +98,9 @@ def plane_barlow_twins_reg(F: torch.Tensor) -> torch.Tensor:
 
     # mask: True = penalised, False = allowed (within-plane off-diagonal)
     mask = torch.ones(d, d, dtype=torch.bool, device=F.device)
-    # for p in range(D):
-    #     mask[2*p, 2*p + 1] = False
-    #     mask[2*p + 1, 2*p] = False
+    for p in range(D):
+        mask[2*p, 2*p + 1] = False
+        mask[2*p + 1, 2*p] = False
 
     return (diff[mask] ** 2).sum()
 
@@ -126,12 +126,14 @@ def loss_fn(F: torch.Tensor, lambda_xp: float = 1.0, lambda_bt: float = 1.0) -> 
     planes = d // 2
 
     F_hat = _batch_rms_normalize(F)
-
+    
     non_rev_reg = 0
-    for _ in range(planes//2):
-        non_rev_reg += non_rev_regularizer(F_hat) # now scales with number of planes and expected number for each cross-planes is 1
+    if lambda_xp > 0:
+
+        for _ in range(planes//2):
+            non_rev_reg += non_rev_regularizer(F_hat) # now scales with number of planes and expected number for each cross-planes is 1
     
     return (-non_reversibility_S(F_hat)
-            # + lambda_xp * non_rev_reg
+            + lambda_xp * non_rev_reg
             + lambda_bt * barlow_twins_reg(F)
     )

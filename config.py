@@ -40,11 +40,11 @@ class Config:
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
     batch_size: int = 256
-    epochs: int = 100
+    epochs: int = 200
     lr: float = 1e-2
     weight_decay: float = 1e-4
-    lambda_xp: float = 0.25              # cross-plane non-reversibility regularizer weight
-    lambda_bt: float = 0.12              # Barlow Twins covariance regularizer weight
+    lambda_xp: float = 0.0              # cross-plane non-reversibility regularizer weight
+    lambda_bt: float = 0.15              # Barlow Twins covariance regularizer weight
 
     # --- LR scheduler (CosineAnnealingWarmRestarts) ---
     T_0: int = 10
