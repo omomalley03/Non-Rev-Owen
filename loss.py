@@ -47,7 +47,8 @@ def non_reversibility_S(F: torch.Tensor) -> torch.Tensor:
 
 def non_rev_regularizer(F: torch.Tensor) -> torch.Tensor:
     """Regularize by minimizing cross-plane non-reversibility score"""
-    F_shuff = F[F.randperm(F.shape[0])]  # shuffle batch dimension to break within-plane structure
+    idx = torch.randperm(F.shape[1])
+    F_shuff = F[:, idx, :]
     return non_reversibility_S(F_shuff)
 
 def barlow_twins_reg(F: torch.Tensor, eps: float = 1e-6, normalize: bool = False) -> torch.Tensor:
@@ -73,6 +74,37 @@ def barlow_twins_reg(F: torch.Tensor, eps: float = 1e-6, normalize: bool = False
     return ((Cov - torch.eye(d, device=F.device)) ** 2).sum()
 
 
+def plane_barlow_twins_reg(F: torch.Tensor) -> torch.Tensor:
+    """Plane-aware Barlow Twins: penalise cross-plane covariance, allow within-plane.
+
+    Like barlow_twins_reg but the within-plane off-diagonal entries (e.g.
+    Cov[0,1] and Cov[1,0] for plane 0) are masked out of the penalty.
+    Rotation naturally creates within-plane correlation, so penalising it
+    would fight the primary loss.
+
+    Diagonal entries (variance → 1) and all cross-plane entries are still
+    penalised as in standard Barlow Twins.
+
+    Returns ‖(Cov - I) ⊙ mask‖_F² where mask zeros within-plane off-diag.
+    """
+    K, d, T = F.shape
+    D = d // 2
+    Z = F.permute(0, 2, 1).reshape(K * T, d)
+    M = Z.shape[0]
+    Z = Z - Z.mean(dim=0, keepdim=True)
+    Cov = (Z.T @ Z) / M
+
+    diff = Cov - torch.eye(d, device=F.device)
+
+    # mask: True = penalised, False = allowed (within-plane off-diagonal)
+    mask = torch.ones(d, d, dtype=torch.bool, device=F.device)
+    # for p in range(D):
+    #     mask[2*p, 2*p + 1] = False
+    #     mask[2*p + 1, 2*p] = False
+
+    return (diff[mask] ** 2).sum()
+
+
 def _batch_rms_normalize(F: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     """Per-plane RMS normalization: each 2D plane gets its own scalar."""
     K, d, T = F.shape
@@ -84,13 +116,22 @@ def _batch_rms_normalize(F: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     return (F_p / rms).reshape(K, d, T)
 
 
-def loss_fn(F: torch.Tensor, lambda_bt: float = 5e-3, normalize_bt: bool = False) -> torch.Tensor:
-    """Training loss: −S(F̂) + λ·BT(F).
+def loss_fn(F: torch.Tensor, lambda_xp: float = 1.0, lambda_bt: float = 1.0) -> torch.Tensor:
+    """Training loss: −S(F̂) + λ_xp·cross_plane_reg(F̂) + λ_bt·BT(F).
 
-    S is computed per 2D rotation plane on RMS-normalised embeddings.
-    BT decorrelates across all d dimensions.
+    S and cross-plane reg are computed on RMS-normalised embeddings.
+    BT operates on the raw embeddings.
     """
-    # F = F-F.mean(dim=cfg.F_mean_axis, keepdims=True)  # zero-mean per dim across batch and time
+    d = F.shape[1]
+    planes = d // 2
+
     F_hat = _batch_rms_normalize(F)
-    return -non_reversibility_S(F_hat) + lambda_bt * barlow_twins_reg(F, normalize=normalize_bt)
-    # return lambda_bt * barlow_twins_reg(F, normalize=normalize_bt)
+
+    non_rev_reg = 0
+    for _ in range(planes//2):
+        non_rev_reg += non_rev_regularizer(F_hat) # now scales with number of planes and expected number for each cross-planes is 1
+    
+    return (-non_reversibility_S(F_hat)
+            # + lambda_xp * non_rev_reg
+            + lambda_bt * barlow_twins_reg(F)
+    )

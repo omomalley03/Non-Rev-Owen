@@ -441,18 +441,16 @@ def plot_covariance_heatmap(F_hat, out_path):
     """
     K, d, T = F_hat.shape
     Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
-    # Z = Z - Z.mean(axis=0)
+    Z = Z - Z.mean(axis=0)
     # Z = Z / (Z.std(axis=0) + 1e-6)
-    Z = Z-Z.mean(axis=0)
-    Cov = (Z.T @ Z) / Z.shape[0]
-
+    Corr = (Z.T @ Z) / Z.shape[0]
 
     n_show = min(d, 32)
     fig, ax = plt.subplots(figsize=(6, 5))
-    im = ax.imshow(Cov[:n_show, :n_show], cmap="RdBu_r", vmin=-1, vmax=1,
+    im = ax.imshow(Corr[:n_show, :n_show], cmap="RdBu_r", vmin=-1, vmax=1,
                    interpolation="nearest", aspect="auto")
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    off_diag_mean = float(np.abs(Cov - np.eye(d)).mean())
+    off_diag_mean = float(np.abs(Corr - np.eye(d)).mean())
     ax.set_title(
         f"Embedding correlation  (top {n_show} of {d} dims)\n"
         f"mean |Corr − I| = {off_diag_mean:.4f}  (0 = identity)",
