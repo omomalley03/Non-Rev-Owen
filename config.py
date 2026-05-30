@@ -24,28 +24,27 @@ class Config:
     # window_size = (pre_ms + post_ms) / bin_ms.
     align_field: str = "move_onset_time"
     pre_ms: int = 200                   # ms before align_field
-    post_ms: int = 500                  # ms after align_field
+    post_ms: int = 140                  # ms after align_field
     window_size: int = 90              # = (pre_ms + post_ms) / bin_ms
     window_strategy: str = "trial_aligned"
     val_split: float = 0.1              # only used if dataset has no `split` column
     seed: int = 0
+    split: str = "dataset"                   # "random" or "dataset" (use `split` column if present, else random split)
 
     # --- model ---
-    d: int = 4                       # embedding dimension (per snapshot)
+    d: int = 16                     # embedding dimension (per snapshot)
     hidden_dim: int = 256              # MLP hidden layer width
     depth: int = 3                     # number of MLP layers (1 = pure linear, SCA-equivalent)
-    dropout: float = 0.0              # dropout probability applied after each hidden activation
+    dropout: float = 0.2            # dropout probability applied after each hidden activation
 
+    F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
     batch_size: int = 256
-    epochs: int = 100
+    epochs: int = 200
     lr: float = 1e-2
     weight_decay: float = 1e-4
-    # lambda_bt_unnormed: float = 0.01
-    lambda_bt: float = 1e-1
-    # lambda_bt: float = 1.4e-4            # Barlow Twins covariance regularisation weight default 5e-3
-    # lambda_bt: float = 0.00224
-    normalize_bt: bool = False         # never internally normalise before Barlow Twins term
+    lambda_xp: float = 0.0              # cross-plane non-reversibility regularizer weight
+    lambda_bt: float = 0.15              # Barlow Twins covariance regularizer weight
 
     # --- LR scheduler (CosineAnnealingWarmRestarts) ---
     T_0: int = 10
@@ -60,7 +59,7 @@ class Config:
         return (
             f"d{self.d}_h{self.hidden_dim}_dep{self.depth}"
             f"_bs{self.batch_size}_ep{self.epochs}"
-            f"_lr{_fmt(self.lr)}_lbt{_fmt(self.lambda_bt)}"
+            f"_lr{_fmt(self.lr)}_lxp{_fmt(self.lambda_xp)}_lbt{_fmt(self.lambda_bt)}"
             f"_sig{self.sigma_ms}_s{self.seed}"
         )
 
@@ -73,7 +72,8 @@ class Config:
                          "align_field", "pre_ms", "post_ms", "window_size",
                          "window_strategy", "val_split", "seed"],
             "model":    ["d", "hidden_dim", "depth", "dropout"],
-            "training": ["batch_size", "epochs", "lr", "weight_decay", "lambda_bt"],
+            "training": ["batch_size", "epochs", "lr", "weight_decay",
+                         "lambda_xp", "lambda_bt"],
             "scheduler":["T_0", "T_mult"],
         }
         name_to_val = {f.name: getattr(self, f.name) for f in fields}
