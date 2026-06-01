@@ -44,7 +44,7 @@ class Config:
     lr: float = 1e-2
     weight_decay: float = 1e-4
     lambda_xp: float = 0.0              # cross-plane non-reversibility regularizer weight
-    lambda_bt: float = 0.15              # Barlow Twins covariance regularizer weight
+    lambda_bt: float = 0.12              # Barlow Twins covariance regularizer weight
 
     # --- LR scheduler (CosineAnnealingWarmRestarts) ---
     T_0: int = 10

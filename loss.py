@@ -135,5 +135,5 @@ def loss_fn(F: torch.Tensor, lambda_xp: float = 1.0, lambda_bt: float = 1.0) -> 
     
     return (-non_reversibility_S(F_hat)
             + lambda_xp * non_rev_reg
-            + lambda_bt * barlow_twins_reg(F)
+            + lambda_bt * plane_barlow_twins_reg(F)
     )
