@@ -814,7 +814,7 @@ def main():
 
     make_diagnostic_plots(
         model=model,
-        val_ds=val_ds,
+        val_ds=train_ds,
         trial_info=trial_info,
         cfg=cfg,
         run_dir=run_dir,
