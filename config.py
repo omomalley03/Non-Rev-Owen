@@ -40,15 +40,15 @@ class Config:
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
     batch_size: int = 256
-    epochs: int = 80
+    epochs: int = 200
     lr: float = 1e-2
     weight_decay: float = 1e-4
-    lambda_xp: float = 0.0              # cross-plane non-reversibility regularizer weight
-    lambda_bt: float = 0.12              # Barlow Twins covariance regularizer weight
+    lambda_xp: float = 0.5              # cross-plane non-reversibility regularizer weight
+    lambda_bt: float = 0.0              # Barlow Twins covariance regularizer weight
     lambda_plane_bt: float = 0.0         # plane-aware BT: allow within-plane covariance, penalize cross-plane covariance
     lambda_s_balance: float = 0.0        # penalize unequal S across planes
     lambda_block_cca: float = 0.0        # plane-level linear redundancy penalty
-    # lambda_hsic: float = 0.0           # unused experiment: plane-level nonlinear redundancy penalty
+    lambda_hsic: float = 0.0             # plane-level nonlinear redundancy penalty (RBF-HSIC)
     # lambda_logdet: float = 0.0         # unused experiment: per-plane anti-collapse covariance volume penalty
     # lambda_predict: float = 0.0        # unused experiment: closed-form predictor redundancy penalty
     # lambda_predict_adv: float = 0.0    # unused experiment: learned plane-predictor adversary penalty
@@ -57,8 +57,8 @@ class Config:
     s_softmin_tau: float = 0.0           # lower values focus harder on the weakest plane
     # plane_dropout_p: float = 0.0       # unused experiment: randomly drop whole planes in the S objective
     block_cca_eps: float = 0.0
-    # hsic_max_samples: int = 512        # unused experiment: subsample K*T snapshots for HSIC
-    # hsic_sigma: float = 0.0            # unused experiment: <=0 uses median-distance heuristic
+    hsic_max_samples: int = 512          # subsample K*T snapshots for HSIC kernel
+    hsic_sigma: float = 0.0              # RBF bandwidth; <=0 uses median-distance heuristic
     # logdet_eps: float = 1e-4           # unused experiment
     # predict_ridge: float = 1e-3        # unused experiment
     # predict_adv_hidden: int = 64       # unused experiment
@@ -95,7 +95,7 @@ class Config:
             "model":    ["d", "hidden_dim", "depth", "dropout"],
             "training": ["batch_size", "epochs", "lr", "weight_decay",
                          "lambda_xp", "lambda_bt", "lambda_plane_bt",
-                         "lambda_s_balance", "lambda_block_cca",
+                         "lambda_s_balance", "lambda_block_cca", "lambda_hsic",
                          "s_objective", "s_softmin_tau", "block_cca_eps"],
             "scheduler":["T_0", "T_mult"],
         }

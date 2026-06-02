@@ -146,48 +146,6 @@ def plane_s_balance_reg(S_p: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
 #     return -torch.where(sign > 0, logabsdet, torch.full_like(logabsdet, -20.0)).mean()
 #
 #
-# def _subsample_plane_snapshots(F: torch.Tensor, max_samples: int) -> torch.Tensor:
-#     X = _plane_samples(F)
-#     if max_samples <= 0 or X.shape[1] <= max_samples:
-#         return X
-#     idx = torch.randperm(X.shape[1], device=F.device)[:max_samples]
-#     return X[:, idx]
-#
-#
-# def _rbf_kernel(X: torch.Tensor, sigma: float | None = None, eps: float = 1e-8) -> torch.Tensor:
-#     dist2 = torch.cdist(X, X).pow(2)
-#     if sigma is None or sigma <= 0:
-#         positive = dist2.detach()[dist2.detach() > 0]
-#         scale = positive.median() if positive.numel() else dist2.new_tensor(1.0)
-#         gamma = 1.0 / (scale + eps)
-#     else:
-#         gamma = 1.0 / (2.0 * sigma * sigma)
-#     return torch.exp(-gamma * dist2)
-#
-#
-# def plane_hsic_reg(F: torch.Tensor, max_samples: int = 512, sigma: float | None = None) -> torch.Tensor:
-#     """Penalize nonlinear dependence between planes with normalized RBF-HSIC."""
-#     X = _subsample_plane_snapshots(F, max_samples)
-#     D, M, _ = X.shape
-#     if D < 2 or M < 2:
-#         return F.new_tensor(0.0)
-#
-#     kernels = []
-#     for p in range(D):
-#         Kp = _rbf_kernel(X[p], sigma=sigma)
-#         Kp = Kp - Kp.mean(dim=0, keepdim=True) - Kp.mean(dim=1, keepdim=True) + Kp.mean()
-#         Kp = Kp / (Kp.norm() + 1e-8)
-#         kernels.append(Kp)
-#
-#     reg = F.new_tensor(0.0)
-#     n = 0
-#     for p in range(D):
-#         for q in range(p + 1, D):
-#             reg = reg + (kernels[p] * kernels[q]).sum()
-#             n += 1
-#     return reg / max(n, 1)
-#
-#
 # def plane_predictability_reg(F: torch.Tensor, ridge: float = 1e-3) -> torch.Tensor:
 #     """Penalize how well one plane linearly predicts another via ridge R2."""
 #     X = _plane_samples(F)
@@ -254,6 +212,59 @@ def block_cca_reg(F: torch.Tensor, eps: float = 1e-4) -> torch.Tensor:
     eye = torch.eye(D, device=F.device, dtype=torch.bool)
     return C[~eye].pow(2).sum() / (D * (D - 1))
 
+
+def _subsample_plane_snapshots(F: torch.Tensor, max_samples: int) -> torch.Tensor:
+    """Randomly subsample plane snapshots to bound the HSIC kernel size."""
+    X = _plane_samples(F)
+    if max_samples <= 0 or X.shape[1] <= max_samples:
+        return X
+    idx = torch.randperm(X.shape[1], device=F.device)[:max_samples]
+    return X[:, idx]
+
+
+def _rbf_kernel(X: torch.Tensor, sigma: float | None = None, eps: float = 1e-8) -> torch.Tensor:
+    """RBF (Gaussian) kernel over samples X of shape (M, 2); median-heuristic bandwidth if sigma<=0."""
+    dist2 = torch.cdist(X, X).pow(2)
+    if sigma is None or sigma <= 0:
+        positive = dist2.detach()[dist2.detach() > 0]
+        scale = positive.median() if positive.numel() else dist2.new_tensor(1.0)
+        gamma = 1.0 / (scale + eps)
+    else:
+        gamma = 1.0 / (2.0 * sigma * sigma)
+    return torch.exp(-gamma * dist2)
+
+
+def plane_hsic_reg(F: torch.Tensor, max_samples: int = 512, sigma: float | None = None) -> torch.Tensor:
+    """Penalize nonlinear dependence between planes with normalized RBF-HSIC.
+
+    HSIC (Hilbert-Schmidt Independence Criterion) measures dependence via the
+    cross-covariance of RBF-kernel embeddings. Unlike block CCA, which only
+    detects linear correlation, HSIC captures arbitrary nonlinear dependence
+    between planes. Each plane's (M, M) kernel is double-centered and unit-
+    normalised; the penalty is the mean kernel alignment <K_p, K_q> over all
+    plane pairs p < q, which is zero iff the planes are independent.
+    """
+    X = _subsample_plane_snapshots(F, max_samples)
+    D, M, _ = X.shape
+    if D < 2 or M < 2:
+        return F.new_tensor(0.0)
+
+    kernels = []
+    for p in range(D):
+        Kp = _rbf_kernel(X[p], sigma=sigma)
+        Kp = Kp - Kp.mean(dim=0, keepdim=True) - Kp.mean(dim=1, keepdim=True) + Kp.mean()
+        Kp = Kp / (Kp.norm() + 1e-8)
+        kernels.append(Kp)
+
+    reg = F.new_tensor(0.0)
+    n = 0
+    for p in range(D):
+        for q in range(p + 1, D):
+            reg = reg + (kernels[p] * kernels[q]).sum()
+            n += 1
+    return reg / max(n, 1)
+
+
 def loss_fn(F: torch.Tensor, cfg=None, lambda_xp: float | None = None, lambda_bt: float | None = None,
             training: bool = True) -> torch.Tensor:
     """Training loss with independently weighted plane regularizers.
@@ -298,8 +309,12 @@ def loss_fn(F: torch.Tensor, cfg=None, lambda_xp: float | None = None, lambda_bt
         loss = loss + cfg.lambda_s_balance * plane_s_balance_reg(non_reversibility_S_per_plane(F_hat))
     if getattr(cfg, "lambda_block_cca", 0.0) > 0:
         loss = loss + cfg.lambda_block_cca * block_cca_reg(F, eps=cfg.block_cca_eps)
+    if getattr(cfg, "lambda_hsic", 0.0) > 0:
+        sigma = cfg.hsic_sigma if getattr(cfg, "hsic_sigma", 0.0) > 0 else None
+        loss = loss + cfg.lambda_hsic * plane_hsic_reg(
+            F, max_samples=getattr(cfg, "hsic_max_samples", 512), sigma=sigma
+        )
     # Inactive experimental terms:
-    # if getattr(cfg, "lambda_hsic", 0.0) > 0: ...
     # if getattr(cfg, "lambda_logdet", 0.0) > 0: ...
     # if getattr(cfg, "lambda_predict", 0.0) > 0: ...
 
