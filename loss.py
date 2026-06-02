@@ -64,6 +64,24 @@ def non_rev_regularizer(F: torch.Tensor) -> torch.Tensor: # randomize dim order 
     F_shuff = F[:, idx, :]
     return non_reversibility_S(F_shuff)
 
+
+def non_rev_regularizer_systematic(F: torch.Tensor) -> torch.Tensor:
+    """Systematic (exhaustive) cross-plane non-reversibility regularizer.
+
+    non_rev_regularizer scores a single random re-pairing of dims, so any given
+    cross-plane pair is only penalised in expectation. This instead enumerates
+    every dimension pair (i, j), i < j, that is NOT a native rotation plane --
+    i.e. all pairs except (0,1), (2,3), ... -- forms a 2D plane from each, and
+    sums their non-reversibility scores. Driving it down suppresses rotation
+    structure between dims belonging to different planes.
+    """
+    d = F.shape[1]
+    native = {(2 * p, 2 * p + 1) for p in range(d // 2)}
+    pairs = [(i, j) for i in range(d) for j in range(i + 1, d) if (i, j) not in native]
+    idx = torch.tensor([k for pair in pairs for k in pair], device=F.device)
+    return non_reversibility_S(F[:, idx, :])
+
+
 def barlow_twins_reg(F: torch.Tensor, eps: float = 1e-6, normalize: bool = False) -> torch.Tensor:
     """Barlow Twins covariance regularizer on the per-timepoint embeddings.
 
@@ -125,67 +143,6 @@ def _batch_rms_normalize(F: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     return (F_p / rms).reshape(K, d, T)
 
 
-def plane_s_balance_reg(S_p: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
-    """Penalize unequal non-reversibility across planes via squared CV."""
-    mean = S_p.mean().detach()
-    return ((S_p / (mean + eps) - 1.0) ** 2).mean()
-
-
-# Unused experimental regularizers kept here for possible future revival, but
-# not wired into loss_fn while the active comparison is BT / plane-BT / block-CCA.
-#
-# def plane_logdet_reg(F: torch.Tensor, eps: float = 1e-4) -> torch.Tensor:
-#     """Encourage each plane to use both axes by maximizing 2x2 covariance volume."""
-#     K, d, T = F.shape
-#     D = d // 2
-#     X = F.reshape(K, D, 2, T).permute(1, 0, 3, 2).reshape(D, K * T, 2)
-#     X = X - X.mean(dim=1, keepdim=True)
-#     cov = torch.einsum("dmi,dmj->dij", X, X) / max(X.shape[1] - 1, 1)
-#     eye = torch.eye(2, device=F.device, dtype=F.dtype).expand(D, 2, 2)
-#     sign, logabsdet = torch.linalg.slogdet(cov + eps * eye)
-#     return -torch.where(sign > 0, logabsdet, torch.full_like(logabsdet, -20.0)).mean()
-#
-#
-# def plane_predictability_reg(F: torch.Tensor, ridge: float = 1e-3) -> torch.Tensor:
-#     """Penalize how well one plane linearly predicts another via ridge R2."""
-#     X = _plane_samples(F)
-#     D, M, _ = X.shape
-#     if D < 2 or M < 3:
-#         return F.new_tensor(0.0)
-#
-#     X = X - X.mean(dim=1, keepdim=True)
-#     eye = torch.eye(2, device=F.device, dtype=F.dtype)
-#     reg = F.new_tensor(0.0)
-#     n = 0
-#     for p in range(D):
-#         Xp = X[p]
-#         XtX = Xp.T @ Xp / M + ridge * eye
-#         for q in range(D):
-#             if p == q:
-#                 continue
-#             Yq = X[q]
-#             coef = torch.linalg.solve(XtX, Xp.T @ Yq / M)
-#             pred = Xp @ coef
-#             ss_res = (Yq - pred).pow(2).sum()
-#             ss_tot = Yq.pow(2).sum() + 1e-8
-#             reg = reg + (1.0 - ss_res / ss_tot).clamp_min(0.0)
-#             n += 1
-#     return reg / max(n, 1)
-#
-#
-# def apply_plane_dropout(F: torch.Tensor, p: float) -> torch.Tensor:
-#     """Drop whole 2D planes with inverted-dropout scaling."""
-#     if p <= 0:
-#         return F
-#     K, d, T = F.shape
-#     D = d // 2
-#     keep = (torch.rand(D, device=F.device) > p).to(F.dtype)
-#     if keep.sum() == 0:
-#         keep[torch.randint(D, (1,), device=F.device)] = 1.0
-#     keep = keep / keep.mean().clamp_min(1e-8)
-#     return (F.reshape(K, D, 2, T) * keep.reshape(1, D, 1, 1)).reshape(K, d, T)
-
-
 def _plane_samples(F: torch.Tensor) -> torch.Tensor:
     """Return plane snapshots with shape (D, M, 2)."""
     K, d, T = F.shape
@@ -213,58 +170,6 @@ def block_cca_reg(F: torch.Tensor, eps: float = 1e-4) -> torch.Tensor:
     return C[~eye].pow(2).sum() / (D * (D - 1))
 
 
-def _subsample_plane_snapshots(F: torch.Tensor, max_samples: int) -> torch.Tensor:
-    """Randomly subsample plane snapshots to bound the HSIC kernel size."""
-    X = _plane_samples(F)
-    if max_samples <= 0 or X.shape[1] <= max_samples:
-        return X
-    idx = torch.randperm(X.shape[1], device=F.device)[:max_samples]
-    return X[:, idx]
-
-
-def _rbf_kernel(X: torch.Tensor, sigma: float | None = None, eps: float = 1e-8) -> torch.Tensor:
-    """RBF (Gaussian) kernel over samples X of shape (M, 2); median-heuristic bandwidth if sigma<=0."""
-    dist2 = torch.cdist(X, X).pow(2)
-    if sigma is None or sigma <= 0:
-        positive = dist2.detach()[dist2.detach() > 0]
-        scale = positive.median() if positive.numel() else dist2.new_tensor(1.0)
-        gamma = 1.0 / (scale + eps)
-    else:
-        gamma = 1.0 / (2.0 * sigma * sigma)
-    return torch.exp(-gamma * dist2)
-
-
-def plane_hsic_reg(F: torch.Tensor, max_samples: int = 512, sigma: float | None = None) -> torch.Tensor:
-    """Penalize nonlinear dependence between planes with normalized RBF-HSIC.
-
-    HSIC (Hilbert-Schmidt Independence Criterion) measures dependence via the
-    cross-covariance of RBF-kernel embeddings. Unlike block CCA, which only
-    detects linear correlation, HSIC captures arbitrary nonlinear dependence
-    between planes. Each plane's (M, M) kernel is double-centered and unit-
-    normalised; the penalty is the mean kernel alignment <K_p, K_q> over all
-    plane pairs p < q, which is zero iff the planes are independent.
-    """
-    X = _subsample_plane_snapshots(F, max_samples)
-    D, M, _ = X.shape
-    if D < 2 or M < 2:
-        return F.new_tensor(0.0)
-
-    kernels = []
-    for p in range(D):
-        Kp = _rbf_kernel(X[p], sigma=sigma)
-        Kp = Kp - Kp.mean(dim=0, keepdim=True) - Kp.mean(dim=1, keepdim=True) + Kp.mean()
-        Kp = Kp / (Kp.norm() + 1e-8)
-        kernels.append(Kp)
-
-    reg = F.new_tensor(0.0)
-    n = 0
-    for p in range(D):
-        for q in range(p + 1, D):
-            reg = reg + (kernels[p] * kernels[q]).sum()
-            n += 1
-    return reg / max(n, 1)
-
-
 def loss_fn(F: torch.Tensor, cfg=None, lambda_xp: float | None = None, lambda_bt: float | None = None,
             training: bool = True) -> torch.Tensor:
     """Training loss with independently weighted plane regularizers.
@@ -283,19 +188,14 @@ def loss_fn(F: torch.Tensor, cfg=None, lambda_xp: float | None = None, lambda_bt
 
     F_hat = _batch_rms_normalize(F)
 
-    S_p = non_reversibility_S_per_plane(F_hat)
-    s_objective = getattr(cfg, "s_objective", "sum") if cfg is not None else "sum"
-    if s_objective == "softmin":
-        tau = getattr(cfg, "s_softmin_tau", 0.1) if cfg is not None else 0.1
-        loss = tau * torch.logsumexp(-S_p / tau, dim=0)
-    else:
-        loss = -non_reversibility_S(F_hat)
+    loss = -non_reversibility_S(F_hat)
 
     non_rev_reg = F.new_tensor(0.0)
     if lambda_xp > 0:
 
         for _ in range(planes//2):
-            non_rev_reg += non_rev_regularizer(F_hat) # now scales with number of planes and expected number for each cross-planes is 1
+            non_rev_reg += non_rev_regularizer(F_hat) # now scales with number of planes and expected number
+                                                      # for each cross-planes is 1 per shuffle
 
     loss = loss + lambda_xp * non_rev_reg
     loss = loss + lambda_bt * barlow_twins_reg(F)
@@ -305,17 +205,7 @@ def loss_fn(F: torch.Tensor, cfg=None, lambda_xp: float | None = None, lambda_bt
 
     if getattr(cfg, "lambda_plane_bt", 0.0) > 0:
         loss = loss + cfg.lambda_plane_bt * plane_barlow_twins_reg(F)
-    if getattr(cfg, "lambda_s_balance", 0.0) > 0:
-        loss = loss + cfg.lambda_s_balance * plane_s_balance_reg(non_reversibility_S_per_plane(F_hat))
     if getattr(cfg, "lambda_block_cca", 0.0) > 0:
         loss = loss + cfg.lambda_block_cca * block_cca_reg(F, eps=cfg.block_cca_eps)
-    if getattr(cfg, "lambda_hsic", 0.0) > 0:
-        sigma = cfg.hsic_sigma if getattr(cfg, "hsic_sigma", 0.0) > 0 else None
-        loss = loss + cfg.lambda_hsic * plane_hsic_reg(
-            F, max_samples=getattr(cfg, "hsic_max_samples", 512), sigma=sigma
-        )
-    # Inactive experimental terms:
-    # if getattr(cfg, "lambda_logdet", 0.0) > 0: ...
-    # if getattr(cfg, "lambda_predict", 0.0) > 0: ...
 
     return loss

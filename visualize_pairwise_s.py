@@ -15,6 +15,7 @@ Usage
 """
 
 import argparse
+import csv
 import os
 
 import numpy as np
@@ -131,6 +132,17 @@ def plot_pairwise_s(run_dir: str, out_path: str | None = None):
 
     print(f"Computing pairwise S matrix ({d}x{d} = {d*(d-1)//2} pairs)...")
     S_mat = pairwise_S_matrix(F_hat)
+
+    # dump the raw matrix as CSV alongside the figure
+    csv_path = os.path.join(os.path.dirname(out_path), "pairwise_s_matrix.csv")
+    labels = [f"d{i}" for i in range(d)]
+    with open(csv_path, "w", newline="") as fcsv:
+        w = csv.writer(fcsv)
+        w.writerow([""] + labels)
+        for i in range(d):
+            w.writerow([labels[i]] + [f"{S_mat[i, j]:.6f}" for j in range(d)])
+    print(f"Saved -> {csv_path}")
+
     S_p = non_reversibility_S_per_plane(F_hat).numpy()
     s_ratio = compute_S_ratio(F_hat).item()
 

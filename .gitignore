@@ -12,3 +12,5 @@ synth_runs/
 cache/
 
 *.ipynb
+
+experiments/

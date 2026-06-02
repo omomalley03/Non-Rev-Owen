@@ -90,7 +90,7 @@ def main():
     hand_windows = _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s)
     make_diagnostic_plots(
         model=model,
-        val_ds=train_ds,
+        val_ds=val_ds,
         trial_info=trial_info,
         cfg=cfg,
         run_dir=run_dir,

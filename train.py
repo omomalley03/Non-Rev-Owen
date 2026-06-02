@@ -25,7 +25,7 @@ def _make_loader(dataset, batch_size: int, shuffle: bool, drop_last: bool):
 # while the current sweep focuses on BT, plane-aware BT, and block-CCA.
 
 
-def train(model, train_ds, val_ds, cfg: Config) -> dict:
+def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
     """Run the full training loop.
 
     Returns a history dict with keys:
@@ -70,7 +70,7 @@ def train(model, train_ds, val_ds, cfg: Config) -> dict:
             optimizer.zero_grad()
             F = model(batch)                            # (K, d, T)
             F = F - F.mean(dim=cfg.F_mean_axis, keepdim=True)  # zero-mean per dim across batch and time
-            loss = loss_fn(F, cfg=cfg, training=True)  # scalar
+            loss = loss_function(F, cfg=cfg, training=True)  # scalar
             loss.backward()
             optimizer.step()
             l = loss.item()
@@ -90,7 +90,7 @@ def train(model, train_ds, val_ds, cfg: Config) -> dict:
                     continue
                 F = model(batch)
                 F = F - F.mean(dim=cfg.F_mean_axis, keepdim=True)  # zero-mean per dim across batch and time
-                loss = loss_fn(F, cfg=cfg, training=False)
+                loss = loss_function(F, cfg=cfg, training=False)
                 val_losses.append(loss.item())
 
         mean_val_loss = sum(val_losses) / len(val_losses) if val_losses else float("nan")
