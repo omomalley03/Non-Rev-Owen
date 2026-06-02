@@ -47,9 +47,6 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=cfg.T_0, T_mult=cfg.T_mult
     )
-    # Unused experiment: learned plane-predictor adversary.
-    # plane_predictor = PlanePredictorBank(...).to(device)
-    # predictor_optimizer = optim.AdamW(plane_predictor.parameters(), lr=cfg.predict_adv_lr)
 
     best_val_loss = float("inf")
     history = {"train_loss": [], "val_loss": []}

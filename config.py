@@ -51,7 +51,7 @@ class Config:
     s_objective: str = "sum"         # "sum" keeps old -S; "softmin" focuses the weakest plane
     s_softmin_tau: float = 0.0           # lower values focus harder on the weakest plane
     # plane_dropout_p: float = 0.0       # unused experiment: randomly drop whole planes in the S objective
-    block_cca_eps: float = 0.0
+    block_cca_eps: float = 1e-6
     # logdet_eps: float = 1e-4           # unused experiment
     # predict_ridge: float = 1e-3        # unused experiment
     # predict_adv_hidden: int = 64       # unused experiment
