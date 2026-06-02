@@ -183,8 +183,8 @@ def loss_fn(F: torch.Tensor, cfg=None, lambda_xp: float | None = None, lambda_bt
     if cfg is not None:
         lambda_xp = cfg.lambda_xp
         lambda_bt = cfg.lambda_bt
-    lambda_xp = 1.0 if lambda_xp is None else lambda_xp
-    lambda_bt = 1.0 if lambda_bt is None else lambda_bt
+    lambda_xp = 0.0 if lambda_xp is None else lambda_xp
+    lambda_bt = 0.1 if lambda_bt is None else lambda_bt
 
     F_hat = _batch_rms_normalize(F)
 
