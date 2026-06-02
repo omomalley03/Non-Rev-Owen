@@ -21,6 +21,9 @@ def _make_loader(dataset, batch_size: int, shuffle: bool, drop_last: bool):
         num_workers=0,
     )
 
+# Unused learned plane-predictor adversary removed from the active training path
+# while the current sweep focuses on BT, plane-aware BT, and block-CCA.
+
 
 def train(model, train_ds, val_ds, cfg: Config) -> dict:
     """Run the full training loop.
@@ -37,13 +40,16 @@ def train(model, train_ds, val_ds, cfg: Config) -> dict:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
 
-    train_loader = _make_loader(train_ds, cfg.batch_size, shuffle=True,  drop_last=False)
+    train_loader = _make_loader(train_ds, cfg.batch_size, shuffle=True,  drop_last=True)
     val_loader   = _make_loader(val_ds,   cfg.batch_size, shuffle=False, drop_last=False)
 
     optimizer = optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
         optimizer, T_0=cfg.T_0, T_mult=cfg.T_mult
     )
+    # Unused experiment: learned plane-predictor adversary.
+    # plane_predictor = PlanePredictorBank(...).to(device)
+    # predictor_optimizer = optim.AdamW(plane_predictor.parameters(), lr=cfg.predict_adv_lr)
 
     best_val_loss = float("inf")
     history = {"train_loss": [], "val_loss": []}
@@ -64,7 +70,7 @@ def train(model, train_ds, val_ds, cfg: Config) -> dict:
             optimizer.zero_grad()
             F = model(batch)                            # (K, d, T)
             F = F - F.mean(dim=cfg.F_mean_axis, keepdim=True)  # zero-mean per dim across batch and time
-            loss = loss_fn(F, cfg.lambda_xp, cfg.lambda_bt)  # scalar
+            loss = loss_fn(F, cfg=cfg, training=True)  # scalar
             loss.backward()
             optimizer.step()
             l = loss.item()
@@ -84,7 +90,8 @@ def train(model, train_ds, val_ds, cfg: Config) -> dict:
                     continue
                 F = model(batch)
                 F = F - F.mean(dim=cfg.F_mean_axis, keepdim=True)  # zero-mean per dim across batch and time
-                val_losses.append(loss_fn(F, cfg.lambda_xp, cfg.lambda_bt).item())
+                loss = loss_fn(F, cfg=cfg, training=False)
+                val_losses.append(loss.item())
 
         mean_val_loss = sum(val_losses) / len(val_losses) if val_losses else float("nan")
 
@@ -116,7 +123,7 @@ def train(model, train_ds, val_ds, cfg: Config) -> dict:
     ax.plot(epochs, history["train_loss"], label="train loss")
     ax.plot(epochs, history["val_loss"],   label="val loss")
     ax.set_xlabel("Epoch")
-    ax.set_ylabel("Loss  (−S + λ_xp·XP + λ_bt·BT)")
+    ax.set_ylabel("Loss")
     ax.set_title("MC_Maze MLP — non-reversibility pretraining")
     ax.legend()
     fig.tight_layout()

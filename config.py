@@ -35,7 +35,7 @@ class Config:
     d: int = 16                     # embedding dimension (per snapshot)
     hidden_dim: int = 256              # MLP hidden layer width
     depth: int = 3                     # number of MLP layers (1 = pure linear, SCA-equivalent)
-    dropout: float = 0.2            # dropout probability applied after each hidden activation
+    dropout: float = 0.0            # dropout probability applied after each hidden activation
 
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
@@ -43,8 +43,28 @@ class Config:
     epochs: int = 200
     lr: float = 1e-2
     weight_decay: float = 1e-4
-    lambda_xp: float = 0.0              # cross-plane non-reversibility regularizer weight
-    lambda_bt: float = 0.12              # Barlow Twins covariance regularizer weight
+    lambda_xp: float = 0.5              # cross-plane non-reversibility regularizer weight
+    lambda_bt: float = 0.0              # Barlow Twins covariance regularizer weight
+    lambda_plane_bt: float = 0.0         # plane-aware BT: allow within-plane covariance, penalize cross-plane covariance
+    lambda_s_balance: float = 0.0        # penalize unequal S across planes
+    lambda_block_cca: float = 0.0        # plane-level linear redundancy penalty
+    lambda_hsic: float = 0.0             # plane-level nonlinear redundancy penalty (RBF-HSIC)
+    # lambda_logdet: float = 0.0         # unused experiment: per-plane anti-collapse covariance volume penalty
+    # lambda_predict: float = 0.0        # unused experiment: closed-form predictor redundancy penalty
+    # lambda_predict_adv: float = 0.0    # unused experiment: learned plane-predictor adversary penalty
+
+    s_objective: str = "sum"         # "sum" keeps old -S; "softmin" focuses the weakest plane
+    s_softmin_tau: float = 0.0           # lower values focus harder on the weakest plane
+    # plane_dropout_p: float = 0.0       # unused experiment: randomly drop whole planes in the S objective
+    block_cca_eps: float = 0.0
+    hsic_max_samples: int = 512          # subsample K*T snapshots for HSIC kernel
+    hsic_sigma: float = 0.0              # RBF bandwidth; <=0 uses median-distance heuristic
+    # logdet_eps: float = 1e-4           # unused experiment
+    # predict_ridge: float = 1e-3        # unused experiment
+    # predict_adv_hidden: int = 64       # unused experiment
+    # predict_adv_lr: float = 1e-3       # unused experiment
+    # predict_adv_steps: int = 1         # unused experiment
+    # predict_adv_max_samples: int = 512 # unused experiment
 
     # --- LR scheduler (CosineAnnealingWarmRestarts) ---
     T_0: int = 10
@@ -60,6 +80,7 @@ class Config:
             f"d{self.d}_h{self.hidden_dim}_dep{self.depth}"
             f"_bs{self.batch_size}_ep{self.epochs}"
             f"_lr{_fmt(self.lr)}_lxp{_fmt(self.lambda_xp)}_lbt{_fmt(self.lambda_bt)}"
+            f"_lsb{_fmt(self.lambda_s_balance)}_lcca{_fmt(self.lambda_block_cca)}"
             f"_sig{self.sigma_ms}_s{self.seed}"
         )
 
@@ -73,7 +94,9 @@ class Config:
                          "window_strategy", "val_split", "seed"],
             "model":    ["d", "hidden_dim", "depth", "dropout"],
             "training": ["batch_size", "epochs", "lr", "weight_decay",
-                         "lambda_xp", "lambda_bt"],
+                         "lambda_xp", "lambda_bt", "lambda_plane_bt",
+                         "lambda_s_balance", "lambda_block_cca", "lambda_hsic",
+                         "s_objective", "s_softmin_tau", "block_cca_eps"],
             "scheduler":["T_0", "T_mult"],
         }
         name_to_val = {f.name: getattr(self, f.name) for f in fields}
