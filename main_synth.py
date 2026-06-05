@@ -1,16 +1,15 @@
 import os
 import random
-import time
 from datetime import datetime
 
 import numpy as np
 import torch
+from torch.utils.data import TensorDataset, random_split
 
 from config import Config
-from data import load_mcmaze, gaussian_smooth, soft_normalize, make_windows, train_val_split
 from model import MLP
 from train import train
-from visualize import make_diagnostic_plots, _hand_windows_from_raw
+from visualize_synth import make_diagnostic_plots_synth
 
 
 def set_seed(seed: int):
@@ -33,6 +32,29 @@ def print_summary(history: dict, cfg: Config):
     print("=" * 50)
 
 
+def load_synthetic_windows(cfg: Config) -> np.ndarray:
+    """Load synthetic rotations as (K, N, T), matching train/visualize."""
+    windows = np.load(cfg.synth_data_path).astype(np.float32)
+    windows = np.transpose(windows, (0, 2, 1))  # source is (K, T, N)
+
+    if cfg.synth_noise_std > 0:
+        rng = np.random.default_rng(cfg.seed)
+        noise = rng.normal(0.0, cfg.synth_noise_std, size=windows.shape).astype(np.float32)
+        windows = windows + noise
+
+    return windows
+
+
+def train_val_split_synth(windows: np.ndarray, val_frac: float, seed: int):
+    """Random train/val split for synthetic windows."""
+    tensor = torch.from_numpy(windows)
+    full_ds = TensorDataset(tensor)
+    n_val = max(1, int(len(tensor) * val_frac))
+    n_train = len(tensor) - n_val
+    generator = torch.Generator().manual_seed(seed)
+    return random_split(full_ds, [n_train, n_val], generator=generator)
+
+
 def main():
     cfg = Config()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -43,26 +65,18 @@ def main():
     print(f"Run directory: {run_dir}")
     set_seed(cfg.seed)
 
-    # LOADING SYNTHETIC DATA
-    print("Loading Synth Data")
-    windows = np.load("rotations.npy")
-    windows = windows.astype(np.float32)
-    windows = np.transpose(windows, (0, 2, 1)) # (K,N,T)
-    windows = windows + 0.1 * np.random.randn(*windows.shape).astype(np.float32) # add some noise
-
-
-    # LOADING MONKEY DATA NPZ
-    # print("Loading Monkey Data")
-    # data = np.load("monkey_data.npz")
-    # windows = data["windows"]  # (K, N, T)
+    print(f"Loading synthetic data from {cfg.synth_data_path} …")
+    windows = load_synthetic_windows(cfg)
+    if cfg.synth_noise_std > 0:
+        print(f"  Added deterministic Gaussian noise: std={cfg.synth_noise_std}")
 
     print(f"  Windows shape: {windows.shape}  (K, N, T)")
-    
+
     N = windows.shape[1]
-    train_ds, val_ds = train_val_split(windows, None, cfg.val_split, cfg.seed)
+    train_ds, val_ds = train_val_split_synth(windows, cfg.val_split, cfg.seed)
     print(f"  Train: {len(train_ds)}  |  Val: {len(val_ds)}")
 
-    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth)
+    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout)
 
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
@@ -71,6 +85,14 @@ def main():
     history = train(model, train_ds, val_ds, cfg)
 
     print_summary(history, cfg)
+
+    print("\nGenerating synthetic diagnostic plots …")
+    make_diagnostic_plots_synth(
+        model=model,
+        val_ds=val_ds,
+        cfg=cfg,
+        run_dir=run_dir,
+    )
 
 
 

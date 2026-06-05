@@ -442,7 +442,7 @@ def plot_covariance_heatmap(F_hat, out_path):
     K, d, T = F_hat.shape
     Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
     Z = Z - Z.mean(axis=0)
-    # Z = Z / (Z.std(axis=0) + 1e-6)
+    Z = Z / (Z.std(axis=0) + 1e-6)
     Corr = (Z.T @ Z) / Z.shape[0]
 
     n_show = min(d, 32)

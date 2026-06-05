@@ -188,14 +188,20 @@ def loss_fn(F: torch.Tensor, cfg=None, lambda_xp: float | None = None, lambda_bt
 
     F_hat = _batch_rms_normalize(F)
 
-    loss = -non_reversibility_S(F_hat)
+    S_p = non_reversibility_S_per_plane(F_hat)
+    if getattr(cfg, "s_objective", "sum") == "softmin":
+        tau = max(float(getattr(cfg, "s_softmin_tau", 0.1)), 1e-6)
+        loss = tau * torch.logsumexp(-S_p / tau, dim=0)
+    else:
+        loss = -non_reversibility_S(F_hat)
 
     non_rev_reg = F.new_tensor(0.0)
     if lambda_xp > 0:
 
-        for _ in range(planes//2):
-            non_rev_reg += non_rev_regularizer(F_hat) # now scales with number of planes and expected number
-                                                      # for each cross-planes is 1 per shuffle
+        # for _ in range(planes//2):
+        #     non_rev_reg += non_rev_regularizer(F_hat) # now scales with number of planes and expected number
+        #                                               # for each cross-planes is 1 per shuffle
+        non_rev_reg += non_rev_regularizer(F_hat)
 
     loss = loss + lambda_xp * non_rev_reg
     loss = loss + lambda_bt * barlow_twins_reg(F)

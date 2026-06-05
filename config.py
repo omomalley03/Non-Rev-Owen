@@ -30,23 +30,25 @@ class Config:
     val_split: float = 0.1              # only used if dataset has no `split` column
     seed: int = 0
     split: str = "dataset"                   # "random" or "dataset" (use `split` column if present, else random split)
+    synth_data_path: str = "rotations_8planes.npy"
+    synth_noise_std: float = 0.1
 
     # --- model ---
-    d: int = 16                     # embedding dimension (per snapshot)
-    hidden_dim: int = 256              # MLP hidden layer width
-    depth: int = 3                     # number of MLP layers (1 = pure linear, SCA-equivalent)
-    dropout: float = 0.2            # dropout probability applied after each hidden activation
+    d: int = 16                      # embedding dimension (per snapshot)
+    hidden_dim: int = 128              # MLP hidden layer width
+    depth: int = 1                     # number of MLP layers (1 = pure linear, SCA-equivalent)
+    dropout: float = 0.0            # dropout probability applied after each hidden activation
 
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
-    batch_size: int = 256
-    epochs: int = 200
-    lr: float = 1e-2
+    batch_size: int = 32
+    epochs: int = 400
+    lr: float = 1e-4
     weight_decay: float = 1e-4
-    lambda_xp: float = 0.0              # cross-plane non-reversibility regularizer weight
+    lambda_xp: float = 1.0              # cross-plane non-reversibility regularizer weight
     lambda_bt: float = 0.0              # Barlow Twins covariance regularizer weight
     lambda_plane_bt: float = 0.0         # plane-aware BT: allow within-plane covariance, penalize cross-plane covariance
-    lambda_block_cca: float = 5.0        # plane-level linear redundancy penalty
+    lambda_block_cca: float = 0.0        # plane-level linear redundancy penalty
 
     s_objective: str = "sum"         # "sum" keeps old -S; "softmin" focuses the weakest plane
     s_softmin_tau: float = 0.0           # lower values focus harder on the weakest plane
@@ -84,7 +86,8 @@ class Config:
         groups = {
             "data":     ["nwb_path", "bin_ms", "sigma_ms", "softnorm_method",
                          "align_field", "pre_ms", "post_ms", "window_size",
-                         "window_strategy", "val_split", "seed"],
+                         "window_strategy", "val_split", "seed",
+                         "synth_data_path", "synth_noise_std"],
             "model":    ["d", "hidden_dim", "depth", "dropout"],
             "training": ["batch_size", "epochs", "lr", "weight_decay",
                          "lambda_xp", "lambda_bt", "lambda_plane_bt",

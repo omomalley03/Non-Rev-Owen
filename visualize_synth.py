@@ -3,15 +3,17 @@ Visualise non-reversibility quality for synthetic rotation data.
 
 Each diagnostic plot is saved as its own PNG in the run's `outputs/` dir:
 
-  01_raw_time_coded.png           — raw input, all trials, time-coded (top-2 input PCA)
-  02_embed_planes.png             — one subplot per 2D rotation plane, time-coded
+  01_raw_time_coded.png           — raw input, time-coded (top-2 input PCA)
+  02_embed_planes_time_coded.png  — one subplot per 2D rotation plane, time-coded
   07_covariance_heatmap.png       — embedding correlation matrix
+  08_between_within_variance.png  — trial-discriminability over time
+  09_embedding_norm_distribution.png — embedding norm distribution
 
 Usage
 -----
     python visualize_synth.py               # most recent run
     python visualize_synth.py --run 2       # 2nd most recent
-    python visualize_synth.py --run runs/x  # explicit path
+    python visualize_synth.py --run synth_runs/x  # explicit path
 """
 
 import argparse
@@ -22,24 +24,11 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset, random_split
 
 from config import Config
-from data import train_val_split
 from model import MLP
-from loss import S_ratio as compute_S_ratio
-
-
-# ── geometry helpers ──────────────────────────────────────────────────────────
-
-def signed_area(x, y):
-    """Shoelace signed area of a 2D trajectory. Positive = counterclockwise."""
-    return 0.5 * float(np.sum(x[:-1] * y[1:] - x[1:] * y[:-1]))
-
-
-def all_signed_areas(phasors):
-    """(K, 2, T) → (K,) signed area per trial."""
-    return np.array([signed_area(p[0], p[1]) for p in phasors])
+from loss import S_ratio as compute_S_ratio, _batch_rms_normalize
 
 
 def _fit_pca2(X):
@@ -62,20 +51,56 @@ def _windows_to_pca2(windows, mean, Vh2):
     return proj.reshape(K, T, 2).transpose(0, 2, 1)     # (K, 2, T)
 
 
+def load_synthetic_windows(cfg: Config, data_path: str | None = None) -> np.ndarray:
+    """Load synthetic rotations as (K, N, T), matching main_synth.py."""
+    path = data_path or getattr(cfg, "synth_data_path", "rotations.npy")
+    windows = np.load(path).astype(np.float32)
+    windows = np.transpose(windows, (0, 2, 1))  # source is (K, T, N)
+
+    noise_std = getattr(cfg, "synth_noise_std", 0.0)
+    if noise_std > 0:
+        rng = np.random.default_rng(cfg.seed)
+        noise = rng.normal(0.0, noise_std, size=windows.shape).astype(np.float32)
+        windows = windows + noise
+
+    return windows
+
+
+def train_val_split_synth(windows: np.ndarray, val_frac: float, seed: int):
+    """Random train/val split for synthetic windows."""
+    tensor = torch.from_numpy(windows)
+    full_ds = TensorDataset(tensor)
+    n_val = max(1, int(len(tensor) * val_frac))
+    n_train = len(tensor) - n_val
+    generator = torch.Generator().manual_seed(seed)
+    return random_split(full_ds, [n_train, n_val], generator=generator)
+
+
 # ── plot helpers ──────────────────────────────────────────────────────────────
 
-def _plot_all_trials_time_coded(phasors, title, xlabel, ylabel, out_path,
-                                 n_show=60, cmap_name="viridis", seed=0):
-    """Plot individual trial trajectories colour-coded by time.
+def _pairwise_zeta(F_hat: np.ndarray) -> np.ndarray:
+    """Compute ζ (S_ratio) for every (dim 2i, dim 2j+1) pair.
 
-    With hundreds of trials, all at once is unreadable; subsample to n_show.
-
-    Math
-    ----
-    Each segment (phasor[k, :, t], phasor[k, :, t+1]) is coloured by t/(T-1).
+    Returns a (D, D) float array where entry [i, j] is the S_ratio of the
+    2D plane formed by dims (2*i, 2*j+1).  Diagonal entries are the native
+    rotation planes; off-diagonal are cross-plane surrogate pairs.
     """
+    K, d, T = F_hat.shape
+    D = d // 2
+    zeta = np.zeros((D, D))
+    for i in range(D):
+        for j in range(D):
+            plane = np.stack([F_hat[:, 2*i, :], F_hat[:, 2*j+1, :]], axis=1)  # (K,2,T)
+            t = torch.from_numpy(plane)
+            zeta[i, j] = compute_S_ratio(_batch_rms_normalize(t)).item()
+    return zeta
+
+def _plot_all_trials_time_coded(phasors, title, xlabel, ylabel, out_path,
+                                 cmap_name="coolwarm", seed=0):
+    """Plot individual trial trajectories colour-coded by time."""
     rng = np.random.default_rng(seed)
     K, _, T = phasors.shape
+    n_show = int(K * 1.0)
     idx = rng.choice(K, size=min(n_show, K), replace=False)
 
     fig, ax = plt.subplots(figsize=(6, 5))
@@ -90,7 +115,7 @@ def _plot_all_trials_time_coded(phasors, title, xlabel, ylabel, out_path,
     ax.axhline(0, color="k", lw=0.4, alpha=0.25)
     ax.axvline(0, color="k", lw=0.4, alpha=0.25)
     ax.spines[["top", "right"]].set_visible(False)
-    ax.set_title(f"{title}\n({min(n_show, K)} of {K} trials shown)", fontsize=10)
+    ax.set_title(title, fontsize=10)
     ax.set_xlabel(xlabel, fontsize=9)
     ax.set_ylabel(ylabel, fontsize=9)
     ax.tick_params(labelsize=8)
@@ -107,13 +132,15 @@ def _plot_all_trials_time_coded(phasors, title, xlabel, ylabel, out_path,
 
 
 def _plot_planes_time_coded(F_hat, s_ratio, out_path,
-                            n_show=60, cmap_name="viridis", seed=0):
+                             cmap_name="coolwarm", seed=0):
     """Subplot grid: one panel per 2D rotation plane, trials time-coded."""
     K, d, T = F_hat.shape
+    n_show = int(K * 1.0)
     D = d // 2
     rng = np.random.default_rng(seed)
     idx = rng.choice(K, size=min(n_show, K), replace=False)
     cmap = plt.get_cmap(cmap_name)
+    zeta = _pairwise_zeta(F_hat)   # (D, D); diagonal = per-plane ζ
 
     ncols = min(D, 4)
     nrows = (D + ncols - 1) // ncols
@@ -121,11 +148,6 @@ def _plot_planes_time_coded(F_hat, s_ratio, out_path,
                              squeeze=False)
 
     planes = F_hat.reshape(K, D, 2, T)
-    per_plane_areas = np.array([
-        [signed_area(planes[k, p, 0], planes[k, p, 1]) for k in range(K)]
-        for p in range(D)
-    ])
-
     for p in range(D):
         ax = axes[p // ncols, p % ncols]
         for k in idx:
@@ -137,9 +159,7 @@ def _plot_planes_time_coded(F_hat, s_ratio, out_path,
         ax.axhline(0, color="k", lw=0.4, alpha=0.25)
         ax.axvline(0, color="k", lw=0.4, alpha=0.25)
         ax.spines[["top", "right"]].set_visible(False)
-        mu_a = per_plane_areas[p].mean()
-        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})\n"
-                     f"mean area = {mu_a:+.3f}", fontsize=9)
+        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})  ζ={zeta[p,p]:.2f}", fontsize=9)
         ax.set_xlabel(f"dim {2*p}", fontsize=8)
         ax.set_ylabel(f"dim {2*p+1}", fontsize=8)
         ax.tick_params(labelsize=7)
@@ -148,81 +168,67 @@ def _plot_planes_time_coded(F_hat, s_ratio, out_path,
     for p in range(D, nrows * ncols):
         axes[p // ncols, p % ncols].set_visible(False)
 
-    fig.suptitle(f"Embedding rotation planes  (ζ = {s_ratio:.4f},  "
-                 f"{min(n_show, K)} of {K} trials)", fontsize=11)
+    fig.suptitle(f"Embedding — time-coded  (ζ = {s_ratio:.2f})",
+                 fontsize=11)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {out_path}")
 
 
-def plot_signed_area_histogram(areas_raw, areas_emb, out_path):
-    """Distribution of shoelace signed area per trial, raw PCA vs embedding PCA.
+def _plot_dim_grid(F_hat, s_ratio, out_path,
+                    cmap_name="coolwarm", seed=0):
+    """D×D grid where cell (i,j) plots dim 2*i vs dim 2*j+1, time-coded.
 
-    Math
-    ----
-    A_k = ½ Σ_{t} (x_k[t]·y_k[t+1] − x_k[t+1]·y_k[t])
-    |μ_A|/σ_A > 1 ⇒ consistent net circulation across trials.
+    Diagonal (i==j) = native rotation planes.
+    Off-diagonal = cross-plane pairings; should look like Lissajous/scatter if
+    the planes are independent, or structured circles if they share a source.
     """
-    fig, ax = plt.subplots(figsize=(7, 4))
-    kw = dict(bins=30, alpha=0.55, density=True, edgecolor="none")
-    ax.hist(areas_raw, color="steelblue",
-            label=f"raw  μ={areas_raw.mean():+.3f}  σ={areas_raw.std():.3f}", **kw)
-    ax.hist(areas_emb, color="darkorange",
-            label=f"emb  μ={areas_emb.mean():+.3f}  σ={areas_emb.std():.3f}", **kw)
-    ax.axvline(0, color="k", lw=0.8, ls=":")
-    ax.set_xlabel("Signed area  A_k  (shoelace formula)", fontsize=9)
-    ax.set_ylabel("Density", fontsize=9)
-    ax.set_title("Signed-area distribution\n(non-zero mean → net circulation)", fontsize=10)
-    ax.legend(fontsize=8)
-    ax.tick_params(labelsize=8)
-    ax.spines[["top", "right"]].set_visible(False)
-
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    print(f"Saved → {out_path}")
-
-
-def plot_pca_explained_variance(F_hat, out_path):
-    """Cumulative PCA explained variance of the (K*T, d) embedding snapshots.
-
-    Math
-    ----
-    Z ∈ R^(M×d), M = K*T.  Centred Z̃ = Z − mean.
-    cumvar(j) = (Σ_{i≤j} σ_i²) / (Σ_i σ_i²)
-    A large step at PC1 ⇒ dimensional collapse (embedding is near 1D).
-    """
-    from sklearn.decomposition import PCA
-
     K, d, T = F_hat.shape
-    Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
+    n_show = int(K * 1.0)
+    D = d // 2
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(K, size=min(n_show, K), replace=False)
+    cmap = plt.get_cmap(cmap_name)
+    zeta = _pairwise_zeta(F_hat)   # (D, D)
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    pca = PCA(n_components=min(d, K * T))
-    pca.fit(Z)
-    cumvar = np.cumsum(pca.explained_variance_ratio_) * 100
+    fig, axes = plt.subplots(D, D, figsize=(3.2 * D, 3.2 * D), squeeze=False)
 
-    ax.plot(np.arange(1, len(cumvar) + 1), cumvar, lw=1.5, color="steelblue", marker="o", ms=4)
-    ax.axhline(95, color="tomato",     lw=0.8, ls="--", label="95%")
-    ax.axhline(99, color="darkorange", lw=0.8, ls="--", label="99%")
-    n95 = int(np.searchsorted(cumvar, 95)) + 1
-    n99 = int(np.searchsorted(cumvar, 99)) + 1
-    ax.set_xlabel("Number of PCs", fontsize=9)
-    ax.set_ylabel("Cumulative explained variance (%)", fontsize=9)
-    ax.set_title(
-        f"Embedding PCA  (d={d})\n95% in {n95} PCs,  99% in {n99} PCs",
-        fontsize=10,
-    )
-    ax.set_xticks(np.arange(1, d + 1))
-    ax.legend(fontsize=8)
-    ax.tick_params(labelsize=8)
-    ax.spines[["top", "right"]].set_visible(False)
+    for i in range(D):
+        for j in range(D):
+            ax = axes[i][j]
+            x_dim, y_dim = 2 * i, 2 * j + 1
+            for k in idx:
+                xv, yv = F_hat[k, x_dim], F_hat[k, y_dim]
+                for t in range(T - 1):
+                    ax.plot(xv[t:t+2], yv[t:t+2], color=cmap(t / (T - 1)),
+                            lw=0.6, alpha=0.45)
 
+            ax.axhline(0, color="k", lw=0.3, alpha=0.2)
+            ax.axvline(0, color="k", lw=0.3, alpha=0.2)
+            ax.set_aspect("equal", adjustable="datalim")
+            ax.tick_params(labelsize=6)
+
+            # highlight diagonal (native planes) with a box
+            if i == j:
+                for spine in ax.spines.values():
+                    spine.set_edgecolor("steelblue")
+                    spine.set_linewidth(1.5)
+            else:
+                ax.spines[["top", "right"]].set_visible(False)
+
+            ax.set_xlabel(f"dim {x_dim}", fontsize=7)
+            ax.set_ylabel(f"dim {y_dim}", fontsize=7)
+            ax.set_title(f"({x_dim},{y_dim})  ζ={zeta[i,j]:.2f}", fontsize=7, pad=2)
+
+    fig.suptitle(f"Dim grid — time-coded  (ζ = {s_ratio:.2f})\n",
+                #  f"cell (i,j): dim 2i vs dim 2j+1   [diagonal = native planes]",
+                 fontsize=10)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {out_path}")
+
 
 def plot_covariance_heatmap(F_hat, out_path):
     """Empirical correlation matrix of the d embedding dims.
@@ -235,17 +241,18 @@ def plot_covariance_heatmap(F_hat, out_path):
     """
     K, d, T = F_hat.shape
     Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
-    # Z = Z - Z.mean(axis=0)
-    # Z = Z / (Z.std(axis=0) + 1e-6)
-    Cov = (Z.T @ Z) / Z.shape[0]
+    Z = Z - Z.mean(axis=0)
 
+    Z = Z / (Z.std(axis=0) + 1e-6)
+
+    Corr = (Z.T @ Z) / Z.shape[0]
 
     n_show = min(d, 32)
     fig, ax = plt.subplots(figsize=(6, 5))
-    im = ax.imshow(Cov[:n_show, :n_show], cmap="RdBu_r", vmin=-1, vmax=1,
+    im = ax.imshow(Corr[:n_show, :n_show], cmap="RdBu_r", # vmin=-1, vmax=1,
                    interpolation="nearest", aspect="auto")
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    off_diag_mean = float(np.abs(Cov - np.eye(d)).mean())
+    off_diag_mean = float(np.abs(Corr - np.eye(d)).mean())
     ax.set_title(
         f"Embedding correlation  (top {n_show} of {d} dims)\n"
         f"mean |Corr − I| = {off_diag_mean:.4f}  (0 = identity)",
@@ -254,6 +261,37 @@ def plot_covariance_heatmap(F_hat, out_path):
     ax.set_xlabel("Embedding dim", fontsize=9)
     ax.set_ylabel("Embedding dim", fontsize=9)
     ax.tick_params(labelsize=8)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
+def plot_between_within_variance(F_hat, out_path):
+    """Trial-discriminability ratio over time, matching visualize.py."""
+    T = F_hat.shape[2]
+    trial_mean = F_hat.mean(axis=0, keepdims=True)
+    between = ((F_hat - trial_mean) ** 2).mean(axis=(0, 1))
+    within = F_hat.var(axis=2).mean(axis=(0, 1))
+    ratio = between / (between + within + 1e-8)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    t_axis = np.arange(T)
+    ax.plot(t_axis, ratio, lw=1.2, color="steelblue")
+    ax.axhline(ratio.mean(), color="tomato", lw=0.8, ls="--",
+               label=f"mean = {ratio.mean():.3f}")
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("Time bin", fontsize=9)
+    ax.set_ylabel("B(t) / (B(t) + W)", fontsize=9)
+    ax.set_title(
+        "Trial discriminability over time\n"
+        "(1 = fully distinct trials, 0 = all trials identical)",
+        fontsize=10,
+    )
+    ax.legend(fontsize=8)
+    ax.tick_params(labelsize=8)
+    ax.spines[["top", "right"]].set_visible(False)
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -327,31 +365,50 @@ def make_diagnostic_plots_synth(
     print("Computing embeddings…")
     with torch.no_grad():
         F_hat_t = model(val_tensor)
+        F_hat_t = F_hat_t - F_hat_t.mean(dim=cfg.F_mean_axis, keepdim=True)
         s_ratio_val = compute_S_ratio(F_hat_t).item()
         F_hat = F_hat_t.numpy()          # (K, d, T)
 
-    # ── raw input PCA (spike channels only — first N cols if velocity was used) ──
+    # ── raw input PCA ──────────────────────────────────────────────────────────
     N_in = val_np.shape[1]
-    N_spikes = N_in // 2 if getattr(cfg, "use_velocity", False) else N_in
-    spikes_only = val_np[:, :N_spikes, :]   # (K, N_spikes, T)
+    raw_input = val_np[:, :N_in, :]
 
-    raw_flat = spikes_only.transpose(0, 2, 1).reshape(K * spikes_only.shape[2], N_spikes)
+    raw_flat = raw_input.transpose(0, 2, 1).reshape(K * raw_input.shape[2], N_in)
     raw_pca_mean, raw_pca_Vh2 = _fit_pca2(raw_flat)
-    phasors_raw = _windows_to_pca2(spikes_only, raw_pca_mean, raw_pca_Vh2)  # (K, 2, T)
+    phasors_raw = _windows_to_pca2(raw_input, raw_pca_mean, raw_pca_Vh2)  # (K, 2, T)
 
     # ── plots ─────────────────────────────────────────────────────────────────
     _plot_all_trials_time_coded(
         phasors_raw,
-        title="Raw rotations input — top-2 PCA",
+        title="Raw — time-coded  (top-2 PCA)",
         xlabel="PC 1", ylabel="PC 2",
         out_path=os.path.join(out_dir, "01_raw_time_coded.png"),
     )
     _plot_planes_time_coded(
         F_hat, s_ratio_val,
-        out_path=os.path.join(out_dir, "02_embed_planes.png"),
+        out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
+    )
+    _plot_dim_grid(
+        F_hat, s_ratio_val,
+        out_path=os.path.join(out_dir, "03_dim_grid_time_coded.png"),
     )
     plot_covariance_heatmap(
         F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
+    )
+    plot_between_within_variance(
+        F_hat, out_path=os.path.join(out_dir, "08_between_within_variance.png"),
+    )
+    plot_norm_distribution(
+        F_hat, out_path=os.path.join(out_dir, "09_embedding_norm_distribution.png"),
+    )
+
+    from visualize_pairwise_s import plot_pairwise_s
+    F_hat_rms = _batch_rms_normalize(F_hat_t)
+    plot_pairwise_s(
+        run_dir,
+        out_path=os.path.join(out_dir, "pairwise_s.png"),
+        F_hat=F_hat_rms,
+        cfg=cfg,
     )
 
     print(f"\nS_ratio (all val pairs): {s_ratio_val:.4f}  (max ≈ 1.0 for perfect rotation)")
@@ -391,8 +448,8 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--run", default=None,
                         help="Integer (1=most recent) or explicit path.")
-    parser.add_argument("--data", default="rotations.npy",
-                        help="Path to synthetic data .npy file (default: rotations.npy).")
+    parser.add_argument("--data", default=None,
+                        help="Override synthetic data .npy path from checkpoint config.")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -404,25 +461,17 @@ def main():
     cfg: Config = ckpt["config"]
     print(f"Loaded checkpoint from epoch {ckpt['epoch']}")
 
-    # Load synthetic data with the same preprocessing used during training.
-    print(f"Loading synthetic data from {args.data} …")
-    raw = np.load(args.data)
-    windows = np.transpose(raw, (0, 2, 1)).astype(np.float32)   # (K, N, T)
-    N = windows.shape[1]
+    data_path = args.data or getattr(cfg, "synth_data_path", "rotations.npy")
+    print(f"Loading synthetic data from {data_path} …")
+    windows = load_synthetic_windows(cfg, data_path=data_path)
+    if getattr(cfg, "synth_noise_std", 0.0) > 0:
+        print(f"  Added deterministic Gaussian noise: std={cfg.synth_noise_std}")
+    N_in = windows.shape[1]
+    print(f"  Windows shape: {windows.shape}  (K, N, T)")
 
-    # Apply velocity augmentation if the checkpoint was trained with it.
-    if getattr(cfg, "use_velocity", False):
-        velocity = np.diff(windows, axis=2, prepend=windows[:, :, :1])  # (K, N, T)
-        windows = np.concatenate([windows, velocity], axis=1)            # (K, 2N, T)
-        N_in = 2 * N
-        print(f"  Velocity augmentation ON — input: (K, {N_in}, T)")
-    else:
-        N_in = N
-        print(f"  Velocity augmentation OFF — input: (K, {N_in}, T)")
+    train_ds, val_ds = train_val_split_synth(windows, cfg.val_split, cfg.seed)
 
-    _, val_ds = train_val_split(windows, None, cfg.val_split, cfg.seed)
-
-    model = MLP(in_channels=N_in, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth)
+    model = MLP(in_channels=N_in, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout)
     model.load_state_dict(ckpt["model_state_dict"])
 
     make_diagnostic_plots_synth(
