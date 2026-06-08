@@ -48,10 +48,29 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         optimizer, T_0=cfg.T_0, T_mult=cfg.T_mult
     )
 
+    # active regularizers (lambda > 0) tracked individually for the loss curve
+    reg_lambdas = {
+        "xp": cfg.lambda_xp,
+        "bt": cfg.lambda_bt,
+        "plane_bt": getattr(cfg, "lambda_plane_bt", 0.0),
+        "cca": getattr(cfg, "lambda_block_cca", 0.0),
+    }
+    active_regs = [k for k, v in reg_lambdas.items() if v > 0]
+
+    def lambda_scale(epoch: int) -> float:
+        """Linear warm-up: cfg.lambda_start_frac at epoch 1 → 1.0 at the last epoch."""
+        start = getattr(cfg, "lambda_start_frac", 1.0)
+        if cfg.epochs <= 1:
+            return 1.0
+        return start + (1.0 - start) * (epoch - 1) / (cfg.epochs - 1)
+
     best_val_loss = float("inf")
     history = {"train_loss": [], "val_loss": [],
                "train_s": [], "val_s": [],
-               "train_reg": [], "val_reg": []}
+               "train_reg": [], "val_reg": [],
+               "lambda_scale": [],
+               "reg_raw":    {k: [] for k in active_regs},
+               "reg_scaled": {k: [] for k in active_regs}}
     log_path = os.path.join(cfg.out_dir, "log.csv")
 
     with open(log_path, "w", newline="") as f:
@@ -61,6 +80,7 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
     t0 = time.time()
 
     for epoch in range(1, cfg.epochs + 1):
+        scale = lambda_scale(epoch)
         # --- train ---
         model.train()
         epoch_losses, epoch_s, epoch_reg = [], [], []
@@ -70,11 +90,11 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
             optimizer.zero_grad()
             F = model(batch)                            # (K, d, T)
             F = F - F.mean(dim=cfg.F_mean_axis, keepdim=True)
-            loss = loss_function(F, cfg=cfg, training=True)
+            loss = loss_function(F, cfg=cfg, training=True, lambda_scale=scale)
             loss.backward()
             optimizer.step()
             with torch.no_grad():
-                s = non_reversibility_S(_batch_rms_normalize(F)).item()
+                s = non_reversibility_S(_batch_rms_normalize(F),cfg.s_objective).item()
             l = loss.item()
             epoch_losses.append(l)
             epoch_s.append(s)
@@ -89,6 +109,8 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         # --- validate ---
         model.eval()
         val_losses, val_s, val_reg = [], [], []
+        val_raw    = {k: [] for k in active_regs}
+        val_scaled = {k: [] for k in active_regs}
         with torch.no_grad():
             for (batch,) in val_loader:
                 batch = batch.to(device)
@@ -96,11 +118,15 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                     continue
                 F = model(batch)
                 F = F - F.mean(dim=cfg.F_mean_axis, keepdim=True)
-                loss = loss_function(F, cfg=cfg, training=False)
-                s = non_reversibility_S(_batch_rms_normalize(F)).item()
+                loss, info = loss_function(F, cfg=cfg, training=False,
+                                           lambda_scale=scale, return_components=True)
+                s = non_reversibility_S(_batch_rms_normalize(F),cfg.s_objective).item()
                 val_losses.append(loss.item())
                 val_s.append(s)
                 val_reg.append(loss.item() + s)
+                for k in active_regs:
+                    val_raw[k].append(info["reg_raw"][k])
+                    val_scaled[k].append(info["reg_scaled"][k])
 
         mean_val_loss = sum(val_losses) / len(val_losses) if val_losses else float("nan")
         mean_val_s    = sum(val_s)      / len(val_s)      if val_s      else float("nan")
@@ -112,12 +138,17 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         history["val_s"].append(mean_val_s)
         history["train_reg"].append(mean_train_reg)
         history["val_reg"].append(mean_val_reg)
+        history["lambda_scale"].append(scale)
+        for k in active_regs:
+            history["reg_raw"][k].append(sum(val_raw[k]) / len(val_raw[k]) if val_raw[k] else float("nan"))
+            history["reg_scaled"][k].append(sum(val_scaled[k]) / len(val_scaled[k]) if val_scaled[k] else float("nan"))
 
         print(
             f"Epoch {epoch:3d}/{cfg.epochs}  "
             f"train loss={mean_train_loss:.4f}  val loss={mean_val_loss:.4f}  "
-            f"S={mean_val_s:.4f}  reg={mean_val_reg:.4f}  "
-            # f"lr={scheduler.get_last_lr()[0]:.2e}"
+            f"S[{cfg.s_objective}]={mean_val_s:.4f}  reg={mean_val_reg:.4f}  "
+            f"λscale={scale:.2f}  "
+            f"lr={scheduler.get_last_lr()[0]:.2e}"
         )
 
         with open(log_path, "a", newline="") as f:
@@ -136,15 +167,30 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
     history["elapsed_s"] = time.time() - t0
 
     # --- loss curve ---
-    ep = range(1, cfg.epochs + 1)
-    fig, ax = plt.subplots(figsize=(8, 4))
+    # One panel for the S objective, then one panel per active regularizer
+    # showing its raw magnitude (unscaled) and the lambda·reg actually applied.
+    ep = list(range(1, cfg.epochs + 1))
+    n_panels = 1 + len(active_regs)
+    fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 4), squeeze=False)
+    axes = axes[0]
 
+    ax = axes[0]
     ax.plot(ep, history["val_s"],   label="S  (non-rev, ↑)",   color="steelblue")
-    ax.plot(ep, history["val_reg"], label="λ·reg  (penalty, ↓)", color="tomato")
+    ax.plot(ep, history["val_reg"], label="total λ·reg (↓)",   color="tomato")
     ax.set_xlabel("Epoch")
     ax.set_title("Training dynamics")
     ax.legend()
     ax.spines[["top", "right"]].set_visible(False)
+
+    for ax, name in zip(axes[1:], active_regs):
+        ax.plot(ep, history["reg_raw"][name],    color="gray",  ls="--",
+                label="raw (unscaled)")
+        ax.plot(ep, history["reg_scaled"][name], color="tomato",
+                label="λ·reg (applied)")
+        ax.set_xlabel("Epoch")
+        ax.set_title(f"{name}  (λ={reg_lambdas[name]:g}, start={getattr(cfg, 'lambda_start_frac', 1.0):g})")
+        ax.legend()
+        ax.spines[["top", "right"]].set_visible(False)
 
     fig.tight_layout()
     fig.savefig(os.path.join(cfg.out_dir, "loss_curve.png"), dpi=150)

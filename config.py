@@ -35,22 +35,25 @@ class Config:
 
     # --- model ---
     d: int = 16                      # embedding dimension (per snapshot)
-    hidden_dim: int = 64              # MLP hidden layer width
+    hidden_dim: int = 256              # MLP hidden layer width
     depth: int = 3                     # number of MLP layers (1 = pure linear, SCA-equivalent)
     dropout: float = 0.2            # dropout probability applied after each hidden activation
 
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
     batch_size: int = 64
-    epochs: int = 200
-    lr: float = 1e-4
+    epochs: int = 100
+    lr: float = 1e-2
     weight_decay: float = 1e-4
     lambda_xp: float = 0.0 # 0.5              # cross-plane non-reversibility regularizer weight
-    lambda_bt: float = 0.12 # 0.0009765625             # Barlow Twins covariance regularizer weight
+    lambda_bt: float = 0.0 # 0.0009765625             # Barlow Twins covariance regularizer weight
     lambda_plane_bt: float = 0.0         # plane-aware BT: allow within-plane covariance, penalize cross-plane covariance
-    lambda_block_cca: float = 0.0        # plane-level linear redundancy penalty
+    lambda_block_cca: float = 1.0        # plane-level linear redundancy penalty
+    lambda_start_frac: float = 0.25       # linear lambda warm-up: fraction of full lambda at epoch 1,
+                                         # ramping linearly to 1.0 (full lambda) at the final epoch.
+                                         # 1.0 = no warm-up (full lambda throughout)
 
-    s_objective: str = "sum"         # "sum" keeps old -S; "softmin" focuses the weakest plane
+    s_objective: str = "mean"         # "sum" keeps old -S; "softmin" focuses the weakest plane
     s_softmin_tau: float = 0.0           # lower values focus harder on the weakest plane
     # plane_dropout_p: float = 0.0       # unused experiment: randomly drop whole planes in the S objective
     block_cca_eps: float = 1e-6
@@ -91,7 +94,7 @@ class Config:
             "model":    ["d", "hidden_dim", "depth", "dropout"],
             "training": ["batch_size", "epochs", "lr", "weight_decay",
                          "lambda_xp", "lambda_bt", "lambda_plane_bt",
-                         "lambda_block_cca",
+                         "lambda_block_cca", "lambda_start_frac",
                          "s_objective", "s_softmin_tau", "block_cca_eps"],
             "scheduler":["T_0", "T_mult"],
         }

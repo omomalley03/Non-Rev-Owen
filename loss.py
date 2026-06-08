@@ -1,5 +1,7 @@
 import torch
 
+from config import Config
+
 
 def _pair_terms_per_plane(F: torch.Tensor):
     """Compute sum over K^2 pairs in batch, per 2D rotation plane.
@@ -60,14 +62,14 @@ def non_reversibility_S_per_plane(F: torch.Tensor) -> torch.Tensor:
     return (2.0 / K ** 2) * minus_per_plane
 
 
-def non_rev_regularizer(F: torch.Tensor) -> torch.Tensor: # randomize dim order and calculate non-rev score cross-plane
+def non_rev_regularizer(F: torch.Tensor, cfg: Config) -> torch.Tensor: # randomize dim order and calculate non-rev score cross-plane
     """Regularize by minimizing cross-plane non-reversibility score"""
     idx = torch.randperm(F.shape[1])
     F_shuff = F[:, idx, :]
-    return non_reversibility_S(F_shuff)
+    return non_reversibility_S(F_shuff,objective=cfg.s_objective)
 
 
-def non_rev_regularizer_systematic(F: torch.Tensor) -> torch.Tensor:
+def non_rev_regularizer_systematic(F: torch.Tensor, cfg: Config) -> torch.Tensor:
     """Systematic (exhaustive) cross-plane non-reversibility regularizer.
 
     non_rev_regularizer scores a single random re-pairing of dims, so any given
@@ -81,7 +83,7 @@ def non_rev_regularizer_systematic(F: torch.Tensor) -> torch.Tensor:
     native = {(2 * p, 2 * p + 1) for p in range(d // 2)}
     pairs = [(i, j) for i in range(d) for j in range(i + 1, d) if (i, j) not in native]
     idx = torch.tensor([k for pair in pairs for k in pair], device=F.device)
-    return non_reversibility_S(F[:, idx, :])
+    return non_reversibility_S(F[:, idx, :], objective=cfg.s_objective)
 
 
 def barlow_twins_reg(F: torch.Tensor, eps: float = 1e-6, normalize: bool = False) -> torch.Tensor:
@@ -172,51 +174,66 @@ def block_cca_reg(F: torch.Tensor, eps: float = 1e-4) -> torch.Tensor:
     return C[~eye].pow(2).sum() / (D * (D - 1))
 
 
+# Regularizer registry: name -> (config lambda attr, raw-magnitude function).
+# `xp` (cross-plane non-rev) needs cfg, so it is handled separately below.
+REG_TYPES = ("xp", "bt", "plane_bt", "cca")
+
+
 def loss_fn(F: torch.Tensor, cfg=None, lambda_xp: float | None = None, lambda_bt: float | None = None,
-            training: bool = True) -> torch.Tensor:
+            training: bool = True, lambda_scale: float = 1.0, return_components: bool = False):
     """Training loss with independently weighted plane regularizers.
 
     S and cross-plane reg are computed on RMS-normalised embeddings.
     BT and redundancy terms operate on the raw embeddings unless noted.
-    """
-    d = F.shape[1]
-    planes = d // 2
 
+    `lambda_scale` ∈ [0, 1] uniformly scales every regularizer weight (used by
+    the linear lambda warm-up in train.py).  When `return_components=True`,
+    returns `(loss, info)` where info["reg_raw"] holds each regularizer's raw
+    (unscaled) magnitude and info["reg_scaled"] holds `lambda_scale·λ·raw`.
+    """
     if cfg is not None:
         lambda_xp = cfg.lambda_xp
         lambda_bt = cfg.lambda_bt
     lambda_xp = 0.0 if lambda_xp is None else lambda_xp
     lambda_bt = 0.1 if lambda_bt is None else lambda_bt
+    weights = {
+        "xp": lambda_xp,
+        "bt": lambda_bt,
+        "plane_bt": getattr(cfg, "lambda_plane_bt", 0.0),
+        "cca": getattr(cfg, "lambda_block_cca", 0.0),
+    }
 
     F_hat = _batch_rms_normalize(F)
 
-    S_p = non_reversibility_S_per_plane(F_hat)
     if getattr(cfg, "s_objective", "sum") == "softmin":
+        S_p = non_reversibility_S_per_plane(F_hat)
         tau = max(float(getattr(cfg, "s_softmin_tau", 0.1)), 1e-6)
         loss = tau * torch.logsumexp(-S_p / tau, dim=0)
     else:
         loss = -non_reversibility_S(F_hat, objective=getattr(cfg, "s_objective", "sum"))
 
-    non_rev_reg = F.new_tensor(0.0)
-    if lambda_xp > 0:
-        # for _ in range(planes//2):
-        #     non_rev_reg += non_rev_regularizer(F_hat) # now scales with number of planes and expected number
-        #                                               # for each cross-planes is 1 per shuffle
-        non_rev_reg += non_rev_regularizer(F_hat)
+    # raw regularizer magnitudes (unscaled by lambda); only compute active ones
+    raw = {}
+    if weights["xp"] > 0:
+        raw["xp"] = non_rev_regularizer(F_hat, cfg)
+    if weights["bt"] > 0:
+        raw["bt"] = barlow_twins_reg(F)
+    if weights["plane_bt"] > 0:
+        raw["plane_bt"] = plane_barlow_twins_reg(F)
+    if weights["cca"] > 0:
+        raw["cca"] = block_cca_reg(F)
 
-    reg = lambda_xp * non_rev_reg
-    reg += lambda_bt * plane_barlow_twins_reg(F)
-    reg += cfg.lambda_plane_bt * plane_barlow_twins_reg(F)
-    reg += cfg.lambda_block_cca * block_cca_reg(F)
+    reg = F.new_tensor(0.0)
+    for name, value in raw.items():
+        reg = reg + lambda_scale * weights[name] * value
 
     loss = loss + reg
 
-    # if cfg is None:
-    #     return loss
-
-    # if getattr(cfg, "lambda_plane_bt", 0.0) > 0:
-    #     loss = loss + cfg.lambda_plane_bt * plane_barlow_twins_reg(F)
-    # if getattr(cfg, "lambda_block_cca", 0.0) > 0:
-    #     loss = loss + cfg.lambda_block_cca * block_cca_reg(F, eps=cfg.block_cca_eps)
-
+    if return_components:
+        info = {
+            "reg_raw":    {k: v.item() for k, v in raw.items()},
+            "reg_scaled": {k: (lambda_scale * weights[k] * raw[k]).item() for k in raw},
+            "lambda_scale": lambda_scale,
+        }
+        return loss, info
     return loss

@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 from config import Config
 from model import MLP
 from loss import (
+    non_reversibility_S,
     non_reversibility_S_per_plane,
     barlow_twins_reg,
     non_rev_regularizer,
@@ -43,22 +44,23 @@ def append_best_model_metrics(run_dir: str, val_ds, cfg: Config, n_xp_perms: int
         F = F - F.mean(dim=cfg.F_mean_axis, keepdim=True)
         F_hat = _batch_rms_normalize(F)
 
-        per_plane = non_reversibility_S_per_plane(F_hat)      # (D,)
-        mean_S = per_plane.mean().item()
-        per_plane = per_plane.tolist()
+        objective = getattr(cfg, "s_objective", "sum")
+        agg_S = non_reversibility_S(F_hat, objective=objective).item()
+        per_plane = non_reversibility_S_per_plane(F_hat).tolist()      # (D,)
 
         bt_mag = barlow_twins_reg(F).item()
         cca_mag = block_cca_reg(F).item()
 
         torch.manual_seed(cfg.seed)  # reproducible permutations
-        xp_vals = [non_rev_regularizer(F_hat).item() for _ in range(n_xp_perms)]
+        xp_vals = [non_rev_regularizer(F_hat, cfg).item() for _ in range(n_xp_perms)]
         xp_mag = sum(xp_vals) / len(xp_vals)
 
     lines = [
         "",
         "[best model — validation metrics]",
         f"  best_epoch                       = {ckpt.get('epoch')}",
-        f"  non_rev_S (mean over planes)     = {mean_S:.6f}",
+        f"  s_objective                      = {objective}",
+        f"  non_rev_S [{objective}, over planes] = {agg_S:.6f}",
         "  non_rev_S per plane              = [" + ", ".join(f"{v:.6f}" for v in per_plane) + "]",
         f"  barlow_twins (raw)               = {bt_mag:.6f}",
         f"  cross_plane_non_rev (raw, {n_xp_perms}-perm avg) = {xp_mag:.6f}",
