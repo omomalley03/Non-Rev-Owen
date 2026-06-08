@@ -10,6 +10,7 @@ from config import Config
 from model import MLP
 from train import train
 from visualize_synth import make_diagnostic_plots_synth
+from best_metrics import append_best_model_metrics
 
 
 def set_seed(seed: int):
@@ -93,6 +94,8 @@ def main():
         cfg=cfg,
         run_dir=run_dir,
     )
+
+    append_best_model_metrics(run_dir, val_ds, cfg)
 
 
 

@@ -42,13 +42,15 @@ def S_ratio(F: torch.Tensor) -> torch.Tensor:
     return minus_sum / (plus_sum + 1e-8)
 
 
-def non_reversibility_S(F: torch.Tensor) -> torch.Tensor:
+def non_reversibility_S(F: torch.Tensor, objective: str = "sum") -> torch.Tensor:
     """
     Unnormalised non-reversibility score S .
     """
     K = F.shape[0]
     minus_sum, _ = _pair_terms(F)
-    return (4.0 / K ** 2) * minus_sum / F.shape[1]  # divide by d to keep scale comparable across dimensions
+    if objective == "mean":
+        return (4.0 / K ** 2) * minus_sum / F.shape[1]  # divide by d to keep scale comparable across dimensions
+    return (2.0 / K ** 2) * minus_sum
     # regular non_rev_S / (d/2) divide by number of planes to keep scale comparable across dimensions, since more planes means more pairs and higher expected non-rev score
 
 def non_reversibility_S_per_plane(F: torch.Tensor) -> torch.Tensor:
@@ -193,11 +195,10 @@ def loss_fn(F: torch.Tensor, cfg=None, lambda_xp: float | None = None, lambda_bt
         tau = max(float(getattr(cfg, "s_softmin_tau", 0.1)), 1e-6)
         loss = tau * torch.logsumexp(-S_p / tau, dim=0)
     else:
-        loss = -non_reversibility_S(F_hat)
+        loss = -non_reversibility_S(F_hat, objective=getattr(cfg, "s_objective", "sum"))
 
     non_rev_reg = F.new_tensor(0.0)
     if lambda_xp > 0:
-
         # for _ in range(planes//2):
         #     non_rev_reg += non_rev_regularizer(F_hat) # now scales with number of planes and expected number
         #                                               # for each cross-planes is 1 per shuffle

@@ -11,6 +11,7 @@ from data import load_mcmaze_cached, gaussian_smooth, soft_normalize, make_windo
 from model import MLP
 from train import train
 from visualize import make_diagnostic_plots, _hand_windows_from_raw
+from best_metrics import append_best_model_metrics
 
 
 def set_seed(seed: int):
@@ -96,6 +97,8 @@ def main():
         run_dir=run_dir,
         hand_windows=hand_windows,
     )
+
+    append_best_model_metrics(run_dir, val_ds, cfg)
 
     # from evaluate import run_linear_probe, plot_confusion_matrix
 
