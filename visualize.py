@@ -31,7 +31,7 @@ from torch.utils.data import DataLoader
 from config import Config
 from data import load_mcmaze_cached, gaussian_smooth, make_windows, train_val_split
 from model import MLP
-from loss import S_ratio as compute_S_ratio
+from loss import S_ratio as compute_S_ratio, _batch_rms_normalize
 
 
 # ── geometry helpers ──────────────────────────────────────────────────────────
@@ -427,6 +427,79 @@ def plot_pca_explained_variance(F_hat, out_path):
     plt.close(fig)
     print(f"Saved → {out_path}")
 
+def _pairwise_zeta(F_hat: np.ndarray) -> np.ndarray:
+    """Compute ζ (S_ratio) for every (dim 2i, dim 2j+1) pair.
+
+    Returns a (D, D) float array where entry [i, j] is the S_ratio of the
+    2D plane formed by dims (2*i, 2*j+1).  Diagonal entries are the native
+    rotation planes; off-diagonal are cross-plane surrogate pairs.
+    """
+    K, d, T = F_hat.shape
+    D = d // 2
+    zeta = np.zeros((D, D))
+    for i in range(D):
+        for j in range(D):
+            plane = np.stack([F_hat[:, 2*i, :], F_hat[:, 2*j+1, :]], axis=1)  # (K,2,T)
+            t = torch.from_numpy(plane)
+            zeta[i, j] = compute_S_ratio(_batch_rms_normalize(t)).item()
+    return zeta
+
+def _plot_dim_grid(F_hat, s_ratio, out_path,
+                    cmap_name="coolwarm", seed=0):
+    """D×D grid where cell (i,j) plots dim 2*i vs dim 2*j+1, time-coded.
+
+    Diagonal (i==j) = native rotation planes.
+    Off-diagonal = cross-plane pairings; should look like Lissajous/scatter if
+    the planes are independent, or structured circles if they share a source.
+    """
+    K, d, T = F_hat.shape
+    n_show = int(K * 0.1)
+    D = d // 2
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(K, size=min(n_show, K), replace=False)
+    cmap = plt.get_cmap(cmap_name)
+    zeta = _pairwise_zeta(F_hat)   # (D, D)
+
+    fig, axes = plt.subplots(D, D, figsize=(3.2 * D, 3.2 * D), squeeze=False)
+
+    for i in range(D):
+        # print(f"i={i}")
+        for j in range(D):
+            # print(f"j={j}")
+            ax = axes[i][j]
+            x_dim, y_dim = 2 * i, 2 * j + 1
+            for k in idx:
+                # print(f"k={k}")
+                xv, yv = F_hat[k, x_dim], F_hat[k, y_dim]
+                for t in range(T - 1):
+                    ax.plot(xv[t:t+2], yv[t:t+2], color=cmap(t / (T - 1)),
+                            lw=0.6, alpha=0.45)
+
+            ax.axhline(0, color="k", lw=0.3, alpha=0.2)
+            ax.axvline(0, color="k", lw=0.3, alpha=0.2)
+            ax.set_aspect("equal", adjustable="datalim")
+            ax.tick_params(labelsize=6)
+
+            # highlight diagonal (native planes) with a box
+            if i == j:
+                for spine in ax.spines.values():
+                    spine.set_edgecolor("steelblue")
+                    spine.set_linewidth(1.5)
+            else:
+                ax.spines[["top", "right"]].set_visible(False)
+
+            ax.set_xlabel(f"dim {x_dim}", fontsize=7)
+            ax.set_ylabel(f"dim {y_dim}", fontsize=7)
+            ax.set_title(f"({x_dim},{y_dim})  ζ={zeta[i,j]:.2f}", fontsize=7, pad=2)
+
+    fig.suptitle(f"Dim grid — time-coded  (ζ = {s_ratio:.2f})\n",
+                #  f"cell (i,j): dim 2i vs dim 2j+1   [diagonal = native planes]",
+                 fontsize=10)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
 
 # ── plot 8: covariance heatmap ───────────────────────────────────────────────
 
@@ -442,7 +515,7 @@ def plot_covariance_heatmap(F_hat, out_path):
     K, d, T = F_hat.shape
     Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
     Z = Z - Z.mean(axis=0)
-    Z = Z / (Z.std(axis=0) + 1e-6)
+    # Z = Z / (Z.std(axis=0) + 1e-6)
     Corr = (Z.T @ Z) / Z.shape[0]
 
     n_show = min(d, 32)
@@ -754,6 +827,10 @@ def make_diagnostic_plots(
     plot_embedding_norm_distribution(
         F_hat, out_path=os.path.join(out_dir, "09_embedding_norm_distribution.png"),
     )
+    # _plot_dim_grid(
+    #     F_hat, s_ratio_val,
+    #     out_path=os.path.join(out_dir, "10_dim_grid_time_coded.png"),
+    # )
 
     print(f"\nS_ratio (embedding, all val pairs): {s_ratio_val:.4f}")
     print(f"Signed area (raw):  μ={areas_raw.mean():+.4f}  σ={areas_raw.std():.4f}"

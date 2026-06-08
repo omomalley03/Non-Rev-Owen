@@ -48,8 +48,8 @@ def non_reversibility_S(F: torch.Tensor) -> torch.Tensor:
     """
     K = F.shape[0]
     minus_sum, _ = _pair_terms(F)
-    return (2.0 / K ** 2) * minus_sum
-
+    return (4.0 / K ** 2) * minus_sum / F.shape[1]  # divide by d to keep scale comparable across dimensions
+    # regular non_rev_S / (d/2) divide by number of planes to keep scale comparable across dimensions, since more planes means more pairs and higher expected non-rev score
 
 def non_reversibility_S_per_plane(F: torch.Tensor) -> torch.Tensor:
     """Unnormalised non-reversibility score for each 2D plane."""
@@ -203,15 +203,19 @@ def loss_fn(F: torch.Tensor, cfg=None, lambda_xp: float | None = None, lambda_bt
         #                                               # for each cross-planes is 1 per shuffle
         non_rev_reg += non_rev_regularizer(F_hat)
 
-    loss = loss + lambda_xp * non_rev_reg
-    loss = loss + lambda_bt * barlow_twins_reg(F)
+    reg = lambda_xp * non_rev_reg
+    reg += lambda_bt * plane_barlow_twins_reg(F)
+    reg += cfg.lambda_plane_bt * plane_barlow_twins_reg(F)
+    reg += cfg.lambda_block_cca * block_cca_reg(F)
 
-    if cfg is None:
-        return loss
+    loss = loss + reg
 
-    if getattr(cfg, "lambda_plane_bt", 0.0) > 0:
-        loss = loss + cfg.lambda_plane_bt * plane_barlow_twins_reg(F)
-    if getattr(cfg, "lambda_block_cca", 0.0) > 0:
-        loss = loss + cfg.lambda_block_cca * block_cca_reg(F, eps=cfg.block_cca_eps)
+    # if cfg is None:
+    #     return loss
+
+    # if getattr(cfg, "lambda_plane_bt", 0.0) > 0:
+    #     loss = loss + cfg.lambda_plane_bt * plane_barlow_twins_reg(F)
+    # if getattr(cfg, "lambda_block_cca", 0.0) > 0:
+    #     loss = loss + cfg.lambda_block_cca * block_cca_reg(F, eps=cfg.block_cca_eps)
 
     return loss

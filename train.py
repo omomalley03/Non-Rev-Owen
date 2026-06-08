@@ -44,9 +44,9 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
     val_loader   = _make_loader(val_ds,   cfg.batch_size, shuffle=False, drop_last=False)
 
     optimizer = optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, T_0=cfg.T_0, T_mult=cfg.T_mult
-    )
+    # scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    #     optimizer, T_0=cfg.T_0, T_mult=cfg.T_mult
+    # )
 
     best_val_loss = float("inf")
     history = {"train_loss": [], "val_loss": [],
@@ -81,7 +81,7 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
             epoch_reg.append(l + s)     # total = -S + reg  →  reg = total + S
             pbar.set_postfix(loss=f"{l:.4f}", S=f"{s:.4f}")
 
-        scheduler.step(epoch)
+        # scheduler.step(epoch)
         mean_train_loss = sum(epoch_losses) / len(epoch_losses)
         mean_train_s    = sum(epoch_s)      / len(epoch_s)
         mean_train_reg  = sum(epoch_reg)    / len(epoch_reg)
@@ -117,7 +117,7 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
             f"Epoch {epoch:3d}/{cfg.epochs}  "
             f"train loss={mean_train_loss:.4f}  val loss={mean_val_loss:.4f}  "
             f"S={mean_val_s:.4f}  reg={mean_val_reg:.4f}  "
-            f"lr={scheduler.get_last_lr()[0]:.2e}"
+            # f"lr={scheduler.get_last_lr()[0]:.2e}"
         )
 
         with open(log_path, "a", newline="") as f:
