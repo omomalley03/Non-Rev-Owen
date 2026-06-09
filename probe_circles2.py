@@ -15,11 +15,12 @@ import numpy as np
 import torch
 
 from config import Config
+from paths import SYNTH_RUNS_DIR
 from model import MLP
 
 runs = sorted(
-    [os.path.join("synth_runs", d) for d in os.listdir("synth_runs")
-     if os.path.isfile(os.path.join("synth_runs", d, "checkpoints", "best.pt"))],
+    [os.path.join(SYNTH_RUNS_DIR, d) for d in os.listdir(SYNTH_RUNS_DIR)
+     if os.path.isfile(os.path.join(SYNTH_RUNS_DIR, d, "checkpoints", "best.pt"))],
     key=os.path.getmtime, reverse=True,
 )
 run_dir = runs[0]

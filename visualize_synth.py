@@ -27,6 +27,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, TensorDataset, random_split
 
 from config import Config
+from paths import SYNTH_RUNS_DIR
 from model import MLP
 from loss import S_ratio as compute_S_ratio, _batch_rms_normalize
 
@@ -417,9 +418,9 @@ def make_diagnostic_plots_synth(
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def _resolve_run_dir(arg_run):
-    runs_root = "synth_runs"
+    runs_root = SYNTH_RUNS_DIR
     if not os.path.isdir(runs_root):
-        raise FileNotFoundError("No 'runs/' directory found.")
+        raise FileNotFoundError(f"No synth_runs directory at {runs_root!r}.")
     completed = sorted(
         [os.path.join(runs_root, d) for d in os.listdir(runs_root)
          if os.path.isfile(os.path.join(runs_root, d, "checkpoints", "best.pt"))],

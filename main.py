@@ -7,6 +7,7 @@ import numpy as np
 import torch
 
 from config import Config
+from paths import RUNS_DIR
 from data import load_mcmaze_cached, gaussian_smooth, soft_normalize, make_windows, train_val_split
 from model import MLP
 from train import train
@@ -30,14 +31,14 @@ def print_summary(history: dict, cfg: Config):
     print(f"  Best val loss       : {history['best_val_loss']:.4f}")
     print(f"  Wall-clock time     : {history['elapsed_s']:.1f} s  ({history['elapsed_s']/60:.1f} min)")
     print(f"  Checkpoint          : {cfg.ckpt_dir}/best.pt")
-    print(f"  Loss curve          : {cfg.out_dir}/loss_curve.png")
+    print(f"  Loss curve          : '{cfg.out_dir}/loss_curve.png'")
     print("=" * 50)
 
 
 def main():
     cfg = Config()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join("runs", f"{timestamp}_{cfg.run_name()}")
+    run_dir = os.path.join(RUNS_DIR, f"{timestamp}_{cfg.run_name()}")
     cfg.ckpt_dir = os.path.join(run_dir, "checkpoints")
     cfg.out_dir  = os.path.join(run_dir, "outputs")
     cfg.save_about(run_dir)
@@ -91,7 +92,7 @@ def main():
     hand_windows = _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s)
     make_diagnostic_plots(
         model=model,
-        val_ds=val_ds,
+        val_ds=train_ds,
         trial_info=trial_info,
         cfg=cfg,
         run_dir=run_dir,

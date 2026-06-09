@@ -13,6 +13,8 @@ Usage
 import argparse
 import os
 
+from paths import RUNS_DIR, SYNTH_RUNS_DIR
+
 STAR_HEADER = "★ STARRED ★"
 COMMENT_PREFIX = "# comment: "
 
@@ -90,7 +92,7 @@ def main():
                         help="Attach a comment to the starred about.txt.")
     args = parser.parse_args()
 
-    root = "synth_runs" if args.synth else "runs"
+    root = SYNTH_RUNS_DIR if args.synth else RUNS_DIR
     run_dir = resolve_run_dir(args.run, root)
     star_run(run_dir, comment=args.comment)
 

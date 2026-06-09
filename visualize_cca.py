@@ -27,6 +27,7 @@ from matplotlib.gridspec import GridSpec
 from torch.utils.data import DataLoader
 
 from config import Config
+from paths import RUNS_DIR
 from loss import (
     S_ratio as compute_S_ratio,
     _batch_rms_normalize,
@@ -42,7 +43,7 @@ from loss import (
 
 def _resolve_run_dir(run_arg):
     """Resolve run directory from CLI arg (same logic as visualize.py)."""
-    runs_root = "runs"
+    runs_root = RUNS_DIR
     if run_arg is None:
         run_arg = "1"
     if run_arg.isdigit():

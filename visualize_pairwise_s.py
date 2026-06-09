@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
 from config import Config
+from paths import RUNS_DIR, SYNTH_RUNS_DIR
 from loss import (
     S_ratio as compute_S_ratio,
     _batch_rms_normalize,
@@ -35,7 +36,7 @@ from loss import (
 
 
 def _resolve_run_dir(run_arg, synth=False):
-    runs_root = "synth_runs" if synth else "runs"
+    runs_root = SYNTH_RUNS_DIR if synth else RUNS_DIR
     if run_arg is None:
         run_arg = "1"
     if run_arg.isdigit():

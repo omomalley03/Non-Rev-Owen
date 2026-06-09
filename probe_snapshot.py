@@ -2,10 +2,11 @@
 both (a) reproduces the whole embedding and (b) mixes multiple sources."""
 import os, numpy as np, torch
 from config import Config
+from paths import SYNTH_RUNS_DIR
 from model import MLP
 
-run_dir = sorted([os.path.join("synth_runs", d) for d in os.listdir("synth_runs")
-                  if os.path.isfile(os.path.join("synth_runs", d, "checkpoints", "best.pt"))],
+run_dir = sorted([os.path.join(SYNTH_RUNS_DIR, d) for d in os.listdir(SYNTH_RUNS_DIR)
+                  if os.path.isfile(os.path.join(SYNTH_RUNS_DIR, d, "checkpoints", "best.pt"))],
                  key=os.path.getmtime, reverse=True)[0]
 ckpt = torch.load(os.path.join(run_dir, "checkpoints", "best.pt"),
                   map_location="cpu", weights_only=False)

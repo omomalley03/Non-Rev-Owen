@@ -45,14 +45,20 @@ def append_best_model_metrics(run_dir: str, val_ds, cfg: Config, n_xp_perms: int
         F_hat = _batch_rms_normalize(F)
 
         objective = getattr(cfg, "s_objective", "sum")
-        agg_S = non_reversibility_S(F_hat, objective=objective).item()
+        # always report mean S (per-plane average) as the diagnostic metric regardless
+        # of training objective — "softmin" falls through to "sum" in non_reversibility_S
+        agg_S = non_reversibility_S(F_hat, objective="mean").item()
         per_plane = non_reversibility_S_per_plane(F_hat).tolist()      # (D,)
 
         bt_mag = barlow_twins_reg(F).item()
         cca_mag = block_cca_reg(F).item()
 
+        # always use "mean" for cross-plane non-rev so runs with different
+        # s_objective (e.g. "softmin") remain directly comparable
         torch.manual_seed(cfg.seed)  # reproducible permutations
-        xp_vals = [non_rev_regularizer(F_hat, cfg).item() for _ in range(n_xp_perms)]
+        xp_vals = [non_reversibility_S(
+                       F_hat[:, torch.randperm(F_hat.shape[1]), :], objective="mean"
+                   ).item() for _ in range(n_xp_perms)]
         xp_mag = sum(xp_vals) / len(xp_vals)
 
     lines = [
@@ -60,7 +66,7 @@ def append_best_model_metrics(run_dir: str, val_ds, cfg: Config, n_xp_perms: int
         "[best model — validation metrics]",
         f"  best_epoch                       = {ckpt.get('epoch')}",
         f"  s_objective                      = {objective}",
-        f"  non_rev_S [{objective}, over planes] = {agg_S:.6f}",
+        f"  non_rev_S [mean/plane]               = {agg_S:.6f}",
         "  non_rev_S per plane              = [" + ", ".join(f"{v:.6f}" for v in per_plane) + "]",
         f"  barlow_twins (raw)               = {bt_mag:.6f}",
         f"  cross_plane_non_rev (raw, {n_xp_perms}-perm avg) = {xp_mag:.6f}",

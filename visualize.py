@@ -29,6 +29,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 
 from config import Config
+from paths import RUNS_DIR
 from data import load_mcmaze_cached, gaussian_smooth, make_windows, train_val_split
 from model import MLP
 from loss import S_ratio as compute_S_ratio, _batch_rms_normalize
@@ -695,12 +696,106 @@ def plot_conditions_diagnostic(hand_windows, trial_info, val_indices, out_path):
     print(f"Saved → {out_path}")
 
 
+# ── loss curve ───────────────────────────────────────────────────────────────
+
+def plot_loss_curve(run_dir: str, cfg: Config) -> None:
+    """Regenerate the training loss curve from saved CSVs.
+
+    Reads  outputs/log.csv         — epoch-level S and loss
+           outputs/reg_history.csv — per-reg raw and λ·reg magnitudes (written
+                                     by train.py when at least one regularizer
+                                     is active; absent for unregularised runs)
+
+    Produces the same multi-panel figure as train.py:
+      panel 0   : val S (non-rev) and total λ·reg over epochs
+      panel 1…N : one panel per active reg showing raw vs λ·reg magnitude
+    """
+    import csv as _csv
+
+    out_dir = os.path.join(run_dir, "outputs")
+    log_path = os.path.join(out_dir, "log.csv")
+    if not os.path.isfile(log_path):
+        print(f"  [loss curve] no log.csv found at {log_path!r} — skipping.")
+        return
+
+    # read log.csv
+    epochs, val_s = [], []
+    with open(log_path, newline="") as f:
+        for row in _csv.DictReader(f):
+            epochs.append(int(row["epoch"]))
+            val_s.append(float(row["val_s"]))
+
+    reg_lambdas = {
+        "xp":       cfg.lambda_xp,
+        "bt":       cfg.lambda_bt,
+        "plane_bt": getattr(cfg, "lambda_plane_bt", 0.0),
+        "cca":      getattr(cfg, "lambda_block_cca", 0.0),
+    }
+    lambda_start = getattr(cfg, "lambda_start_frac", 1.0)
+    # active regs from cfg — this determines the panel count even for old runs
+    active_regs = [k for k, v in reg_lambdas.items() if v > 0]
+
+    # try to load per-epoch reg data (written by train.py; absent for old runs)
+    reg_raw:    dict[str, list[float]] = {}
+    reg_scaled: dict[str, list[float]] = {}
+    reg_path = os.path.join(out_dir, "reg_history.csv")
+    if os.path.isfile(reg_path):
+        with open(reg_path, newline="") as f:
+            reader = _csv.DictReader(f)
+            csv_regs = [c[4:] for c in (reader.fieldnames or [])
+                        if c.startswith("raw_")]
+            for k in csv_regs:
+                reg_raw[k], reg_scaled[k] = [], []
+            for row in reader:
+                for k in csv_regs:
+                    reg_raw[k].append(float(row[f"raw_{k}"]))
+                    reg_scaled[k].append(float(row[f"scaled_{k}"]))
+    has_reg_data = bool(reg_raw)
+
+    n_panels = 1 + len(active_regs)
+    fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 4), squeeze=False)
+    axes = axes[0]
+
+    ax = axes[0]
+    ax.plot(epochs, val_s, label="S mean/plane (↑)", color="steelblue")
+    if has_reg_data:
+        total_scaled = [sum(reg_scaled[k][i] for k in active_regs if k in reg_scaled)
+                        for i in range(len(epochs))]
+        ax.plot(epochs, total_scaled, label="total λ·reg (↓)", color="tomato")
+    ax.set_xlabel("Epoch")
+    ax.set_title("Training dynamics")
+    ax.legend()
+    ax.spines[["top", "right"]].set_visible(False)
+
+    for ax, name in zip(axes[1:], active_regs):
+        lam = reg_lambdas.get(name)
+        lam_str = f"{lam:g}" if isinstance(lam, (int, float)) else "?"
+        ax.set_title(f"{name}  (λ={lam_str}, start={lambda_start:g})")
+        ax.set_xlabel("Epoch")
+        if name in reg_raw:
+            ax.plot(epochs, reg_raw[name],    color="gray",  ls="--", label="raw (unscaled)")
+            ax.plot(epochs, reg_scaled[name], color="tomato",          label="λ·reg (applied)")
+            ax.legend()
+        else:
+            ax.text(0.5, 0.5,
+                    "Per-epoch data not available.\nRetrain to generate reg_history.csv",
+                    transform=ax.transAxes, ha="center", va="center",
+                    fontsize=9, color="gray", style="italic")
+        ax.spines[["top", "right"]].set_visible(False)
+
+    fig.tight_layout()
+    out_path = os.path.join(out_dir, "loss_curve.png")
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def _resolve_run_dir(arg_run):
-    runs_root = "runs"
+    runs_root = RUNS_DIR
     if not os.path.isdir(runs_root):
-        raise FileNotFoundError("No 'runs/' directory. Run `python main.py` first.")
+        raise FileNotFoundError(f"No runs directory at {runs_root!r}. Run `python main.py` first.")
     completed = sorted(
         [os.path.join(runs_root, d) for d in os.listdir(runs_root)
          if os.path.isfile(os.path.join(runs_root, d, "checkpoints", "best.pt"))],
@@ -900,6 +995,7 @@ def main():
         cond_stop=args.stop,
         cond_skip=args.skip,
     )
+    plot_loss_curve(run_dir, cfg)
 
 
 if __name__ == "__main__":

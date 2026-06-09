@@ -7,6 +7,7 @@ import torch
 from torch.utils.data import TensorDataset, random_split
 
 from config import Config
+from paths import SYNTH_RUNS_DIR
 from model import MLP
 from train import train
 from visualize_synth import make_diagnostic_plots_synth
@@ -59,7 +60,7 @@ def train_val_split_synth(windows: np.ndarray, val_frac: float, seed: int):
 def main():
     cfg = Config()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join("synth_runs", f"{timestamp}_{cfg.run_name()}")
+    run_dir = os.path.join(SYNTH_RUNS_DIR, f"{timestamp}_{cfg.run_name()}")
     cfg.ckpt_dir = os.path.join(run_dir, "checkpoints")
     cfg.out_dir  = os.path.join(run_dir, "outputs")
     cfg.save_about(run_dir)

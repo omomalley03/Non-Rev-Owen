@@ -63,10 +63,15 @@ def non_reversibility_S_per_plane(F: torch.Tensor) -> torch.Tensor:
 
 
 def non_rev_regularizer(F: torch.Tensor, cfg: Config) -> torch.Tensor: # randomize dim order and calculate non-rev score cross-plane
-    """Regularize by minimizing cross-plane non-reversibility score"""
+    """Regularize by minimizing cross-plane non-reversibility score.
+
+    Always uses objective="mean" regardless of cfg.s_objective — the xp penalty
+    measures average cross-plane structure; using softmin here conflicts with the
+    softmin main objective and causes embedding collapse.
+    """
     idx = torch.randperm(F.shape[1])
     F_shuff = F[:, idx, :]
-    return non_reversibility_S(F_shuff,objective=cfg.s_objective)
+    return non_reversibility_S(F_shuff, objective="mean")
 
 
 def non_rev_regularizer_systematic(F: torch.Tensor, cfg: Config) -> torch.Tensor:
@@ -91,9 +96,8 @@ def barlow_twins_reg(F: torch.Tensor, eps: float = 1e-6, normalize: bool = False
 
     Flattens F from (K, d, T) → (M, d) where M = K*T, treating every
     (trial, timestep) pair as an independent sample. Computes the
-    empirical (d, d) Cov. Returns ‖Cov - I‖_F², which
-    is zero when all dimensions are uncorrelated with unit variance.
-
+    empirical (d, d) Cov. Returns mean((Cov - I)²) normalised by d²,
+    so lambda_bt has the same interpretation regardless of d.
     """
     K, d, T = F.shape
     Z = F.permute(0, 2, 1).reshape(K * T, d)          # (M, d)
@@ -102,7 +106,7 @@ def barlow_twins_reg(F: torch.Tensor, eps: float = 1e-6, normalize: bool = False
     Z = Z - Z.mean(dim=0, keepdim=True)               # zero-mean per dim
     Cov = (Z.T @ Z) / M
 
-    return ((Cov - torch.eye(d, device=F.device)) ** 2).sum()
+    return ((Cov - torch.eye(d, device=F.device)) ** 2).sum() / (d * d)
 
 
 def plane_barlow_twins_reg(F: torch.Tensor) -> torch.Tensor:
@@ -116,7 +120,8 @@ def plane_barlow_twins_reg(F: torch.Tensor) -> torch.Tensor:
     Diagonal entries (variance → 1) and all cross-plane entries are still
     penalised as in standard Barlow Twins.
 
-    Returns ‖(Cov - I) ⊙ mask‖_F² where mask zeros within-plane off-diag.
+    Returns mean((Cov - I)²) over penalised entries, normalised by d²
+    so lambda_plane_bt is comparable to lambda_bt across different d.
     """
     K, d, T = F.shape
     D = d // 2
@@ -133,7 +138,7 @@ def plane_barlow_twins_reg(F: torch.Tensor) -> torch.Tensor:
         mask[2*p, 2*p + 1] = False
         mask[2*p + 1, 2*p] = False
 
-    return (diff[mask] ** 2).sum()
+    return (diff[mask] ** 2).sum() / (d * d)
 
 
 def _batch_rms_normalize(F: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:

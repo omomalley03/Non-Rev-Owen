@@ -94,7 +94,7 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
             loss.backward()
             optimizer.step()
             with torch.no_grad():
-                s = non_reversibility_S(_batch_rms_normalize(F),cfg.s_objective).item()
+                s = non_reversibility_S(_batch_rms_normalize(F), "mean").item()
             l = loss.item()
             epoch_losses.append(l)
             epoch_s.append(s)
@@ -120,7 +120,7 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                 F = F - F.mean(dim=cfg.F_mean_axis, keepdim=True)
                 loss, info = loss_function(F, cfg=cfg, training=False,
                                            lambda_scale=scale, return_components=True)
-                s = non_reversibility_S(_batch_rms_normalize(F),cfg.s_objective).item()
+                s = non_reversibility_S(_batch_rms_normalize(F), "mean").item()
                 val_losses.append(loss.item())
                 val_s.append(s)
                 val_reg.append(loss.item() + s)
@@ -146,7 +146,7 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         print(
             f"Epoch {epoch:3d}/{cfg.epochs}  "
             f"train loss={mean_train_loss:.4f}  val loss={mean_val_loss:.4f}  "
-            f"S[{cfg.s_objective}]={mean_val_s:.4f}  reg={mean_val_reg:.4f}  "
+            f"S[mean]={mean_val_s:.4f}  reg={mean_val_reg:.4f}  "
             f"λscale={scale:.2f}  "
             f"lr={scheduler.get_last_lr()[0]:.2e}"
         )
@@ -166,6 +166,21 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
     history["best_val_loss"] = best_val_loss
     history["elapsed_s"] = time.time() - t0
 
+    # --- save per-reg history for post-hoc visualisation ---
+    if active_regs:
+        reg_hist_path = os.path.join(cfg.out_dir, "reg_history.csv")
+        cols = (["epoch", "lambda_scale"]
+                + [f"raw_{k}"    for k in active_regs]
+                + [f"scaled_{k}" for k in active_regs])
+        with open(reg_hist_path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(cols)
+            for i in range(cfg.epochs):
+                row = ([i + 1, history["lambda_scale"][i]]
+                       + [history["reg_raw"][k][i]    for k in active_regs]
+                       + [history["reg_scaled"][k][i] for k in active_regs])
+                w.writerow(row)
+
     # --- loss curve ---
     # One panel for the S objective, then one panel per active regularizer
     # showing its raw magnitude (unscaled) and the lambda·reg actually applied.
@@ -175,8 +190,16 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
     axes = axes[0]
 
     ax = axes[0]
-    ax.plot(ep, history["val_s"],   label="S  (non-rev, ↑)",   color="steelblue")
-    ax.plot(ep, history["val_reg"], label="total λ·reg (↓)",   color="tomato")
+    # Compute total λ·reg as the sum of individually tracked scaled components.
+    # history["val_reg"] = loss + s is unreliable with the softmin objective because
+    # non_reversibility_S("softmin") silently falls through to "sum" mode, so the
+    # subtraction loses the softmin term and inflates the result by ~2x.
+    total_scaled_reg = [
+        sum(history["reg_scaled"][k][i] for k in active_regs)
+        for i in range(len(ep))
+    ] if active_regs else [0.0] * len(ep)
+    ax.plot(ep, history["val_s"],     label="S mean/plane (↑)",  color="steelblue")
+    ax.plot(ep, total_scaled_reg,     label="total λ·reg (↓)",   color="tomato")
     ax.set_xlabel("Epoch")
     ax.set_title("Training dynamics")
     ax.legend()
