@@ -29,7 +29,7 @@ from torch.utils.data import DataLoader, TensorDataset, random_split
 from config import Config
 from paths import SYNTH_RUNS_DIR
 from model import MLP
-from loss import S_ratio as compute_S_ratio, _batch_rms_normalize
+from loss import S_ratio as compute_S_ratio, _batch_rms_normalize, _whiten_2d, _plane_samples
 
 
 def _fit_pca2(X):
@@ -136,7 +136,7 @@ def _plot_planes_time_coded(F_hat, s_ratio, out_path,
                              cmap_name="coolwarm", seed=0):
     """Subplot grid: one panel per 2D rotation plane, trials time-coded."""
     K, d, T = F_hat.shape
-    n_show = int(K * 1.0)
+    n_show = int(1)
     D = d // 2
     rng = np.random.default_rng(seed)
     idx = rng.choice(K, size=min(n_show, K), replace=False)
@@ -160,7 +160,8 @@ def _plot_planes_time_coded(F_hat, s_ratio, out_path,
         ax.axhline(0, color="k", lw=0.4, alpha=0.25)
         ax.axvline(0, color="k", lw=0.4, alpha=0.25)
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})  ζ={zeta[p,p]:.2f}", fontsize=9)
+        ax.set_title("Linear embedding")
+        # ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})  ζ={zeta[p,p]:.2f}", fontsize=9)
         ax.set_xlabel(f"dim {2*p}", fontsize=8)
         ax.set_ylabel(f"dim {2*p+1}", fontsize=8)
         ax.tick_params(labelsize=7)
@@ -218,13 +219,13 @@ def _plot_dim_grid(F_hat, s_ratio, out_path,
             else:
                 ax.spines[["top", "right"]].set_visible(False)
 
-            ax.set_xlabel(f"dim {x_dim}", fontsize=7)
-            ax.set_ylabel(f"dim {y_dim}", fontsize=7)
-            ax.set_title(f"({x_dim},{y_dim})  ζ={zeta[i,j]:.2f}", fontsize=7, pad=2)
+            ax.set_xlabel(f"dim {x_dim}", fontsize=12)
+            ax.set_ylabel(f"dim {y_dim}", fontsize=12)
+            # ax.set_title(f"({x_dim},{y_dim})  ζ={zeta[i,j]:.2f}", fontsize=7, pad=2)
 
-    fig.suptitle(f"Dim grid — time-coded  (ζ = {s_ratio:.2f})\n",
-                #  f"cell (i,j): dim 2i vs dim 2j+1   [diagonal = native planes]",
-                 fontsize=10)
+    # fig.suptitle(f"Dim grid — time-coded  (ζ = {s_ratio:.2f})\n",
+    #             #  f"cell (i,j): dim 2i vs dim 2j+1   [diagonal = native planes]",
+    #              fontsize=10)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -332,6 +333,30 @@ def plot_norm_distribution(F_hat, out_path):
     plt.close(fig)
     print(f"Saved → {out_path}")
 
+def plot_cca_grid(F_hat, out_path):
+    """Penalize linear dependence between whole 2D planes."""
+    X = _whiten_2d(_plane_samples(F_hat))             # (D, M, 2)
+    # print(X.shape)
+    D, M, _ = X.shape
+    # if D < 2:
+    #     print(F.new_tensor(0.0))
+    C = torch.einsum("pmi,qmj->pqij", X, X) / M            # (D, D, 2, 2)
+    eye = torch.eye(D, dtype=torch.bool)
+    # print(C[~eye].pow(2).sum() / (D * (D - 1)))
+    fig, axes = plt.subplots(D,D,figsize=(6, 4))
+    for i in range(D):
+        for j in range(D):
+            ax = axes[i,j]
+            ax.imshow(C[i,j],vmin=-1,vmax=1,cmap="RdBu_r")
+            score = C[i,j].pow(2).sum()
+            ax.set_title(f"reg.={score:.2f}")
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
 
 # ── main diagnostic entry point ───────────────────────────────────────────────
 
@@ -412,6 +437,10 @@ def make_diagnostic_plots_synth(
         cfg=cfg,
     )
 
+    plot_cca_grid(
+        F_hat_t, out_path = os.path.join(out_dir,"10_cca_grid.png")
+    )
+
     print(f"\nS_ratio (all val pairs): {s_ratio_val:.4f}  (max ≈ 1.0 for perfect rotation)")
 
 
@@ -462,7 +491,8 @@ def main():
     cfg: Config = ckpt["config"]
     print(f"Loaded checkpoint from epoch {ckpt['epoch']}")
 
-    data_path = args.data or getattr(cfg, "synth_data_path", "rotations.npy")
+    # data_path = args.data or getattr(cfg, "synth_data_path", "rotations.npy")
+    data_path = "rotations_4planes.npy"
     print(f"Loading synthetic data from {data_path} …")
     windows = load_synthetic_windows(cfg, data_path=data_path)
     if getattr(cfg, "synth_noise_std", 0.0) > 0:

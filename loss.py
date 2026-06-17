@@ -160,7 +160,7 @@ def _plane_samples(F: torch.Tensor) -> torch.Tensor:
 
 
 def _whiten_2d(X: torch.Tensor, eps: float = 1e-4) -> torch.Tensor:
-    """Whiten batched 2D samples, shape (D, M, 2)."""
+    """Whiten each 2D plane in a batch, shape (D, M, 2)."""
     X = X - X.mean(dim=1, keepdim=True)
     cov = torch.einsum("dmi,dmj->dij", X, X) / max(X.shape[1] - 1, 1)
     eigvals, eigvecs = torch.linalg.eigh(cov)

@@ -516,7 +516,7 @@ def plot_covariance_heatmap(F_hat, out_path):
     K, d, T = F_hat.shape
     Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
     Z = Z - Z.mean(axis=0)
-    # Z = Z / (Z.std(axis=0) + 1e-6)
+    Z = Z / (Z.std(axis=0) + 1e-6)
     Corr = (Z.T @ Z) / Z.shape[0]
 
     n_show = min(d, 32)
@@ -727,9 +727,9 @@ def plot_loss_curve(run_dir: str, cfg: Config) -> None:
 
     reg_lambdas = {
         "xp":       cfg.lambda_xp,
-        "bt":       cfg.lambda_bt,
+        "Barlow Twins":       cfg.lambda_bt,
         "plane_bt": getattr(cfg, "lambda_plane_bt", 0.0),
-        "cca":      getattr(cfg, "lambda_block_cca", 0.0),
+        "":      getattr(cfg, "lambda_block_cca", 0.0),
     }
     lambda_start = getattr(cfg, "lambda_start_frac", 1.0)
     # active regs from cfg — this determines the panel count even for old runs
@@ -757,13 +757,13 @@ def plot_loss_curve(run_dir: str, cfg: Config) -> None:
     axes = axes[0]
 
     ax = axes[0]
-    ax.plot(epochs, val_s, label="S mean/plane (↑)", color="steelblue")
+    ax.plot(epochs, val_s, label="Mean S per plane", color="steelblue")
     if has_reg_data:
         total_scaled = [sum(reg_scaled[k][i] for k in active_regs if k in reg_scaled)
                         for i in range(len(epochs))]
-        ax.plot(epochs, total_scaled, label="total λ·reg (↓)", color="tomato")
+        ax.plot(epochs, total_scaled, label="total λ·reg", color="tomato")
     ax.set_xlabel("Epoch")
-    ax.set_title("Training dynamics")
+    ax.set_title("Validation Set Loss")
     ax.legend()
     ax.spines[["top", "right"]].set_visible(False)
 
