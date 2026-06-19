@@ -7,6 +7,7 @@ Each diagnostic plot is saved as its own PNG in the run's `outputs/` dir:
   02_embed_planes_time_coded.png        — per rotation plane, condition-avg, time-coded
   03_raw_condition_hsv.png              — raw, condition-avg, HSV by reach angle
   04_embed_planes_condition_hsv.png     — hand traj + embedding planes, same HSV colours
+  05_embed_planes_condition_time.png    — per plane, both dims vs time, condition HSV colours
   07_covariance_heatmap.png             — embedding correlation matrix
   08_between_within_variance.png        — trial-discriminability over time
   09_embedding_norm_distribution.png    — ‖F_k‖_F histogram
@@ -26,6 +27,7 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from torch.utils.data import DataLoader
 
 from config import Config
@@ -271,9 +273,9 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
     D = d // 2
     planes = F_hat.reshape(K, D, 2, T)
 
-    has_hand = hand_windows_val is not None
+    has_hand = False # hand_windows_val is not None
     n_panels = (1 if has_hand else 0) + D
-    ncols = min(n_panels, 5)
+    ncols = min(n_panels, 4)
     nrows = (n_panels + ncols - 1) // ncols
     fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 4 * nrows),
                              squeeze=False)
@@ -287,6 +289,8 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
             mean_hand = hand_windows_val[idx_list].mean(axis=0)
             color = colors[cond_key]
             ax.plot(mean_hand[0], mean_hand[1], lw=1.4, color=color, alpha=0.9)
+            # ax.xlim(-6,6)
+            # ax.ylim(-6,6)
             ax.scatter(mean_hand[0, 0], mean_hand[1, 0], color=color, s=25, zorder=5)
         ax.spines[["top", "right"]].set_visible(False)
         ax.set_title("Hand trajectory (val)", fontsize=9)
@@ -305,11 +309,12 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
             color = colors[cond_key]
             ax.plot(mean_traj[0], mean_traj[1], lw=1.4, color=color, alpha=0.9)
             ax.scatter(mean_traj[0, 0], mean_traj[1, 0], color=color, s=25, zorder=5)
-
+        # ax.set_xlim(-6,6)
+        # ax.set_ylim(-6,6)
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})", fontsize=9)
-        ax.set_xlabel(f"dim {2*p}", fontsize=8)
-        ax.set_ylabel(f"dim {2*p+1}", fontsize=8)
+        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})", fontsize=12)
+        ax.set_xlabel(f"dim {2*p}", fontsize=12)
+        ax.set_ylabel(f"dim {2*p+1}", fontsize=12)
         ax.tick_params(labelsize=7)
         ax.set_aspect("equal", adjustable="datalim")
 
@@ -318,8 +323,61 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
 
     n_conds = len(groups)
     n_per = float(np.mean([len(v) for v in groups.values()]))
-    fig.suptitle(f"Embeddings coded by trial (ζ = {s_ratio:.2f},  "
-                 f"{n_conds} conditions, {n_per:.1f} trials/cond)", fontsize=11)
+    # fig.suptitle(f"Embeddings coded by trial (ζ = {s_ratio:.2f},  "
+                #  f"{n_conds} conditions, {n_per:.1f} trials/cond)", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
+# ── plot 5: per-plane condition-averaged, dims vs time ───────────────────────
+
+def _plot_planes_condition_time(F_hat, groups, colors, s_ratio, out_path):
+    """Subplot grid: one panel per 2D rotation plane, condition-avg, dims vs time.
+
+    Like plot 4 but instead of plotting the two plane dims against each other,
+    both are plotted against time. Each condition keeps its HSV colour; the even
+    coordinate (dim 2p, the plot-4 x-axis) is a solid line and the odd
+    coordinate (dim 2p+1, the plot-4 y-axis) a dashed line.
+    """
+    K, d, T = F_hat.shape
+    D = d // 2
+    planes = F_hat.reshape(K, D, 2, T)
+    t_axis = np.arange(T)
+
+    ncols = min(D, 4)
+    nrows = (D + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 4 * nrows),
+                             squeeze=False)
+
+    for p in range(D):
+        ax = axes[p // ncols, p % ncols]
+        for cond_key in groups:
+            idx_list = groups[cond_key]
+            mean_traj = planes[idx_list, p].mean(axis=0)  # (2, T)
+            color = colors[cond_key]
+            ax.plot(t_axis, mean_traj[0], lw=1.4, color=color, alpha=0.9,
+                    ls="-")
+            ax.plot(t_axis, mean_traj[1], lw=1.4, color=color, alpha=0.9,
+                    ls="--")
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})", fontsize=12)
+        ax.set_xlabel("time (bins)", fontsize=12)
+        ax.set_ylabel("embedding value", fontsize=12)
+        ax.tick_params(labelsize=7)
+
+    # Style legend (shared): solid = even/x dim, dashed = odd/y dim.
+    style_handles = [
+        Line2D([0], [0], color="0.3", lw=1.4, ls="-", label="even dim (x)"),
+        Line2D([0], [0], color="0.3", lw=1.4, ls="--", label="odd dim (y)"),
+    ]
+    axes[0, 0].legend(handles=style_handles, fontsize=8, loc="best",
+                      frameon=False)
+
+    for i in range(D, nrows * ncols):
+        axes[i // ncols, i % ncols].set_visible(False)
+
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -912,6 +970,10 @@ def make_diagnostic_plots(
         F_hat, cond_groups, cond_colors, s_ratio_val,
         out_path=os.path.join(out_dir, "04_embed_planes_condition_hsv.png"),
         hand_windows_val=hand_windows_val,
+    )
+    _plot_planes_condition_time(
+        F_hat, cond_groups, cond_colors, s_ratio_val,
+        out_path=os.path.join(out_dir, "05_embed_planes_condition_time.png"),
     )
     plot_covariance_heatmap(
         F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
