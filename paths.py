@@ -19,8 +19,8 @@ import os
 # ── EDIT THIS ────────────────────────────────────────────────────────────────
 # Folder on the external drive that contains the `runs/` and `synth_runs/`
 # subdirectories. Volume names are case-sensitive and may contain spaces.
-# _DEFAULT_RUNS_BASE = "/Volumes/ADATA HD710/POC_MLP"
-_DEFAULT_RUNS_BASE = "/Users/omomalley03/Documents/Dissertation/POC_MLP"
+_DEFAULT_RUNS_BASE = "/Volumes/ADATA HD710/data_owen/FACED/processed/"
+# _DEFAULT_RUNS_BASE = "/Users/omomalley03/Documents/Dissertation/POC_MLP"
 # ─────────────────────────────────────────────────────────────────────────────
 
 RUNS_BASE = os.environ.get("RUNS_BASE", _DEFAULT_RUNS_BASE)

@@ -36,13 +36,15 @@ def print_summary(history: dict, cfg: Config):
 
 def load_synthetic_windows(cfg: Config) -> np.ndarray:
     """Load synthetic rotations as (K, N, T), matching train/visualize."""
-    windows = np.load(cfg.synth_data_path).astype(np.float32)
-    windows = np.transpose(windows, (0, 2, 1))  # source is (K, T, N)
+    windows = np.load(cfg.synth_data_path)
+    if windows.dtype != np.float32:
+        windows = windows.astype(np.float32)
+    # windows = np.transpose(windows, (0, 2, 1))  # source is (K, T, N)
 
-    if cfg.synth_noise_std > 0:
-        rng = np.random.default_rng(cfg.seed)
-        noise = rng.normal(0.0, cfg.synth_noise_std, size=windows.shape).astype(np.float32)
-        windows = windows + noise
+    # if cfg.synth_noise_std > 0:
+    #     rng = np.random.default_rng(cfg.seed)
+    #     noise = rng.normal(0.0, cfg.synth_noise_std, size=windows.shape).astype(np.float32)
+    #     windows = windows + noise
 
     return windows
 
