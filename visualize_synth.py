@@ -502,7 +502,8 @@ def main():
 
     train_ds, val_ds = train_val_split_synth(windows, cfg.val_split, cfg.seed)
 
-    model = MLP(in_channels=N_in, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout)
+    model = MLP(in_channels=N_in, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
+                temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size)
     model.load_state_dict(ckpt["model_state_dict"])
 
     make_diagnostic_plots_synth(

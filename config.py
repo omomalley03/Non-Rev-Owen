@@ -41,6 +41,8 @@ class Config:
     hidden_dim: int = 256              # MLP hidden layer width
     depth: int = 3                     # number of MLP layers (1 = pure linear, SCA-equivalent)
     dropout: float = 0.2            # dropout probability applied after each hidden activation
+    temporal_filters: int = 16         # symmetric temporal conv front-end; 0 disables it
+    temporal_kernel_size: int = 31     # odd; ±15 ms at 1 ms sampling (tunable; sweep e.g. 15/31/51)
 
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
@@ -94,7 +96,8 @@ class Config:
                          "align_field", "pre_ms", "post_ms", "window_size",
                          "window_strategy", "val_split", "seed",
                          "synth_data_path", "synth_noise_std"],
-            "model":    ["d", "hidden_dim", "depth", "dropout"],
+            "model":    ["d", "hidden_dim", "depth", "dropout",
+                         "temporal_filters", "temporal_kernel_size"],
             "training": ["batch_size", "epochs", "lr", "weight_decay",
                          "lambda_xp", "lambda_bt", "lambda_plane_bt",
                          "lambda_block_cca", "lambda_start_frac",

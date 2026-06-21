@@ -35,7 +35,8 @@ def append_best_model_metrics(run_dir: str, val_ds, cfg: Config, n_xp_perms: int
     N_in = val_tensor.shape[1]
 
     model = MLP(in_channels=N_in, d=cfg.d, hidden_dim=cfg.hidden_dim,
-                depth=cfg.depth, dropout=cfg.dropout)
+                depth=cfg.depth, dropout=cfg.dropout,
+                temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
