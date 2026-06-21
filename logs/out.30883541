@@ -1,0 +1,71 @@
+Run directory: /rds/user/omo26/hpc-work/eeg_runs/synth_runs/20260621_141022_d4_h256_dep3_bs64_ep50_lr1e-03_lxp0.0_lbt0.0_lcca0.0_sig10.0_s0
+Loading synthetic data from /rds/user/omo26/hpc-work/eeg_data/faced_data.npy …
+  Windows shape: (10332, 32, 2000)  (K, N, T)
+  Train: 9299  |  Val: 1033
+Model parameters: 96,276
+
+Starting training for 50 epochs …
+
+Epoch   1/50  train loss=-0.0696  val loss=-0.1080  S[mean]=0.1080  reg=0.0000  λscale=1.00  lr=9.76e-04
+Epoch   2/50  train loss=-0.2550  val loss=-0.2366  S[mean]=0.2366  reg=0.0000  λscale=1.00  lr=9.05e-04
+Epoch   3/50  train loss=-0.3747  val loss=-0.2306  S[mean]=0.2306  reg=0.0000  λscale=1.00  lr=7.94e-04
+Epoch   4/50  train loss=-0.4008  val loss=-0.2393  S[mean]=0.2393  reg=0.0000  λscale=1.00  lr=6.55e-04
+Epoch   5/50  train loss=-0.3825  val loss=-0.2347  S[mean]=0.2347  reg=0.0000  λscale=1.00  lr=5.00e-04
+Epoch   6/50  train loss=-0.4339  val loss=-0.2615  S[mean]=0.2615  reg=0.0000  λscale=1.00  lr=3.45e-04
+Epoch   7/50  train loss=-0.4302  val loss=-0.2933  S[mean]=0.2933  reg=0.0000  λscale=1.00  lr=2.06e-04
+Epoch   8/50  train loss=-0.4207  val loss=-0.2814  S[mean]=0.2814  reg=0.0000  λscale=1.00  lr=9.55e-05
+Epoch   9/50  train loss=-0.4467  val loss=-0.3068  S[mean]=0.3068  reg=0.0000  λscale=1.00  lr=2.45e-05
+Epoch  10/50  train loss=-0.4723  val loss=-0.3127  S[mean]=0.3127  reg=0.0000  λscale=1.00  lr=1.00e-03
+Epoch  11/50  train loss=-0.4172  val loss=-0.3040  S[mean]=0.3040  reg=0.0000  λscale=1.00  lr=9.94e-04
+Epoch  12/50  train loss=-0.4358  val loss=-0.3936  S[mean]=0.3936  reg=0.0000  λscale=1.00  lr=9.76e-04
+Epoch  13/50  train loss=-0.4933  val loss=-0.3970  S[mean]=0.3970  reg=0.0000  λscale=1.00  lr=9.46e-04
+Epoch  14/50  train loss=-0.4679  val loss=-0.3200  S[mean]=0.3200  reg=0.0000  λscale=1.00  lr=9.05e-04
+Epoch  15/50  train loss=-0.4960  val loss=-0.3072  S[mean]=0.3072  reg=0.0000  λscale=1.00  lr=8.54e-04
+Epoch  16/50  train loss=-0.5217  val loss=-0.3889  S[mean]=0.3889  reg=0.0000  λscale=1.00  lr=7.94e-04
+Epoch  17/50  train loss=-0.5623  val loss=-0.4059  S[mean]=0.4059  reg=0.0000  λscale=1.00  lr=7.27e-04
+Epoch  18/50  train loss=-0.5870  val loss=-0.4331  S[mean]=0.4331  reg=0.0000  λscale=1.00  lr=6.55e-04
+Epoch  19/50  train loss=-0.5557  val loss=-0.3580  S[mean]=0.3580  reg=0.0000  λscale=1.00  lr=5.78e-04
+Epoch  20/50  train loss=-0.5549  val loss=-0.3675  S[mean]=0.3675  reg=0.0000  λscale=1.00  lr=5.00e-04
+Epoch  21/50  train loss=-0.5993  val loss=-0.3869  S[mean]=0.3869  reg=0.0000  λscale=1.00  lr=4.22e-04
+Epoch  22/50  train loss=-0.6135  val loss=-0.2939  S[mean]=0.2939  reg=0.0000  λscale=1.00  lr=3.45e-04
+Epoch  23/50  train loss=-0.6538  val loss=-0.2963  S[mean]=0.2963  reg=0.0000  λscale=1.00  lr=2.73e-04
+Epoch  24/50  train loss=-0.6138  val loss=-0.2687  S[mean]=0.2687  reg=0.0000  λscale=1.00  lr=2.06e-04
+Epoch  25/50  train loss=-0.6502  val loss=-0.2413  S[mean]=0.2413  reg=0.0000  λscale=1.00  lr=1.46e-04
+Epoch  26/50  train loss=-0.6187  val loss=-0.2268  S[mean]=0.2268  reg=0.0000  λscale=1.00  lr=9.55e-05
+Epoch  27/50  train loss=-0.6509  val loss=-0.2500  S[mean]=0.2500  reg=0.0000  λscale=1.00  lr=5.45e-05
+Epoch  28/50  train loss=-0.5882  val loss=-0.2335  S[mean]=0.2335  reg=0.0000  λscale=1.00  lr=2.45e-05
+Epoch  29/50  train loss=-0.6473  val loss=-0.2322  S[mean]=0.2322  reg=0.0000  λscale=1.00  lr=6.16e-06
+Epoch  30/50  train loss=-0.6247  val loss=-0.2322  S[mean]=0.2322  reg=0.0000  λscale=1.00  lr=1.00e-03
+Epoch  31/50  train loss=-0.5487  val loss=-0.2362  S[mean]=0.2362  reg=0.0000  λscale=1.00  lr=9.98e-04
+Epoch  32/50  train loss=-0.5721  val loss=-0.1842  S[mean]=0.1842  reg=0.0000  λscale=1.00  lr=9.94e-04
+Epoch  33/50  train loss=-0.6340  val loss=-0.2674  S[mean]=0.2674  reg=0.0000  λscale=1.00  lr=9.86e-04
+Epoch  34/50  train loss=-0.5710  val loss=-0.2137  S[mean]=0.2137  reg=0.0000  λscale=1.00  lr=9.76e-04
+Epoch  35/50  train loss=-0.5943  val loss=-0.1810  S[mean]=0.1810  reg=0.0000  λscale=1.00  lr=9.62e-04
+Epoch  36/50  train loss=-0.6011  val loss=-0.1962  S[mean]=0.1962  reg=0.0000  λscale=1.00  lr=9.46e-04
+Epoch  37/50  train loss=-0.5990  val loss=-0.1816  S[mean]=0.1816  reg=0.0000  λscale=1.00  lr=9.26e-04
+Epoch  38/50  train loss=-0.6633  val loss=-0.1959  S[mean]=0.1959  reg=0.0000  λscale=1.00  lr=9.05e-04
+Epoch  39/50  train loss=-0.6312  val loss=-0.2840  S[mean]=0.2840  reg=0.0000  λscale=1.00  lr=8.80e-04
+Epoch  40/50  train loss=-0.6616  val loss=-0.1697  S[mean]=0.1697  reg=0.0000  λscale=1.00  lr=8.54e-04
+Epoch  41/50  train loss=-0.6386  val loss=-0.2794  S[mean]=0.2794  reg=0.0000  λscale=1.00  lr=8.25e-04
+Epoch  42/50  train loss=-0.6323  val loss=-0.1889  S[mean]=0.1889  reg=0.0000  λscale=1.00  lr=7.94e-04
+Epoch  43/50  train loss=-0.6442  val loss=-0.1768  S[mean]=0.1768  reg=0.0000  λscale=1.00  lr=7.61e-04
+Epoch  44/50  train loss=-0.6243  val loss=-0.1629  S[mean]=0.1629  reg=0.0000  λscale=1.00  lr=7.27e-04
+Epoch  45/50  train loss=-0.6191  val loss=-0.2118  S[mean]=0.2118  reg=0.0000  λscale=1.00  lr=6.91e-04
+Epoch  46/50  train loss=-0.6195  val loss=-0.1699  S[mean]=0.1699  reg=0.0000  λscale=1.00  lr=6.55e-04
+Epoch  47/50  train loss=-0.6402  val loss=-0.1439  S[mean]=0.1439  reg=0.0000  λscale=1.00  lr=6.17e-04
+Epoch  48/50  train loss=-0.6461  val loss=-0.1479  S[mean]=0.1479  reg=0.0000  λscale=1.00  lr=5.78e-04
+Epoch  49/50  train loss=-0.6495  val loss=-0.1441  S[mean]=0.1441  reg=0.0000  λscale=1.00  lr=5.39e-04
+Epoch  50/50  train loss=-0.6412  val loss=-0.1032  S[mean]=0.1032  reg=0.0000  λscale=1.00  lr=5.00e-04
+
+==================================================
+Training complete
+  Final train loss    : -0.6412
+  Best val loss       : -0.4331
+  Wall-clock time     : 146.9 s  (2.4 min)
+  Checkpoint          : /rds/user/omo26/hpc-work/eeg_runs/synth_runs/20260621_141022_d4_h256_dep3_bs64_ep50_lr1e-03_lxp0.0_lbt0.0_lcca0.0_sig10.0_s0/checkpoints/best.pt
+  Loss curve          : /rds/user/omo26/hpc-work/eeg_runs/synth_runs/20260621_141022_d4_h256_dep3_bs64_ep50_lr1e-03_lxp0.0_lbt0.0_lcca0.0_sig10.0_s0/outputs/loss_curve.png
+==================================================
+
+Generating synthetic diagnostic plots …
+Val set: 1033 trials  |  input shape: (1033, 32, 2000)
+Computing embeddings…

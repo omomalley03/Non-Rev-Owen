@@ -53,7 +53,7 @@ class Config:
     lambda_xp: float = 0.0              # cross-plane non-reversibility regularizer weight
     lambda_bt: float = 0.0              # Barlow Twins covariance regularizer weight
     lambda_plane_bt: float = 0.0         # plane-aware BT: allow within-plane covariance, penalize cross-plane covariance
-    lambda_block_cca: float = 0.0        # plane-level linear redundancy penalty
+    lambda_block_cca: float = 1.0        # plane-level linear redundancy penalty
     lambda_start_frac: float = 1.0       # linear lambda warm-up: fraction of full lambda at epoch 1,
                                          # ramping linearly to 1.0 (full lambda) at the final epoch.
                                          # 1.0 = no warm-up (full lambda throughout)

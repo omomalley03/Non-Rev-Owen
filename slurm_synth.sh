@@ -35,8 +35,8 @@
 #! Redirect data + run outputs to personal scratch (override the macOS defaults in
 #! config.py / paths.py without editing them).
 
-export SYNTH_DATA_PATH="/rds/user/omo26/hpc-work/poc_data/faced_data.npy"
-export RUNS_BASE="/rds/user/omo26/hpc-work/poc_runs"
+export SYNTH_DATA_PATH="/rds/user/omo26/hpc-work/eeg_data/faced_data.npy"
+export RUNS_BASE="/home/omo26/rds/hpc-work/EEG_NonRev/hpc_runs"
 
 #! ######################################################################################
 
