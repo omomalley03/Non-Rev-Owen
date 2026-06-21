@@ -56,7 +56,10 @@ application="$PYTHON_EXEC -u main_synth.py"
 #! Work directory (i.e. where the job will run):
 workdir="$SLURM_SUBMIT_DIR"
 
-export OMP_NUM_THREADS=1
+#! Match CPU threads to the allocation. Training is GPU-bound, but the post-run
+#! diagnostics (visualize_synth) do heavy CPU linear algebra — single-threaded
+#! at T=2000 that stalls for many minutes.
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-32}
 
 ###############################################################
 ### You should not have to change anything below this line ####

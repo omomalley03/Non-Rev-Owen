@@ -378,7 +378,8 @@ def make_diagnostic_plots_synth(
     out_dir = os.path.join(run_dir, "outputs")
     os.makedirs(out_dir, exist_ok=True)
 
-    model = model.cpu().eval()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device).eval()
 
     loader = DataLoader(val_ds, batch_size=len(val_ds), shuffle=False)
     (val_tensor,) = next(iter(loader))
@@ -388,11 +389,15 @@ def make_diagnostic_plots_synth(
     print(f"Val set: {K} trials  |  input shape: {val_np.shape}")
 
     # ── embeddings ───────────────────────────────────────────────────────────
-    print("Computing embeddings…")
+    # Run the forward + S_ratio on GPU when available: at T=2000 the per-timepoint
+    # forward and the K^2 pairwise S_ratio einsum are far too slow single-threaded
+    # on CPU. Bring F_hat_t back to CPU for the NumPy-based plotting below.
+    print(f"Computing embeddings… (device={device})")
     with torch.no_grad():
-        F_hat_t = model(val_tensor)
+        F_hat_t = model(val_tensor.to(device))
         F_hat_t = F_hat_t - F_hat_t.mean(dim=cfg.F_mean_axis, keepdim=True)
         s_ratio_val = compute_S_ratio(F_hat_t).item()
+        F_hat_t = F_hat_t.cpu()
         F_hat = F_hat_t.numpy()          # (K, d, T)
 
     # ── raw input PCA ──────────────────────────────────────────────────────────
