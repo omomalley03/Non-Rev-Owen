@@ -24,6 +24,7 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 from torch.utils.data import DataLoader, TensorDataset, random_split
 
 from config import Config
@@ -107,11 +108,16 @@ def _plot_all_trials_time_coded(phasors, title, xlabel, ylabel, out_path,
     fig, ax = plt.subplots(figsize=(6, 5))
     cmap = plt.get_cmap(cmap_name)
 
+    norm = plt.Normalize(0, T - 1)
+    seg_t = np.arange(T - 1)
     for k in idx:
         x, y = phasors[k, 0], phasors[k, 1]
-        for t in range(T - 1):
-            ax.plot(x[t:t+2], y[t:t+2], color=cmap(t / (T - 1)),
-                    lw=0.8, alpha=0.5)
+        pts = np.column_stack([x, y]).reshape(-1, 1, 2)        # (T, 1, 2)
+        segs = np.concatenate([pts[:-1], pts[1:]], axis=1)     # (T-1, 2, 2)
+        lc = LineCollection(segs, cmap=cmap, norm=norm, linewidths=0.8, alpha=0.5)
+        lc.set_array(seg_t)
+        ax.add_collection(lc)
+    ax.autoscale()
 
     ax.axhline(0, color="k", lw=0.4, alpha=0.25)
     ax.axvline(0, color="k", lw=0.4, alpha=0.25)
