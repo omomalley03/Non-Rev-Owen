@@ -142,7 +142,7 @@ def _plot_planes_time_coded(F_hat, s_ratio, out_path,
                              cmap_name="coolwarm", seed=0):
     """Subplot grid: one panel per 2D rotation plane, trials time-coded."""
     K, d, T = F_hat.shape
-    n_show = int(1)
+    n_show = int(K)
     D = d // 2
     rng = np.random.default_rng(seed)
     idx = rng.choice(K, size=min(n_show, K), replace=False)
@@ -362,6 +362,23 @@ def plot_cca_grid(F_hat, out_path):
     plt.close(fig)
     print(f"Saved → {out_path}")
 
+def plot_conv_kernels(model, out_path):
+    filters, N, kernel_size = model.temporal_conv.weight.shape
+    weights = model.temporal_conv.weight.detach().numpy()
+    weights_p = weights+np.flip(weights,-1)
+    print(weights_p)
+    rows = int(filters**0.5)
+    fig, axes = plt.subplots(rows, rows,
+                             squeeze=False)
+
+    for i in range(rows):
+        for j in range(rows):
+            k = i*rows + j
+            ax = axes[i,j]
+            ax.imshow(weights_p[k,:,:])
+    fig.savefig(out_path)
+    plt.close(fig)
+    print(f"Saved → {out_path}")
 
 
 # ── main diagnostic entry point ───────────────────────────────────────────────
@@ -438,6 +455,9 @@ def make_diagnostic_plots_synth(
     plot_norm_distribution(
         F_hat, out_path=os.path.join(out_dir, "09_embedding_norm_distribution.png"),
     )
+
+    plot_conv_kernels(model=model, out_path=os.path.join(out_dir, "11_conv_kernels.png"))
+    
 
     from visualize_pairwise_s import plot_pairwise_s
     F_hat_rms = _batch_rms_normalize(F_hat_t)

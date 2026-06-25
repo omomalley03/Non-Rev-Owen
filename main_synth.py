@@ -39,7 +39,7 @@ def load_synthetic_windows(cfg: Config) -> np.ndarray:
     windows = np.load(cfg.synth_data_path)
     if windows.dtype != np.float32:
         windows = windows.astype(np.float32)
-    # windows = np.transpose(windows, (0, 2, 1))  # source is (K, T, N)
+    windows = np.transpose(windows, (0, 2, 1))  # source is (K, T, N) ONLY FOR ACTUAL SYNTH DATA -- NOT FACED DATA
 
     # if cfg.synth_noise_std > 0:
     #     rng = np.random.default_rng(cfg.seed)
@@ -82,6 +82,9 @@ def main():
 
     model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
                 temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size)
+    
+    
+    print(model.temporal_conv.weight.shape)
 
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
@@ -89,6 +92,8 @@ def main():
     print(f"\nStarting training for {cfg.epochs} epochs …\n")
     history = train(model, train_ds, val_ds, cfg)
 
+    print(model.temporal_conv.weight)
+    
     print_summary(history, cfg)
 
     print("\nGenerating synthetic diagnostic plots …")

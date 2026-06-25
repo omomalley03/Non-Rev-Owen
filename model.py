@@ -9,10 +9,8 @@ class SymmetricConv1d(nn.Module):
     """Conv1d whose effective time kernel is palindromic (zero-phase).
 
     Stores a free weight w and convolves with ``w + w.flip(time)``, which is
-    symmetric by construction (flip of w + w.flip(time) is w.flip(time) + w).  The 
-    symmetric filter carries no preferred
-    direction of time and the temporal conv cannot manufacture non-reversibility
-    on its own.  Channels are fully mixed (groups=1); only the time axis is
+    symmetric: flip of w + w.flip(time) is w.flip(time) + w.  
+    Channels are fully mixed (groups=1); only the time axis is
     constrained.
     """
 
@@ -21,7 +19,7 @@ class SymmetricConv1d(nn.Module):
         assert kernel_size % 2 == 1, "use an odd kernel for an exact zero-phase 'same' conv"
         self.weight = nn.Parameter(torch.empty(out_channels, in_channels, kernel_size))
         self.bias = nn.Parameter(torch.zeros(out_channels))
-        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5)) # try random as well?
+        nn.init.uniform_(self.weight)
         self.padding = kernel_size // 2
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:   # x: (B, in, T)
