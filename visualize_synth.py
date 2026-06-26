@@ -363,19 +363,21 @@ def plot_cca_grid(F_hat, out_path):
     print(f"Saved → {out_path}")
 
 def plot_conv_kernels(model, out_path):
-    filters, N, kernel_size = model.temporal_conv.weight.shape
-    weights = model.temporal_conv.weight.detach().numpy()
-    weights_p = weights+np.flip(weights,-1)
-    print(weights_p)
-    rows = int(filters**0.5)
-    fig, axes = plt.subplots(rows, rows,
-                             squeeze=False)
-
+    # depthwise zero-phase weights: (out_ch, 1, kernel_size); plot the effective
+    # palindromic time kernel (w + flip(w)) for a sample of output channels.
+    out_ch, _, kernel_size = model.temporal_conv.weight.shape
+    weights = model.temporal_conv.weight.detach().numpy()[:, 0, :]   # (out_ch, k)
+    weights_p = weights + np.flip(weights, -1)
+    n_show = min(out_ch, 64)
+    rows = int(n_show ** 0.5)
+    fig, axes = plt.subplots(rows, rows, squeeze=False, figsize=(2 * rows, 1.5 * rows))
     for i in range(rows):
         for j in range(rows):
-            k = i*rows + j
-            ax = axes[i,j]
-            ax.imshow(weights_p[k,:,:])
+            k = i * rows + j
+            ax = axes[i, j]
+            ax.plot(weights_p[k])
+            ax.set_xticks([]); ax.set_yticks([])
+    fig.tight_layout()
     fig.savefig(out_path)
     plt.close(fig)
     print(f"Saved → {out_path}")

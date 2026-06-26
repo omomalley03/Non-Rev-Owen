@@ -13,8 +13,7 @@ def _fmt(x):
 class Config:
     # --- data ---
     nwb_path: str = (
-        "/Users/omomalley03/Documents/Dissertation/Data/000128/sub-Jenkins/"
-        "sub-Jenkins_ses-full_desc-train_behavior+ecephys.nwb"
+        '/Volumes/ADATA HD710/000128/sub-Jenkins/sub-Jenkins_ses-full_desc-train_behavior+ecephys.nwb'
     )
     bin_ms: int = 10                     # resampling bin width (ms)
     sigma_ms: float = 10.0              # Gaussian smoothing std (ms)
@@ -43,10 +42,10 @@ class Config:
     # --- model ---
     d: int = 8                       # embedding dimension (per snapshot)
     hidden_dim: int = 128              # MLP hidden layer width
-    depth: int = 2                     # number of MLP layers (1 = pure linear, SCA-equivalent)
+    depth: int = 3                     # number of MLP layers (1 = pure linear, SCA-equivalent)
     dropout: float = 0.2            # dropout probability applied after each hidden activation
-    temporal_filters: int = 64        # symmetric temporal conv front-end; 0 disables it
-    temporal_kernel_size: int = 31     # odd; ±15 ms at 1 ms sampling (tunable; sweep e.g. 15/31/51)
+    temporal_filters: int = 4        # per-channel zero-phase filters (depthwise); 0 disables the front-end
+    temporal_kernel_size: int = 31     # odd; zero-phase 'same' conv (tunable; sweep e.g. 15/31/51)
 
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
@@ -57,7 +56,7 @@ class Config:
     lambda_xp: float = 0.0              # cross-plane non-reversibility regularizer weight
     lambda_bt: float = 0.0              # Barlow Twins covariance regularizer weight
     lambda_plane_bt: float = 0.0         # plane-aware BT: allow within-plane covariance, penalize cross-plane covariance
-    lambda_block_cca: float = 0.5        # plane-level linear redundancy penalty
+    lambda_block_cca: float = 1.0        # plane-level linear redundancy penalty
     lambda_start_frac: float = 1.0       # linear lambda warm-up: fraction of full lambda at epoch 1,
                                          # ramping linearly to 1.0 (full lambda) at the final epoch.
                                          # 1.0 = no warm-up (full lambda throughout)

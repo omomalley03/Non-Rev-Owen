@@ -54,7 +54,9 @@ def main():
 
     sigma_samples = round((cfg.sigma_ms * 1e-3) / bin_width_s)
     print(f"  Gaussian smoothing sigma: {cfg.sigma_ms} ms = {sigma_samples} bins")
-    X_smooth = gaussian_smooth(spikes_raw, sigma_samples)
+    # X_smooth = gaussian_smooth(spikes_raw, sigma_samples
+    X_smooth = spikes_raw; print("NO GAUSSIAN SMOOTHING!!")
+
 
     if cfg.softnorm_method and cfg.softnorm_method != "none":
         print(f"  Soft-normalising per neuron (method={cfg.softnorm_method!r})")
@@ -79,7 +81,8 @@ def main():
     print(f"  Train: {len(train_ds)}  |  Val: {len(val_ds)}  "
           f"({'dataset split column' if using_split_col else f'random {cfg.val_split:.0%}'})")
 
-    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout)
+    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
+                temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
 

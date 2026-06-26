@@ -80,8 +80,8 @@ def main():
     train_ds, val_ds = train_val_split_synth(windows, cfg.val_split, cfg.seed)
     print(f"  Train: {len(train_ds)}  |  Val: {len(val_ds)}")
 
-    model = MLP(in_channels=cfg.temporal_filters, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
-                temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size) # TODO: switch back to in_channels=N
+    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
+                temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size)
     
     
     print(model.temporal_conv.weight.shape)
