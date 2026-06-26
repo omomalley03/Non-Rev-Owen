@@ -30,7 +30,7 @@ class Config:
     val_split: float = 0.1              # only used if dataset has no `split` column
     seed: int = 0
     split: str = "dataset"                   # "random" or "dataset" (use `split` column if present, else random split)
-    synth_data_path: str = "/Users/omomalley03/Documents/Dissertation/POC_MLP/rotations_4planes.npy"
+    synth_data_path: str = "/Users/omomalley03/Documents/Dissertation/POC_MLP/rotations_mixed_freqs.npy"
 
 
     # USE THIS FOR HPC

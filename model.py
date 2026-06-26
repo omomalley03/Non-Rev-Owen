@@ -26,6 +26,7 @@ class SymmetricConv1d(nn.Module):
         w = self.weight + self.weight.flip(-1)            # palindromic in time
         return F.conv1d(x, w, self.bias, padding=self.padding)   # (B, out, T)
 
+# multiple convs with nonlins between
 
 class MLP(nn.Module):
     """Per-timepoint MLP embedder with shared weights across time.
@@ -69,7 +70,8 @@ class MLP(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, N, T = x.shape
         if self.temporal_conv is not None:
-            x = torch.cat([x, self.temporal_conv(x)], dim=1)   # (B, N + temporal_filters, T)
+            # x = torch.cat([x, self.temporal_conv(x)], dim=1)   # (B, N + temporal_filters, T)
+            x = self.temporal_conv(x)
         C = x.shape[1]
         x = x.permute(0, 2, 1).reshape(B * T, C)   # (B*T, C) -- each row is a single timepoint across all channels
         x = self.net(x)                              # (B*T, d)
