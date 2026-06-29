@@ -24,6 +24,7 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.collections import LineCollection
 from torch.utils.data import DataLoader, TensorDataset, random_split
 
 from config import Config
@@ -107,11 +108,16 @@ def _plot_all_trials_time_coded(phasors, title, xlabel, ylabel, out_path,
     fig, ax = plt.subplots(figsize=(6, 5))
     cmap = plt.get_cmap(cmap_name)
 
+    norm = plt.Normalize(0, T - 1)
+    seg_t = np.arange(T - 1)
     for k in idx:
         x, y = phasors[k, 0], phasors[k, 1]
-        for t in range(T - 1):
-            ax.plot(x[t:t+2], y[t:t+2], color=cmap(t / (T - 1)),
-                    lw=0.8, alpha=0.5)
+        pts = np.column_stack([x, y]).reshape(-1, 1, 2)        # (T, 1, 2)
+        segs = np.concatenate([pts[:-1], pts[1:]], axis=1)     # (T-1, 2, 2)
+        lc = LineCollection(segs, cmap=cmap, norm=norm, linewidths=0.8, alpha=0.5)
+        lc.set_array(seg_t)
+        ax.add_collection(lc)
+    ax.autoscale()
 
     ax.axhline(0, color="k", lw=0.4, alpha=0.25)
     ax.axvline(0, color="k", lw=0.4, alpha=0.25)
@@ -136,7 +142,7 @@ def _plot_planes_time_coded(F_hat, s_ratio, out_path,
                              cmap_name="coolwarm", seed=0):
     """Subplot grid: one panel per 2D rotation plane, trials time-coded."""
     K, d, T = F_hat.shape
-    n_show = int(1)
+    n_show = int(K)
     D = d // 2
     rng = np.random.default_rng(seed)
     idx = rng.choice(K, size=min(n_show, K), replace=False)
@@ -356,6 +362,25 @@ def plot_cca_grid(F_hat, out_path):
     plt.close(fig)
     print(f"Saved → {out_path}")
 
+def plot_conv_kernels(model, out_path):
+    # depthwise zero-phase weights: (out_ch, 1, kernel_size); plot the effective
+    # palindromic time kernel (w + flip(w)) for a sample of output channels.
+    out_ch, _, kernel_size = model.temporal_conv.weight.shape
+    weights = model.temporal_conv.weight.detach().numpy()[:, 0, :]   # (out_ch, k)
+    weights_p = weights + np.flip(weights, -1)
+    n_show = min(out_ch, 64)
+    rows = int(n_show ** 0.5)
+    fig, axes = plt.subplots(rows, rows, squeeze=False, figsize=(2 * rows, 1.5 * rows))
+    for i in range(rows):
+        for j in range(rows):
+            k = i * rows + j
+            ax = axes[i, j]
+            ax.plot(weights_p[k])
+            ax.set_xticks([]); ax.set_yticks([])
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+    print(f"Saved → {out_path}")
 
 
 # ── main diagnostic entry point ───────────────────────────────────────────────
@@ -378,7 +403,8 @@ def make_diagnostic_plots_synth(
     out_dir = os.path.join(run_dir, "outputs")
     os.makedirs(out_dir, exist_ok=True)
 
-    model = model.cpu().eval()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device).eval()
 
     loader = DataLoader(val_ds, batch_size=len(val_ds), shuffle=False)
     (val_tensor,) = next(iter(loader))
@@ -388,11 +414,15 @@ def make_diagnostic_plots_synth(
     print(f"Val set: {K} trials  |  input shape: {val_np.shape}")
 
     # ── embeddings ───────────────────────────────────────────────────────────
-    print("Computing embeddings…")
+    # Run the forward + S_ratio on GPU when available: at T=2000 the per-timepoint
+    # forward and the K^2 pairwise S_ratio einsum are far too slow single-threaded
+    # on CPU. Bring F_hat_t back to CPU for the NumPy-based plotting below.
+    print(f"Computing embeddings… (device={device})")
     with torch.no_grad():
-        F_hat_t = model(val_tensor)
+        F_hat_t = model(val_tensor.to(device))
         F_hat_t = F_hat_t - F_hat_t.mean(dim=cfg.F_mean_axis, keepdim=True)
         s_ratio_val = compute_S_ratio(F_hat_t).item()
+        F_hat_t = F_hat_t.cpu()
         F_hat = F_hat_t.numpy()          # (K, d, T)
 
     # ── raw input PCA ──────────────────────────────────────────────────────────
@@ -427,6 +457,9 @@ def make_diagnostic_plots_synth(
     plot_norm_distribution(
         F_hat, out_path=os.path.join(out_dir, "09_embedding_norm_distribution.png"),
     )
+
+    plot_conv_kernels(model=model, out_path=os.path.join(out_dir, "11_conv_kernels.png"))
+    
 
     from visualize_pairwise_s import plot_pairwise_s
     F_hat_rms = _batch_rms_normalize(F_hat_t)
@@ -502,7 +535,8 @@ def main():
 
     train_ds, val_ds = train_val_split_synth(windows, cfg.val_split, cfg.seed)
 
-    model = MLP(in_channels=N_in, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout)
+    model = MLP(in_channels=N_in, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
+                temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size)
     model.load_state_dict(ckpt["model_state_dict"])
 
     make_diagnostic_plots_synth(

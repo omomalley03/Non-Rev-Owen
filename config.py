@@ -13,8 +13,7 @@ def _fmt(x):
 class Config:
     # --- data ---
     nwb_path: str = (
-        "/Users/omomalley03/Documents/Dissertation/Data/000128/sub-Jenkins/"
-        "sub-Jenkins_ses-full_desc-train_behavior+ecephys.nwb"
+        '/Volumes/ADATA HD710/000128/sub-Jenkins/sub-Jenkins_ses-full_desc-train_behavior+ecephys.nwb'
     )
     bin_ms: int = 10                     # resampling bin width (ms)
     sigma_ms: float = 10.0              # Gaussian smoothing std (ms)
@@ -30,23 +29,32 @@ class Config:
     val_split: float = 0.1              # only used if dataset has no `split` column
     seed: int = 0
     split: str = "dataset"                   # "random" or "dataset" (use `split` column if present, else random split)
-    synth_data_path: str = "flower.npy"
-    synth_noise_std: float = 0
+    synth_data_path: str = "/Users/omomalley03/Documents/Dissertation/POC_MLP/rotations_mixed_freqs.npy"
+
+
+    # USE THIS FOR HPC
+    # synth_data_path: str = os.environ.get( 
+    #     "SYNTH_DATA_PATH",
+    #     "/Volumes/ADATA HD710/data_owen/FACED/processed/faced_data.npy",
+    # )
+    synth_noise_std: float = 0.2
 
     # --- model ---
-    d: int = 4                       # embedding dimension (per snapshot)
+    d: int = 8                       # embedding dimension (per snapshot)
     hidden_dim: int = 128              # MLP hidden layer width
-    depth: int = 2                     # number of MLP layers (1 = pure linear, SCA-equivalent)
+    depth: int = 3                     # number of MLP layers (1 = pure linear, SCA-equivalent)
     dropout: float = 0.2            # dropout probability applied after each hidden activation
+    temporal_filters: int = 4        # per-channel zero-phase filters (depthwise); 0 disables the front-end
+    temporal_kernel_size: int = 31     # odd; zero-phase 'same' conv (tunable; sweep e.g. 15/31/51)
 
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
     batch_size: int = 64
-    epochs: int = 100
+    epochs: int = 200
     lr: float = 1e-3
     weight_decay: float = 1e-4
     lambda_xp: float = 0.0              # cross-plane non-reversibility regularizer weight
-    lambda_bt: float = 0.5              # Barlow Twins covariance regularizer weight
+    lambda_bt: float = 0.0              # Barlow Twins covariance regularizer weight
     lambda_plane_bt: float = 0.0         # plane-aware BT: allow within-plane covariance, penalize cross-plane covariance
     lambda_block_cca: float = 1.0        # plane-level linear redundancy penalty
     lambda_start_frac: float = 1.0       # linear lambda warm-up: fraction of full lambda at epoch 1,
@@ -91,7 +99,8 @@ class Config:
                          "align_field", "pre_ms", "post_ms", "window_size",
                          "window_strategy", "val_split", "seed",
                          "synth_data_path", "synth_noise_std"],
-            "model":    ["d", "hidden_dim", "depth", "dropout"],
+            "model":    ["d", "hidden_dim", "depth", "dropout",
+                         "temporal_filters", "temporal_kernel_size"],
             "training": ["batch_size", "epochs", "lr", "weight_decay",
                          "lambda_xp", "lambda_bt", "lambda_plane_bt",
                          "lambda_block_cca", "lambda_start_frac",

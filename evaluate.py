@@ -152,7 +152,9 @@ def main():
 
     dropout = getattr(cfg, "dropout", 0.0)
     model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim,
-                depth=cfg.depth, dropout=dropout)
+                depth=cfg.depth, dropout=dropout,
+                temporal_filters=getattr(cfg, "temporal_filters", 0),
+                temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31))
     model.load_state_dict(ckpt["model_state_dict"])
 
     out_dir = os.path.join(run_dir, "outputs")

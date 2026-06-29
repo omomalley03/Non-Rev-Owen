@@ -1043,12 +1043,14 @@ def main():
     train_ds, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
     hand_windows = _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s)
 
-    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout)
+    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
+                temporal_filters=getattr(cfg, "temporal_filters", 0),
+                temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31))
     model.load_state_dict(ckpt["model_state_dict"])
 
     make_diagnostic_plots(
         model=model,
-        val_ds=train_ds,
+        val_ds=val_ds,
         trial_info=trial_info,
         cfg=cfg,
         run_dir=run_dir,
