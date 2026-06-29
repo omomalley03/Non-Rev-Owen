@@ -33,6 +33,25 @@ def _pair_terms(F: torch.Tensor):
     minus_per_plane, plus_per_plane = _pair_terms_per_plane(F)
     return minus_per_plane.sum(), plus_per_plane.sum()
 
+def _DEPRECATED_pair_terms(F: torch.Tensor):
+    """Compute sum over K^2 pairs in batch, including the plus and minus terms.
+    F (aka Y) is shape (K, N, T)
+    Returns
+    -------
+    minus_sum, plus_sum : scalar tensors
+    """
+    Z = torch.einsum("knt,lmt->klnm",F, F) # (K, K, N, N) -- K^2 NxN matrices 
+    # trace_1[k,l] — trace of Z[k,l]
+
+    trace_1 = torch.einsum("klnn->kl", Z)        # (K, K)
+
+    # trace_2[k,l] - trace of Z^2
+    # trace_2 = torch.einsum("kim,ljm,kjn,lin->kl", F, F, F, F)  # (K, K)
+    Z_squared = torch.einsum("klnm,klmj->klnj",Z,Z) # (K, K, N, N)
+    trace_2 = torch.einsum("klnn->kl",Z_squared)
+
+    return (trace_1 ** 2 - trace_2).sum(), (trace_1 ** 2 + trace_2).sum()
+
 
 def S_ratio(F: torch.Tensor) -> torch.Tensor:
     """Normalised non-reversibility score, bounded ∈ [0, 1].
