@@ -54,8 +54,8 @@ def main():
 
     sigma_samples = round((cfg.sigma_ms * 1e-3) / bin_width_s)
     print(f"  Gaussian smoothing sigma: {cfg.sigma_ms} ms = {sigma_samples} bins")
-    # X_smooth = gaussian_smooth(spikes_raw, sigma_samples
-    X_smooth = spikes_raw; print("NO GAUSSIAN SMOOTHING!!")
+    X_smooth = gaussian_smooth(spikes_raw, sigma_samples)
+    # X_smooth = spikes_raw; print("NO GAUSSIAN SMOOTHING!!")
 
 
     if cfg.softnorm_method and cfg.softnorm_method != "none":

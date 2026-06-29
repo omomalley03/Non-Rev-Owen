@@ -8,7 +8,12 @@ from torch.utils.data import TensorDataset, Subset, random_split
 from scipy.ndimage import gaussian_filter1d
 from nlb_tools.nwb_interface import NWBDataset
 
-_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+# Where NWB→pickle caches live. Override with `export CACHE_DIR=...` (e.g. on the
+# HPC) without editing source; defaults to a `cache/` dir next to this file.
+_CACHE_DIR = os.environ.get(
+    "CACHE_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache"),
+)
 
 
 # NLB time-related fields stored as timedelta64[ns]; convert to seconds
