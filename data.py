@@ -8,12 +8,7 @@ from torch.utils.data import TensorDataset, Subset, random_split
 from scipy.ndimage import gaussian_filter1d
 from nlb_tools.nwb_interface import NWBDataset
 
-# Where NWB→pickle caches live. Override with `export CACHE_DIR=...` (e.g. on the
-# HPC) without editing source; defaults to a `cache/` dir next to this file.
-_CACHE_DIR = os.environ.get(
-    "CACHE_DIR",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache"),
-)
+from paths import CACHE_DIR
 
 
 # NLB time-related fields stored as timedelta64[ns]; convert to seconds
@@ -109,9 +104,9 @@ def load_mcmaze_cached(nwb_path: str, bin_ms: int = 5):
     """Load MC_Maze data from a pickle cache if available, else fall back to NWB.
 
     The cache is created by running ``python cache_data.py``. Cache files live
-    in ``cache/mcmaze_bin{bin_ms}ms.pkl`` next to this source file.
+    in ``CACHE_DIR/mcmaze_bin{bin_ms}ms.pkl``.
     """
-    cache_file = os.path.join(_CACHE_DIR, f"mcmaze_bin{bin_ms}ms.pkl")
+    cache_file = os.path.join(CACHE_DIR, f"mcmaze_bin{bin_ms}ms.pkl")
     if os.path.exists(cache_file):
         with open(cache_file, "rb") as f:
             d = pickle.load(f)

@@ -16,8 +16,11 @@ Usage
     python visualize_pairwise_s.py --synth --data rotations_v3.npy
 """
 
+from __future__ import annotations
+
 import argparse
 import csv
+
 import os
 
 import numpy as np

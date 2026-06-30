@@ -14,12 +14,7 @@ import time
 
 from config import Config
 from data import load_mcmaze
-
-# Override with `export CACHE_DIR=...` (e.g. on the HPC); must match data.py.
-CACHE_DIR = os.environ.get(
-    "CACHE_DIR",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache"),
-)
+from paths import CACHE_DIR
 
 
 def cache_path_for(bin_ms: int) -> str:

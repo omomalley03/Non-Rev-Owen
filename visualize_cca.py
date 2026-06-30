@@ -15,6 +15,8 @@ Usage
     python visualize_cca.py --run 2                  # 2nd most recent
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 

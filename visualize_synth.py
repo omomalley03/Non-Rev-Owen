@@ -16,6 +16,8 @@ Usage
     python visualize_synth.py --run synth_runs/x  # explicit path
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 
@@ -25,12 +27,13 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
-from torch.utils.data import DataLoader, TensorDataset, random_split
+from torch.utils.data import DataLoader, TensorDataset, random_split, Subset
 
 from config import Config
 from paths import SYNTH_RUNS_DIR
 from model import MLP
 from loss import S_ratio as compute_S_ratio, _batch_rms_normalize, _whiten_2d, _plane_samples
+from synth_data import load_synthetic_windows
 
 
 def _fit_pca2(X):
@@ -53,19 +56,33 @@ def _windows_to_pca2(windows, mean, Vh2):
     return proj.reshape(K, T, 2).transpose(0, 2, 1)     # (K, 2, T)
 
 
-def load_synthetic_windows(cfg: Config, data_path: str | None = None) -> np.ndarray:
-    """Load synthetic rotations as (K, N, T), matching main_synth.py."""
-    path = data_path or getattr(cfg, "synth_data_path", "rotations.npy")
-    windows = np.load(path).astype(np.float32)
-    windows = np.transpose(windows, (0, 2, 1))  # source is (K, T, N)
+def _time_downsample(arr: np.ndarray, max_timepoints: int) -> np.ndarray:
+    """Evenly downsample the last axis for plotting long recordings."""
+    T = arr.shape[-1]
+    if not max_timepoints or T <= max_timepoints:
+        return arr
+    idx = np.linspace(0, T - 1, max_timepoints).round().astype(int)
+    idx = np.unique(idx)
+    return arr[..., idx]
 
-    noise_std = getattr(cfg, "synth_noise_std", 0.0)
-    if noise_std > 0:
-        rng = np.random.default_rng(cfg.seed)
-        noise = rng.normal(0.0, noise_std, size=windows.shape).astype(np.float32)
-        windows = windows + noise
 
-    return windows
+def _add_timecoded_lines(ax, xy: np.ndarray, cmap_name: str, linewidth: float, alpha: float):
+    """Add all trial trajectories in one LineCollection for speed."""
+    K, T, _ = xy.shape
+    pts = xy.reshape(K, T, 1, 2)
+    segs = np.concatenate([pts[:, :-1], pts[:, 1:]], axis=2).reshape(-1, 2, 2)
+    times = np.tile(np.arange(T - 1), K)
+    lc = LineCollection(
+        segs,
+        cmap=plt.get_cmap(cmap_name),
+        norm=plt.Normalize(0, T - 1),
+        linewidths=linewidth,
+        alpha=alpha,
+    )
+    lc.set_array(times)
+    ax.add_collection(lc)
+    ax.autoscale()
+    return lc
 
 
 def train_val_split_synth(windows: np.ndarray, val_frac: float, seed: int):
@@ -106,18 +123,8 @@ def _plot_all_trials_time_coded(phasors, title, xlabel, ylabel, out_path,
     idx = rng.choice(K, size=min(n_show, K), replace=False)
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    cmap = plt.get_cmap(cmap_name)
-
-    norm = plt.Normalize(0, T - 1)
-    seg_t = np.arange(T - 1)
-    for k in idx:
-        x, y = phasors[k, 0], phasors[k, 1]
-        pts = np.column_stack([x, y]).reshape(-1, 1, 2)        # (T, 1, 2)
-        segs = np.concatenate([pts[:-1], pts[1:]], axis=1)     # (T-1, 2, 2)
-        lc = LineCollection(segs, cmap=cmap, norm=norm, linewidths=0.8, alpha=0.5)
-        lc.set_array(seg_t)
-        ax.add_collection(lc)
-    ax.autoscale()
+    xy = phasors[idx].transpose(0, 2, 1)  # (K, T, 2)
+    _add_timecoded_lines(ax, xy, cmap_name, linewidth=0.8, alpha=0.5)
 
     ax.axhline(0, color="k", lw=0.4, alpha=0.25)
     ax.axvline(0, color="k", lw=0.4, alpha=0.25)
@@ -128,7 +135,7 @@ def _plot_all_trials_time_coded(phasors, title, xlabel, ylabel, out_path,
     ax.tick_params(labelsize=8)
     ax.set_aspect("equal", adjustable="datalim")
 
-    sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(0, T - 1))
+    sm = plt.cm.ScalarMappable(cmap=plt.get_cmap(cmap_name), norm=plt.Normalize(0, T - 1))
     sm.set_array([])
     plt.colorbar(sm, ax=ax, label="time (bins)", fraction=0.046, pad=0.04)
 
@@ -157,11 +164,8 @@ def _plot_planes_time_coded(F_hat, s_ratio, out_path,
     planes = F_hat.reshape(K, D, 2, T)
     for p in range(D):
         ax = axes[p // ncols, p % ncols]
-        for k in idx:
-            x, y = planes[k, p, 0], planes[k, p, 1]
-            for t in range(T - 1):
-                ax.plot(x[t:t+2], y[t:t+2], color=cmap(t / (T - 1)),
-                        lw=0.8, alpha=0.5)
+        xy = planes[idx, p].transpose(0, 2, 1)  # (K, T, 2)
+        _add_timecoded_lines(ax, xy, cmap_name, linewidth=0.8, alpha=0.5)
 
         ax.axhline(0, color="k", lw=0.4, alpha=0.25)
         ax.axvline(0, color="k", lw=0.4, alpha=0.25)
@@ -206,11 +210,8 @@ def _plot_dim_grid(F_hat, s_ratio, out_path,
         for j in range(D):
             ax = axes[i][j]
             x_dim, y_dim = 2 * i, 2 * j + 1
-            for k in idx:
-                xv, yv = F_hat[k, x_dim], F_hat[k, y_dim]
-                for t in range(T - 1):
-                    ax.plot(xv[t:t+2], yv[t:t+2], color=cmap(t / (T - 1)),
-                            lw=0.6, alpha=0.45)
+            xy = np.stack([F_hat[idx, x_dim], F_hat[idx, y_dim]], axis=-1)
+            _add_timecoded_lines(ax, xy, cmap_name, linewidth=0.6, alpha=0.45)
 
             ax.axhline(0, color="k", lw=0.3, alpha=0.2)
             ax.axvline(0, color="k", lw=0.3, alpha=0.2)
@@ -363,10 +364,12 @@ def plot_cca_grid(F_hat, out_path):
     print(f"Saved → {out_path}")
 
 def plot_conv_kernels(model, out_path):
+    if model.temporal_conv is None:
+        return
     # depthwise zero-phase weights: (out_ch, 1, kernel_size); plot the effective
     # palindromic time kernel (w + flip(w)) for a sample of output channels.
     out_ch, _, kernel_size = model.temporal_conv.weight.shape
-    weights = model.temporal_conv.weight.detach().numpy()[:, 0, :]   # (out_ch, k)
+    weights = model.temporal_conv.weight.detach().cpu().numpy()[:, 0, :]   # (out_ch, k)
     weights_p = weights + np.flip(weights, -1)
     n_show = min(out_ch, 64)
     rows = int(n_show ** 0.5)
@@ -408,6 +411,11 @@ def make_diagnostic_plots_synth(
 
     loader = DataLoader(val_ds, batch_size=len(val_ds), shuffle=False)
     (val_tensor,) = next(iter(loader))
+    max_trials = getattr(cfg, "synth_viz_max_trials", 0)
+    if max_trials and val_tensor.shape[0] > max_trials:
+        print(f"Using first {max_trials} validation trials for diagnostics "
+              f"(of {val_tensor.shape[0]})")
+        val_tensor = val_tensor[:max_trials]
     val_np = val_tensor.numpy()          # (K, N_in, T)  N_in = N or 2N with velocity
     K = val_np.shape[0]
 
@@ -425,6 +433,12 @@ def make_diagnostic_plots_synth(
         F_hat_t = F_hat_t.cpu()
         F_hat = F_hat_t.numpy()          # (K, d, T)
 
+    max_timepoints = getattr(cfg, "synth_viz_max_timepoints", 0)
+    F_hat_plot = _time_downsample(F_hat, max_timepoints)
+    if F_hat_plot.shape[-1] != F_hat.shape[-1]:
+        print(f"Using {F_hat_plot.shape[-1]} time bins for trajectory plots "
+              f"(of {F_hat.shape[-1]})")
+
     # ── raw input PCA ──────────────────────────────────────────────────────────
     N_in = val_np.shape[1]
     raw_input = val_np[:, :N_in, :]
@@ -432,20 +446,21 @@ def make_diagnostic_plots_synth(
     raw_flat = raw_input.transpose(0, 2, 1).reshape(K * raw_input.shape[2], N_in)
     raw_pca_mean, raw_pca_Vh2 = _fit_pca2(raw_flat)
     phasors_raw = _windows_to_pca2(raw_input, raw_pca_mean, raw_pca_Vh2)  # (K, 2, T)
+    phasors_raw_plot = _time_downsample(phasors_raw, max_timepoints)
 
     # ── plots ─────────────────────────────────────────────────────────────────
     _plot_all_trials_time_coded(
-        phasors_raw,
+        phasors_raw_plot,
         title="Raw — time-coded  (top-2 PCA)",
         xlabel="PC 1", ylabel="PC 2",
         out_path=os.path.join(out_dir, "01_raw_time_coded.png"),
     )
     _plot_planes_time_coded(
-        F_hat, s_ratio_val,
+        F_hat_plot, s_ratio_val,
         out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
     )
     _plot_dim_grid(
-        F_hat, s_ratio_val,
+        F_hat_plot, s_ratio_val,
         out_path=os.path.join(out_dir, "03_dim_grid_time_coded.png"),
     )
     plot_covariance_heatmap(
@@ -525,7 +540,7 @@ def main():
     print(f"Loaded checkpoint from epoch {ckpt['epoch']}")
 
     # data_path = args.data or getattr(cfg, "synth_data_path", "rotations.npy")
-    data_path = "rotations_4planes.npy"
+    data_path = args.data or getattr(cfg, "synth_data_path", "rotations.npy")
     print(f"Loading synthetic data from {data_path} …")
     windows = load_synthetic_windows(cfg, data_path=data_path)
     if getattr(cfg, "synth_noise_std", 0.0) > 0:

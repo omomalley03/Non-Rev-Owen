@@ -19,6 +19,8 @@ Usage
     python visualize.py --run runs/foo    # explicit path
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 

@@ -12,6 +12,7 @@ from model import MLP
 from train import train
 from visualize_synth import make_diagnostic_plots_synth
 from best_metrics import append_best_model_metrics
+from synth_data import load_synthetic_windows
 
 
 def set_seed(seed: int):
@@ -32,21 +33,6 @@ def print_summary(history: dict, cfg: Config):
     print(f"  Checkpoint          : {cfg.ckpt_dir}/best.pt")
     print(f"  Loss curve          : {cfg.out_dir}/loss_curve.png")
     print("=" * 50)
-
-
-def load_synthetic_windows(cfg: Config) -> np.ndarray:
-    """Load synthetic rotations as (K, N, T), matching train/visualize."""
-    windows = np.load(cfg.synth_data_path)
-    if windows.dtype != np.float32:
-        windows = windows.astype(np.float32)
-    windows = np.transpose(windows, (0, 2, 1))  # source is (K, T, N) ONLY FOR ACTUAL SYNTH DATA -- NOT FACED DATA
-
-    # if cfg.synth_noise_std > 0:
-    #     rng = np.random.default_rng(cfg.seed)
-    #     noise = rng.normal(0.0, cfg.synth_noise_std, size=windows.shape).astype(np.float32)
-    #     windows = windows + noise
-
-    return windows
 
 
 def train_val_split_synth(windows: np.ndarray, val_frac: float, seed: int):
@@ -71,6 +57,9 @@ def main():
 
     print(f"Loading synthetic data from {cfg.synth_data_path} …")
     windows = load_synthetic_windows(cfg)
+    print(f"  Data layout: {cfg.synth_data_layout}  |  normalize: {cfg.synth_normalize}")
+    if cfg.synth_max_trials > 0:
+        print(f"  Trial cap: first {cfg.synth_max_trials} trials")
     if cfg.synth_noise_std > 0:
         print(f"  Added deterministic Gaussian noise: std={cfg.synth_noise_std}")
 
@@ -82,9 +71,8 @@ def main():
 
     model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
                 temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size)
-    
-    
-    print(model.temporal_conv.weight.shape)
+    if model.temporal_conv is not None:
+        print(model.temporal_conv.weight.shape)
 
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
@@ -92,7 +80,8 @@ def main():
     print(f"\nStarting training for {cfg.epochs} epochs …\n")
     history = train(model, train_ds, val_ds, cfg)
 
-    print(model.temporal_conv.weight)
+    if model.temporal_conv is not None:
+        print(model.temporal_conv.weight)
     
     print_summary(history, cfg)
 

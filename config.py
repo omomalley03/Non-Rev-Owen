@@ -2,6 +2,18 @@ import dataclasses
 import os
 from dataclasses import dataclass
 
+from paths import RUNS_BASE
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    return default if value is None or value == "" else int(value)
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    return default if value is None or value == "" else float(value)
+
 
 def _fmt(x):
     """Format a float for use in a filename (e.g. 1e-3 → '1e-3', 0.1 → '0.1')."""
@@ -12,8 +24,9 @@ def _fmt(x):
 @dataclass
 class Config:
     # --- data ---
-    nwb_path: str = (
-        '/Volumes/ADATA HD710/000128/sub-Jenkins/sub-Jenkins_ses-full_desc-train_behavior+ecephys.nwb'
+    nwb_path: str = os.environ.get(
+        "NWB_PATH",
+        os.path.join(RUNS_BASE, "sub-Jenkins_ses-full_desc-train_behavior+ecephys.nwb"),
     )
     bin_ms: int = 10                     # resampling bin width (ms)
     sigma_ms: float = 10.0              # Gaussian smoothing std (ms)
@@ -26,37 +39,38 @@ class Config:
     post_ms: int = 140                  # ms after align_field
     window_size: int = 90              # = (pre_ms + post_ms) / bin_ms
     window_strategy: str = "trial_aligned"
-    val_split: float = 0.1              # only used if dataset has no `split` column
+    val_split: float = _env_float("VAL_SPLIT", 0.1)  # only used if dataset has no `split` column
     seed: int = 0
     split: str = "dataset"                   # "random" or "dataset" (use `split` column if present, else random split)
-    synth_data_path: str = "/Users/omomalley03/Documents/Dissertation/POC_MLP/rotations_mixed_freqs.npy"
-
-
-    # USE THIS FOR HPC
-    # synth_data_path: str = os.environ.get( 
-    #     "SYNTH_DATA_PATH",
-    #     "/Volumes/ADATA HD710/data_owen/FACED/processed/faced_data.npy",
-    # )
-    synth_noise_std: float = 0.2
+    synth_data_path: str = os.environ.get(
+        "SYNTH_DATA_PATH",
+        os.path.join(RUNS_BASE, "rotations_mixed_freqs.npy"),
+    )
+    synth_data_layout: str = os.environ.get("SYNTH_DATA_LAYOUT", "auto")  # auto, knt, ktn
+    synth_normalize: str = os.environ.get("SYNTH_NORMALIZE", "none")      # none, zscore
+    synth_noise_std: float = _env_float("SYNTH_NOISE_STD", 0.2)
+    synth_max_trials: int = _env_int("SYNTH_MAX_TRIALS", 0)                # 0 = all trials
+    synth_viz_max_trials: int = _env_int("SYNTH_VIZ_MAX_TRIALS", 64)
+    synth_viz_max_timepoints: int = _env_int("SYNTH_VIZ_MAX_TIMEPOINTS", 400)
 
     # --- model ---
-    d: int = 8                       # embedding dimension (per snapshot)
-    hidden_dim: int = 128              # MLP hidden layer width
+    d: int = 2                       # embedding dimension (per snapshot)
+    hidden_dim: int = 256              # MLP hidden layer width
     depth: int = 3                     # number of MLP layers (1 = pure linear, SCA-equivalent)
     dropout: float = 0.2            # dropout probability applied after each hidden activation
     temporal_filters: int = 4        # per-channel zero-phase filters (depthwise); 0 disables the front-end
-    temporal_kernel_size: int = 31     # odd; zero-phase 'same' conv (tunable; sweep e.g. 15/31/51)
+    temporal_kernel_size: int = 61     # odd; zero-phase 'same' conv (tunable; sweep e.g. 15/31/51)
 
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
-    batch_size: int = 64
-    epochs: int = 200
-    lr: float = 1e-3
+    batch_size: int = 256
+    epochs: int = 80
+    lr: float = 5e-4
     weight_decay: float = 1e-4
     lambda_xp: float = 0.0              # cross-plane non-reversibility regularizer weight
     lambda_bt: float = 0.0              # Barlow Twins covariance regularizer weight
     lambda_plane_bt: float = 0.0         # plane-aware BT: allow within-plane covariance, penalize cross-plane covariance
-    lambda_block_cca: float = 1.0        # plane-level linear redundancy penalty
+    lambda_block_cca: float = 0.0        # plane-level linear redundancy penalty
     lambda_start_frac: float = 1.0       # linear lambda warm-up: fraction of full lambda at epoch 1,
                                          # ramping linearly to 1.0 (full lambda) at the final epoch.
                                          # 1.0 = no warm-up (full lambda throughout)
@@ -98,7 +112,9 @@ class Config:
             "data":     ["nwb_path", "bin_ms", "sigma_ms", "softnorm_method",
                          "align_field", "pre_ms", "post_ms", "window_size",
                          "window_strategy", "val_split", "seed",
-                         "synth_data_path", "synth_noise_std"],
+                         "synth_data_path", "synth_data_layout", "synth_normalize",
+                         "synth_noise_std", "synth_max_trials", "synth_viz_max_trials",
+                         "synth_viz_max_timepoints"],
             "model":    ["d", "hidden_dim", "depth", "dropout",
                          "temporal_filters", "temporal_kernel_size"],
             "training": ["batch_size", "epochs", "lr", "weight_decay",
