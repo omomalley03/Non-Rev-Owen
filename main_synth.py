@@ -35,10 +35,17 @@ def print_summary(history: dict, cfg: Config):
     print("=" * 50)
 
 
-def train_val_split_synth(windows: np.ndarray, val_frac: float, seed: int):
-    """Random train/val split for synthetic windows."""
+def train_val_split_synth(windows: np.ndarray, val_frac: float, seed: int, split: str = "random"):
+    """Split synthetic windows for training/validation."""
     tensor = torch.from_numpy(windows)
     full_ds = TensorDataset(tensor)
+
+    split = split.lower()
+    if split in {"train_eq_val", "train_equals_val", "all", "none"}:
+        return full_ds, full_ds
+    if split != "random":
+        raise ValueError("SYNTH_SPLIT must be one of: random, train_eq_val")
+
     n_val = max(1, int(len(tensor) * val_frac))
     n_train = len(tensor) - n_val
     generator = torch.Generator().manual_seed(seed)
@@ -66,8 +73,8 @@ def main():
     print(f"  Windows shape: {windows.shape}  (K, N, T)")
 
     N = windows.shape[1]
-    train_ds, val_ds = train_val_split_synth(windows, cfg.val_split, cfg.seed)
-    print(f"  Train: {len(train_ds)}  |  Val: {len(val_ds)}")
+    train_ds, val_ds = train_val_split_synth(windows, cfg.val_split, cfg.seed, cfg.synth_split)
+    print(f"  Train: {len(train_ds)}  |  Val: {len(val_ds)}  |  Split: {cfg.synth_split}")
 
     model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
                 temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size)

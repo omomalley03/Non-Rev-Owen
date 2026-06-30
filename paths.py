@@ -14,6 +14,10 @@ Derived defaults:
     synth_runs/      -> $RUNS_BASE/synth_runs
     cache/           -> $RUNS_BASE/cache
 
+When DATASET_NAME is exported, run outputs are grouped by dataset:
+    runs/            -> $RUNS_BASE/$DATASET_NAME/runs
+    synth_runs/      -> $RUNS_BASE/$DATASET_NAME/synth_runs
+
 CACHE_DIR can still be set directly when the cache should live somewhere else.
 """
 
@@ -23,7 +27,9 @@ import os
 _DEFAULT_RUNS_BASE = os.path.dirname(os.path.abspath(__file__))
 
 RUNS_BASE = os.environ.get("RUNS_BASE", _DEFAULT_RUNS_BASE)
+DATASET_NAME = os.environ.get("DATASET_NAME", "").strip()
+_RUNS_ROOT = os.path.join(RUNS_BASE, DATASET_NAME) if DATASET_NAME else RUNS_BASE
 
-RUNS_DIR = os.path.join(RUNS_BASE, "runs")
-SYNTH_RUNS_DIR = os.path.join(RUNS_BASE, "synth_runs")
+RUNS_DIR = os.path.join(_RUNS_ROOT, "runs")
+SYNTH_RUNS_DIR = os.path.join(_RUNS_ROOT, "synth_runs")
 CACHE_DIR = os.environ.get("CACHE_DIR", os.path.join(RUNS_BASE, "cache"))

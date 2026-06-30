@@ -350,7 +350,8 @@ def plot_cca_grid(F_hat, out_path):
     C = torch.einsum("pmi,qmj->pqij", X, X) / M            # (D, D, 2, 2)
     eye = torch.eye(D, dtype=torch.bool)
     # print(C[~eye].pow(2).sum() / (D * (D - 1)))
-    fig, axes = plt.subplots(D,D,figsize=(6, 4))
+    fig, axes = plt.subplots(D, D, figsize=(6, 4))
+    axes = np.asarray(axes).reshape(D, D)
     for i in range(D):
         for j in range(D):
             ax = axes[i,j]

@@ -115,19 +115,19 @@ def non_rev_regularizer_systematic(F: torch.Tensor, cfg: Config) -> torch.Tensor
 def barlow_twins_reg(F: torch.Tensor, eps: float = 1e-6, normalize: bool = False) -> torch.Tensor:
     """Barlow Twins covariance regularizer on the per-timepoint embeddings.
 
-    Flattens F from (K, d, T) → (M, d) where M = K*T, treating every
-    (trial, timestep) pair as an independent sample. Computes the
-    empirical (d, d) Cov. Returns mean((Cov - I)²) normalised by d²,
-    so lambda_bt has the same interpretation regardless of d.
+    Flattens F from (K, d, T) to (M, d), treating every (trial, timestep) pair
+    as a sample. Returns mean((Cov - I)^2) normalized by d^2, so lambda_bt has
+    the same scale across embedding dimensions.
     """
     K, d, T = F.shape
-    Z = F.permute(0, 2, 1).reshape(K * T, d)          # (M, d)
-
+    Z = F.permute(0, 2, 1).reshape(K * T, d)
     M = Z.shape[0]
-    Z = Z - Z.mean(dim=0, keepdim=True)               # zero-mean per dim
-    Cov = (Z.T @ Z) / M
-
+    Z = Z - Z.mean(dim=0, keepdim=True)
+    Cov = (Z.T @ Z) / max(M, 1)
     return ((Cov - torch.eye(d, device=F.device)) ** 2).sum() / (d * d)
+
+
+
 
 
 def plane_barlow_twins_reg(F: torch.Tensor) -> torch.Tensor:

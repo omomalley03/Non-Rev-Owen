@@ -1,0 +1,56 @@
+# MC Maze settings for main.py.
+#
+# Usage:
+#   source mcmaze_config.sh
+#   /home/omo26/micromamba/envs/nonrev/bin/python -u main.py
+#
+# Or, from an activated nonrev environment:
+#   source mcmaze_config.sh
+#   python -u main.py
+#
+# To override a value for a quick run, source first and then export it, e.g.:
+#   source mcmaze_config.sh
+#   export EPOCHS=1 SPLIT=random
+
+export RUNS_BASE="/home/omo26/Non-Rev-Owen"
+export DATASET_NAME="mcmaze"
+export CACHE_DIR="$RUNS_BASE/cache"
+export MPLCONFIGDIR="/tmp/matplotlib_nonrev"
+
+# main.py / NWB data settings.
+export NWB_PATH="/home/omo26/sub-Jenkins_ses-full_desc-train_behavior+ecephys.nwb"
+export BIN_MS="10"
+export SIGMA_MS="10"
+export SOFTNORM_METHOD="churchland"
+export ALIGN_FIELD="move_onset_time"
+export PRE_MS="200"
+export POST_MS="140"
+export WINDOW_SIZE="90"
+export WINDOW_STRATEGY="trial_aligned"
+export VAL_SPLIT="0.1"
+export SPLIT="dataset"
+
+# Model settings.
+export D="16"
+export HIDDEN_DIM="256"
+export DEPTH="3"
+export DROPOUT="0.2"
+export TEMPORAL_FILTERS="4"
+export TEMPORAL_KERNEL_SIZE="31"
+
+# Training settings.
+export BATCH_SIZE="64"
+export EPOCHS="200"
+export LR="1e-3"
+export WEIGHT_DECAY="1e-4"
+export LAMBDA_XP="0.0"
+export LAMBDA_BT="0.0"
+export LAMBDA_PLANE_BT="0.0"
+export LAMBDA_BLOCK_CCA="1.6"
+export LAMBDA_START_FRAC="0.5"
+export S_OBJECTIVE="mean"
+export S_SOFTMIN_TAU="0.05"
+export T_0="10"
+export T_MULT="2"
+
+mkdir -p "$RUNS_BASE/$DATASET_NAME/runs" "$RUNS_BASE/$DATASET_NAME/synth_runs" "$CACHE_DIR" "$MPLCONFIGDIR"

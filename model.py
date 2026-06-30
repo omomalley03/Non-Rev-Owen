@@ -38,7 +38,8 @@ class SymmetricConv1d(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:   # x: (B, in, T)
         w = self.weight + self.weight.flip(-1)            # palindromic in time
         y = F.conv1d(x, w, self.bias, padding=self.padding, groups=self.groups)
-        return self.norm(y)                               # (B, in*filters_per_channel, T)
+        return y
+        # return self.norm(y)                               # (B, in*filters_per_channel, T)
 
 class MLP(nn.Module):
     """Per-timepoint MLP embedder with shared weights across time.
