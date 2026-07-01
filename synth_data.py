@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 from scipy import signal
+from scipy.ndimage import gaussian_filter1d
 
 from config import Config
 
@@ -94,6 +95,13 @@ def _apply_eeg_preprocess(windows: np.ndarray, cfg: Config) -> np.ndarray:
             X = (X - X.mean(axis=-1, keepdims=True)) / (X.std(axis=-1, keepdims=True) + 1e-6)
         elif step == "diff":
             X = np.diff(X, axis=-1, prepend=X[..., :1]).astype(np.float32, copy=False)
+        elif step in {"smooth", "gaussian"}:
+            # Gaussian smoothing along time (same role as data.py:gaussian_smooth for
+            # MC Maze). Gives the slow, trial-consistent features the non-reversibility
+            # objective needs. sigma is read in ms and converted to samples via eeg_fs.
+            sigma_samples = float(getattr(cfg, "sigma_ms", 0.0)) / 1000.0 * fs
+            if sigma_samples > 0:
+                X = gaussian_filter1d(X, sigma=sigma_samples, axis=-1).astype(np.float32, copy=False)
         elif step in {
             "bandpass", "bandpass_concat",
             "bandpower", "bandpower_concat",
@@ -126,7 +134,7 @@ def _apply_eeg_preprocess(windows: np.ndarray, cfg: Config) -> np.ndarray:
             raise ValueError(
                 "unknown SYNTH_PREPROCESS step "
                 f"{step!r}; expected comma-separated values from car, temporal_demean, "
-                "trial_zscore, diff, bandpass, bandpass_concat, bandpower, "
+                "trial_zscore, diff, smooth, bandpass, bandpass_concat, bandpower, "
                 "bandpower_concat, analytic_bandpass, analytic_bandpass_concat"
             )
         X = np.ascontiguousarray(X, dtype=np.float32)
