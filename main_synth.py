@@ -76,8 +76,12 @@ def main():
     train_ds, val_ds = train_val_split_synth(windows, cfg.val_split, cfg.seed, cfg.synth_split)
     print(f"  Train: {len(train_ds)}  |  Val: {len(val_ds)}  |  Split: {cfg.synth_split}")
 
-    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
-                temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size)
+    model = MLP(
+        in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
+        temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size,
+        temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
+        residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+    )
     if model.temporal_conv is not None:
         print(model.temporal_conv.weight.shape)
 

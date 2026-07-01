@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 from scipy import signal
-from scipy.ndimage import gaussian_filter1d
 
 from config import Config
 
@@ -34,8 +33,13 @@ def _normalize_channels(windows: np.ndarray, method: str) -> np.ndarray:
     method = method.lower()
     if method in {"none", ""}:
         return windows
-    if method != "zscore":
-        raise ValueError("synth_normalize must be one of: none, zscore")
+    if method not in {"zscore", "robust_zscore", "robust"}:
+        raise ValueError("synth_normalize must be one of: none, zscore, robust_zscore")
+
+    if method in {"robust_zscore", "robust"}:
+        median = np.median(windows, axis=(0, 2), keepdims=True)
+        mad = np.median(np.abs(windows - median), axis=(0, 2), keepdims=True)
+        return (windows - median) / (1.4826 * mad + 1e-6)
 
     mean = windows.mean(axis=(0, 2), keepdims=True)
     std = windows.std(axis=(0, 2), keepdims=True)
@@ -95,13 +99,8 @@ def _apply_eeg_preprocess(windows: np.ndarray, cfg: Config) -> np.ndarray:
             X = (X - X.mean(axis=-1, keepdims=True)) / (X.std(axis=-1, keepdims=True) + 1e-6)
         elif step == "diff":
             X = np.diff(X, axis=-1, prepend=X[..., :1]).astype(np.float32, copy=False)
-        elif step in {"smooth", "gaussian"}:
-            # Gaussian smoothing along time (same role as data.py:gaussian_smooth for
-            # MC Maze). Gives the slow, trial-consistent features the non-reversibility
-            # objective needs. sigma is read in ms and converted to samples via eeg_fs.
-            sigma_samples = float(getattr(cfg, "sigma_ms", 0.0)) / 1000.0 * fs
-            if sigma_samples > 0:
-                X = gaussian_filter1d(X, sigma=sigma_samples, axis=-1).astype(np.float32, copy=False)
+        elif step in {"downsample2", "temporal_downsample2"}:
+            X = X[..., ::2]
         elif step in {
             "bandpass", "bandpass_concat",
             "bandpower", "bandpower_concat",
@@ -134,7 +133,7 @@ def _apply_eeg_preprocess(windows: np.ndarray, cfg: Config) -> np.ndarray:
             raise ValueError(
                 "unknown SYNTH_PREPROCESS step "
                 f"{step!r}; expected comma-separated values from car, temporal_demean, "
-                "trial_zscore, diff, smooth, bandpass, bandpass_concat, bandpower, "
+                "trial_zscore, diff, downsample2, bandpass, bandpass_concat, bandpower, "
                 "bandpower_concat, analytic_bandpass, analytic_bandpass_concat"
             )
         X = np.ascontiguousarray(X, dtype=np.float32)

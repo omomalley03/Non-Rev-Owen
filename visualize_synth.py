@@ -85,10 +85,17 @@ def _add_timecoded_lines(ax, xy: np.ndarray, cmap_name: str, linewidth: float, a
     return lc
 
 
-def train_val_split_synth(windows: np.ndarray, val_frac: float, seed: int):
-    """Random train/val split for synthetic windows."""
+def train_val_split_synth(windows: np.ndarray, val_frac: float, seed: int, split: str = "random"):
+    """Split synthetic windows using the same modes as main_synth.py."""
     tensor = torch.from_numpy(windows)
     full_ds = TensorDataset(tensor)
+
+    split = split.lower()
+    if split in {"train_eq_val", "train_equals_val", "all", "none"}:
+        return full_ds, full_ds
+    if split != "random":
+        raise ValueError("SYNTH_SPLIT must be one of: random, train_eq_val")
+
     n_val = max(1, int(len(tensor) * val_frac))
     n_train = len(tensor) - n_val
     generator = torch.Generator().manual_seed(seed)
@@ -367,6 +374,33 @@ def plot_cca_grid(F_hat, out_path):
 def plot_conv_kernels(model, out_path):
     if model.temporal_conv is None:
         return
+    if hasattr(model.temporal_conv, "temporal_branches"):
+        kernels = []
+        titles = []
+        for branch_idx, branch in enumerate(model.temporal_conv.temporal_branches):
+            weights = branch.conv.weight.detach().cpu().numpy()[:, 0, :]
+            for dim_idx, weight in enumerate(weights):
+                kernels.append(weight)
+                titles.append(f"b{branch_idx}:{dim_idx}")
+        n_show = min(len(kernels), 64)
+        rows = int(np.ceil(n_show ** 0.5))
+        cols = int(np.ceil(n_show / rows))
+        fig, axes = plt.subplots(rows, cols, squeeze=False, figsize=(2 * cols, 1.5 * rows))
+        for i in range(rows):
+            for j in range(cols):
+                k = i * cols + j
+                ax = axes[i, j]
+                if k < n_show:
+                    ax.plot(kernels[k])
+                    ax.set_title(titles[k], fontsize=6)
+                else:
+                    ax.set_visible(False)
+                ax.set_xticks([]); ax.set_yticks([])
+        fig.tight_layout()
+        fig.savefig(out_path)
+        plt.close(fig)
+        print(f"Saved → {out_path}")
+        return
     # depthwise zero-phase weights: (out_ch, 1, kernel_size); plot the effective
     # palindromic time kernel (w + flip(w)) for a sample of output channels.
     out_ch, _, kernel_size = model.temporal_conv.weight.shape
@@ -549,10 +583,20 @@ def main():
     N_in = windows.shape[1]
     print(f"  Windows shape: {windows.shape}  (K, N, T)")
 
-    train_ds, val_ds = train_val_split_synth(windows, cfg.val_split, cfg.seed)
+    train_ds, val_ds = train_val_split_synth(
+        windows,
+        cfg.val_split,
+        cfg.seed,
+        getattr(cfg, "synth_split", "random"),
+    )
 
-    model = MLP(in_channels=N_in, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
-                temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size)
+    model = MLP(
+        in_channels=N_in, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
+        temporal_filters=getattr(cfg, "temporal_filters", 0),
+        temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31),
+        temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
+        residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+    )
     model.load_state_dict(ckpt["model_state_dict"])
 
     make_diagnostic_plots_synth(

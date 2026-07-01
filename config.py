@@ -70,6 +70,8 @@ class Config:
     dropout: float = _env_float("DROPOUT", 0.2)            # dropout probability applied after each hidden activation
     temporal_filters: int = _env_int("TEMPORAL_FILTERS", 0)        # per-channel zero-phase filters (depthwise); 0 disables the front-end
     temporal_kernel_size: int = _env_int("TEMPORAL_KERNEL_SIZE", 61)     # odd; zero-phase 'same' conv (tunable; sweep e.g. 15/31/51)
+    temporal_frontend: str = _env_str("TEMPORAL_FRONTEND", "symmetric")  # symmetric or residual
+    residual_kernels: str = _env_str("RESIDUAL_KERNELS", "3,7,15,31")    # comma-separated odd kernels for residual front-end
 
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
@@ -127,7 +129,8 @@ class Config:
                          "synth_noise_std", "synth_max_trials", "synth_split",
                          "synth_viz_max_trials", "synth_viz_max_timepoints"],
             "model":    ["d", "hidden_dim", "depth", "dropout",
-                         "temporal_filters", "temporal_kernel_size"],
+                         "temporal_filters", "temporal_kernel_size",
+                         "temporal_frontend", "residual_kernels"],
             "training": ["batch_size", "epochs", "lr", "weight_decay",
                          "lambda_xp", "lambda_bt", "lambda_plane_bt",
                          "lambda_block_cca", "lambda_start_frac",
