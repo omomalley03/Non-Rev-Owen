@@ -990,6 +990,7 @@ def make_diagnostic_plots(
     #     F_hat, s_ratio_val,
     #     out_path=os.path.join(out_dir, "10_dim_grid_time_coded.png"),
     # )
+    # plot_conditions_diagnostic()
 
     print(f"\nS_ratio (embedding, all val pairs): {s_ratio_val:.4f}")
     print(f"Signed area (raw):  μ={areas_raw.mean():+.4f}  σ={areas_raw.std():.4f}"

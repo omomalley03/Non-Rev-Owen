@@ -64,6 +64,68 @@ class SymmetricConv1d(nn.Module):
         # return self.norm(y)                               # (B, in*filters_per_channel, T)
 
 
+class SymmetricBranchConv1d(nn.Module):
+    """One zero-phase depthwise branch for a single temporal scale."""
+
+    def __init__(self, in_channels: int, filters_per_channel: int, kernel_size: int):
+        super().__init__()
+        if kernel_size < 1 or kernel_size % 2 == 0:
+            raise ValueError("symmetric branch kernels must be positive odd integers")
+        out_channels = in_channels * filters_per_channel
+        self.conv = nn.Conv1d(
+            in_channels,
+            out_channels,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+            groups=in_channels,
+        )
+        nn.init.uniform_(self.conv.weight, -1.0 / kernel_size ** 0.5, 1.0 / kernel_size ** 0.5)
+        nn.init.zeros_(self.conv.bias)
+        self.kernel = int(kernel_size)
+        self.groups = int(in_channels)
+
+    def effective_weight(self) -> torch.Tensor:
+        return self.conv.weight + self.conv.weight.flip(-1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return F.conv1d(
+            x,
+            self.effective_weight(),
+            self.conv.bias,
+            padding=self.kernel // 2,
+            groups=self.groups,
+        )
+
+
+class MultiScaleSymmetricConv1d(nn.Module):
+    """Per-channel zero-phase temporal filter bank with multiple kernel scales."""
+
+    def __init__(self, in_channels: int, filters_per_channel: int, kernels=(7, 15, 31, 61)):
+        super().__init__()
+        kernels = _parse_kernels(kernels)
+        branch_dims = _split_dims(filters_per_channel, len(kernels))
+        self.temporal_branches = nn.ModuleList(
+            [
+                SymmetricBranchConv1d(in_channels, branch_dim, kernel)
+                for kernel, branch_dim in zip(kernels, branch_dims)
+            ]
+        )
+        self.in_channels = int(in_channels)
+        self.filters_per_channel = int(filters_per_channel)
+        self.kernels = kernels
+        self.out_channels = self.in_channels * self.filters_per_channel
+
+    @property
+    def weight(self):
+        return torch.cat([branch.conv.weight.flatten() for branch in self.temporal_branches])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, N, T = x.shape
+        if N != self.in_channels:
+            raise ValueError(f"expected {self.in_channels} channels, got {N}")
+        return torch.cat([branch(x) for branch in self.temporal_branches], dim=1)
+
+
 class ResidualBranch(nn.Module):
     """Kernel-specific temporal branch from the CoCoT-style EEG embedder."""
 
@@ -133,15 +195,21 @@ class MLP(nn.Module):
 
         temporal_frontend = (temporal_frontend or "symmetric").lower()
         if temporal_filters > 0:
-            if temporal_frontend in {"symmetric", "zero_phase", "sym"}:
+            if temporal_frontend in {"symmetric"}:
                 # per-channel filter bank: each input channel -> temporal_filters filters
                 self.temporal_conv = SymmetricConv1d(in_channels, temporal_filters, temporal_kernel_size)
-            elif temporal_frontend in {"residual", "residual_multiscale", "cocot"}:
+            elif temporal_frontend in {"multiscale_symmetric", "symmetric_multiscale"}:
+                self.temporal_conv = MultiScaleSymmetricConv1d(
+                    in_channels, temporal_filters, kernels=residual_kernels
+                )
+            elif temporal_frontend in {"residual"}:
                 self.temporal_conv = MultiScaleResidualConv1d(
                     in_channels, temporal_filters, kernels=residual_kernels
                 )
             else:
-                raise ValueError("temporal_frontend must be one of: symmetric, residual")
+                raise ValueError(
+                    "temporal_frontend must be one of: symmetric, multiscale_symmetric, residual"
+                )
             in_channels = self.temporal_conv.out_channels   # use temporal features only (no raw concat)
         else:
             self.temporal_conv = None

@@ -27,9 +27,7 @@ export FACED_IDS_NPY="$FACED_PROCESSED_DIR/faced_ids.npy"
 export SYNTH_DATA_PATH="$FACED_NPY"
 export SYNTH_DATA_LAYOUT="auto"
 export SYNTH_NORMALIZE="zscore"
-export SYNTH_PREPROCESS="car,analytic_bandpass"
-export EEG_FS="250"
-export EEG_BANDS="theta:4-8,alpha:8-13,beta:13-30,gamma:30-45"
+export SYNTH_PREPROCESS="none"
 export SYNTH_NOISE_STD="0"
 export SYNTH_MAX_TRIALS="2048"
 export SYNTH_VIZ_MAX_TRIALS="64"
@@ -40,21 +38,29 @@ export SYNTH_VIZ_MAX_TIMEPOINTS="400"
 export SYNTH_SPLIT="train_eq_val"
 export VAL_SPLIT="0.1"
 
-# Model settings. These are the best FACED settings found in the 2026-06-30
-# sweep so far. Four-band zero-phase analytic bandpass preprocessing adds a
-# Hilbert quadrature channel, similar to complex wavelet coefficients, without
-# adding absolute time features. The 2048-trial cap keeps the verified run
-# within memory while the full dataset path remains available by override.
+# Model settings. The EEG preprocessing path has been pruned to the best
+# PhysioNetMI run policy: no explicit EEG transform, followed by channel z-score.
+# The 2048-trial cap keeps the verified run within memory while the full dataset
+# path remains available by override.
+# export D="2"
+# export HIDDEN_DIM="128"
+# export DEPTH="1"
+# export DROPOUT="0.2"
+# export TEMPORAL_FILTERS="0"
+# export TEMPORAL_KERNEL_SIZE="61"
+
 export D="2"
 export HIDDEN_DIM="128"
-export DEPTH="1"
+export DEPTH="1" # depth of MLP post-temporal frontend
 export DROPOUT="0.2"
-export TEMPORAL_FILTERS="0"
+export TEMPORAL_FRONTEND="multiscale_symmetric"
+export TEMPORAL_FILTERS="4"
+export RESIDUAL_KERNELS="7,15,31,61"
 export TEMPORAL_KERNEL_SIZE="61"
 
 # Training settings.
 export BATCH_SIZE="128"
-export EPOCHS="8"
+export EPOCHS="100"
 export LR="1e-4"
 export WEIGHT_DECAY="1e-4"
 export LAMBDA_XP="0.0"

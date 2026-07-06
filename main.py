@@ -81,8 +81,12 @@ def main():
     print(f"  Train: {len(train_ds)}  |  Val: {len(val_ds)}  "
           f"({'dataset split column' if using_split_col else f'random {cfg.val_split:.0%}'})")
 
-    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
-                temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size)
+    model = MLP(
+        in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
+        temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size,
+        temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
+        residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+    )
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
 
@@ -91,18 +95,21 @@ def main():
 
     print_summary(history, cfg)
 
-    print("\nGenerating diagnostic plots …")
-    hand_windows = _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s)
-    make_diagnostic_plots(
-        model=model,
-        val_ds=train_ds,
-        trial_info=trial_info,
-        cfg=cfg,
-        run_dir=run_dir,
-        hand_windows=hand_windows,
-    )
+    if os.environ.get("SKIP_DIAGNOSTICS", "").lower() in {"1", "true", "yes"}:
+        print("\nSkipping diagnostic plots because SKIP_DIAGNOSTICS=1.")
+    else:
+        print("\nGenerating diagnostic plots …")
+        hand_windows = _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s)
+        make_diagnostic_plots(
+            model=model,
+            val_ds=val_ds,
+            trial_info=trial_info,
+            cfg=cfg,
+            run_dir=run_dir,
+            hand_windows=hand_windows,
+        )
 
-    append_best_model_metrics(run_dir, val_ds, cfg)
+        append_best_model_metrics(run_dir, val_ds, cfg)
 
     # from evaluate import run_linear_probe, plot_confusion_matrix
 

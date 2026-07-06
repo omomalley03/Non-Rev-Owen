@@ -31,12 +31,21 @@ export VAL_SPLIT="0.1"
 export SPLIT="dataset"
 
 # Model settings.
-export D="8"
-export HIDDEN_DIM="128"
-export DEPTH="2"
+# export D="2"
+# export HIDDEN_DIM="128"
+# export DEPTH="2"
+# export DROPOUT="0.2"
+# export TEMPORAL_FILTERS="4"
+# export TEMPORAL_KERNEL_SIZE="31"
+
+export D="256"
+export HIDDEN_DIM="64"
+export DEPTH="1"
 export DROPOUT="0.2"
+export TEMPORAL_FRONTEND="symmetric_multiscale"
 export TEMPORAL_FILTERS="4"
-export TEMPORAL_KERNEL_SIZE="31"
+export RESIDUAL_KERNELS="7,15,31,61"
+export TEMPORAL_KERNEL_SIZE="61"
 
 # Training settings.
 export BATCH_SIZE="64"

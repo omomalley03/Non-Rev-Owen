@@ -46,7 +46,7 @@ class Config:
     window_size: int = _env_int("WINDOW_SIZE", 90)              # = (pre_ms + post_ms) / bin_ms
     window_strategy: str = _env_str("WINDOW_STRATEGY", "trial_aligned")
     val_split: float = _env_float("VAL_SPLIT", 0.1)  # only used if dataset has no `split` column
-    seed: int = _env_int("SEED", 0)
+    seed: int = _env_int("SEED", 1)
     split: str = _env_str("SPLIT", "dataset")                   # "random" or "dataset" (use `split` column if present, else random split)
     synth_data_path: str = os.environ.get(
         "SYNTH_DATA_PATH",
@@ -54,24 +54,30 @@ class Config:
     )
     synth_data_layout: str = os.environ.get("SYNTH_DATA_LAYOUT", "auto")  # auto, knt, ktn
     synth_normalize: str = os.environ.get("SYNTH_NORMALIZE", "none")      # none, zscore
-    synth_preprocess: str = _env_str("SYNTH_PREPROCESS", "none")          # comma-separated EEG transforms; see synth_data.py
+    synth_preprocess: str = _env_str("SYNTH_PREPROCESS", "none")          # none, car, analytic_bandpass
     eeg_fs: float = _env_float("EEG_FS", 250.0)
     eeg_bands: str = _env_str("EEG_BANDS", "theta:4-8,alpha:8-13,beta:13-30,gamma:30-45")
     synth_noise_std: float = _env_float("SYNTH_NOISE_STD", 0.2)
     synth_max_trials: int = _env_int("SYNTH_MAX_TRIALS", 0)                # 0 = all trials
-    synth_split: str = _env_str("SYNTH_SPLIT", "random")                   # random or train_eq_val
+    synth_split: str = _env_str("SYNTH_SPLIT", "random")                   # random, train_eq_val, or subject_random
+    synth_labels_path: str = _env_str("SYNTH_LABELS_PATH", os.environ.get("PHYSIONETMI_LABELS_NPY", ""))
+    synth_subjects_path: str = _env_str("SYNTH_SUBJECTS_PATH", "")
+    synth_subject_count: int = _env_int("SYNTH_SUBJECT_COUNT", 0)           # 0 = all subjects
+    synth_subject_ids: str = _env_str("SYNTH_SUBJECT_IDS", "")             # comma-separated explicit subject ids
     synth_viz_max_trials: int = _env_int("SYNTH_VIZ_MAX_TRIALS", 64)
     synth_viz_max_timepoints: int = _env_int("SYNTH_VIZ_MAX_TIMEPOINTS", 400)
+    synth_viz_participant_mode: str = _env_str("SYNTH_VIZ_PARTICIPANT_MODE", "top_zeta")  # top_zeta or random
+    synth_viz_participant_count: int = _env_int("SYNTH_VIZ_PARTICIPANT_COUNT", 4)
 
     # --- model ---
     d: int = _env_int("D", 2)                       # embedding dimension (per snapshot)
     hidden_dim: int = _env_int("HIDDEN_DIM", 64)              # MLP hidden layer width
     depth: int = _env_int("DEPTH", 1)                     # number of MLP layers (1 = pure linear, SCA-equivalent)
     dropout: float = _env_float("DROPOUT", 0.2)            # dropout probability applied after each hidden activation
-    temporal_filters: int = _env_int("TEMPORAL_FILTERS", 0)        # per-channel zero-phase filters (depthwise); 0 disables the front-end
+    temporal_filters: int = _env_int("TEMPORAL_FILTERS", 0)        # per-channel temporal filters; 0 disables the front-end
     temporal_kernel_size: int = _env_int("TEMPORAL_KERNEL_SIZE", 61)     # odd; zero-phase 'same' conv (tunable; sweep e.g. 15/31/51)
-    temporal_frontend: str = _env_str("TEMPORAL_FRONTEND", "symmetric")  # symmetric or residual
-    residual_kernels: str = _env_str("RESIDUAL_KERNELS", "3,7,15,31")    # comma-separated odd kernels for residual front-end
+    temporal_frontend: str = _env_str("TEMPORAL_FRONTEND", "symmetric")  # symmetric, multiscale_symmetric, or residual
+    residual_kernels: str = _env_str("RESIDUAL_KERNELS", "3,7,15,31")    # comma-separated odd kernels for multi-scale front-ends
 
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
@@ -127,7 +133,9 @@ class Config:
                          "synth_data_path", "synth_data_layout", "synth_normalize",
                          "synth_preprocess", "eeg_fs", "eeg_bands",
                          "synth_noise_std", "synth_max_trials", "synth_split",
-                         "synth_viz_max_trials", "synth_viz_max_timepoints"],
+                         "synth_labels_path", "synth_subjects_path", "synth_subject_count", "synth_subject_ids",
+                         "synth_viz_max_trials", "synth_viz_max_timepoints",
+                         "synth_viz_participant_mode", "synth_viz_participant_count"],
             "model":    ["d", "hidden_dim", "depth", "dropout",
                          "temporal_filters", "temporal_kernel_size",
                          "temporal_frontend", "residual_kernels"],

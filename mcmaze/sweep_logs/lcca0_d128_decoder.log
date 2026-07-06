@@ -1,0 +1,68 @@
+Using run: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260705_185825_d128_h64_dep1_bs64_ep200_lr1e-03_lxp0.0_lbt0.0_lcca0.0_sig10.0_s1
+Loaded checkpoint from epoch 183
+Loading MC Maze data and computing neural windows...
+Trials: train=1721 val=574  window=90 bins
+Loading hand velocity and building future targets...
+Target: hand_vel +100 ms (10 bins), units=stored NWB values
+Valid future samples: 206,550/206,550
+Computing frozen embeddings on cuda...
+Decoder samples: train=154,890 val=51,660  features=d128
+Training linear regression decoder...
+Training MLP decoder...
+MLP epoch   1/50  train mse(z)=0.9850  val mse(z)=0.9660
+MLP epoch   2/50  train mse(z)=0.9768  val mse(z)=0.9660
+MLP epoch   3/50  train mse(z)=0.9748  val mse(z)=0.9650
+MLP epoch   4/50  train mse(z)=0.9745  val mse(z)=0.9643
+MLP epoch   5/50  train mse(z)=0.9743  val mse(z)=0.9651
+MLP epoch   6/50  train mse(z)=0.9753  val mse(z)=0.9650
+MLP epoch   7/50  train mse(z)=0.9737  val mse(z)=0.9636
+MLP epoch   8/50  train mse(z)=0.9737  val mse(z)=0.9643
+MLP epoch   9/50  train mse(z)=0.9732  val mse(z)=0.9642
+MLP epoch  10/50  train mse(z)=0.9732  val mse(z)=0.9636
+MLP epoch  11/50  train mse(z)=0.9733  val mse(z)=0.9636
+MLP epoch  12/50  train mse(z)=0.9725  val mse(z)=0.9627
+MLP epoch  13/50  train mse(z)=0.9734  val mse(z)=0.9628
+MLP epoch  14/50  train mse(z)=0.9731  val mse(z)=0.9632
+MLP epoch  15/50  train mse(z)=0.9730  val mse(z)=0.9632
+MLP epoch  16/50  train mse(z)=0.9730  val mse(z)=0.9629
+MLP epoch  17/50  train mse(z)=0.9728  val mse(z)=0.9630
+MLP epoch  18/50  train mse(z)=0.9726  val mse(z)=0.9627
+MLP epoch  19/50  train mse(z)=0.9725  val mse(z)=0.9632
+MLP epoch  20/50  train mse(z)=0.9727  val mse(z)=0.9625
+MLP epoch  21/50  train mse(z)=0.9727  val mse(z)=0.9640
+MLP epoch  22/50  train mse(z)=0.9721  val mse(z)=0.9640
+MLP epoch  23/50  train mse(z)=0.9720  val mse(z)=0.9636
+MLP epoch  24/50  train mse(z)=0.9720  val mse(z)=0.9626
+MLP epoch  25/50  train mse(z)=0.9722  val mse(z)=0.9618
+MLP epoch  26/50  train mse(z)=0.9721  val mse(z)=0.9633
+MLP epoch  27/50  train mse(z)=0.9717  val mse(z)=0.9620
+MLP epoch  28/50  train mse(z)=0.9718  val mse(z)=0.9620
+MLP epoch  29/50  train mse(z)=0.9713  val mse(z)=0.9617
+MLP epoch  30/50  train mse(z)=0.9712  val mse(z)=0.9631
+MLP epoch  31/50  train mse(z)=0.9715  val mse(z)=0.9622
+MLP epoch  32/50  train mse(z)=0.9713  val mse(z)=0.9617
+MLP epoch  33/50  train mse(z)=0.9707  val mse(z)=0.9621
+MLP epoch  34/50  train mse(z)=0.9705  val mse(z)=0.9622
+MLP epoch  35/50  train mse(z)=0.9709  val mse(z)=0.9606
+MLP epoch  36/50  train mse(z)=0.9706  val mse(z)=0.9615
+MLP epoch  37/50  train mse(z)=0.9706  val mse(z)=0.9607
+MLP epoch  38/50  train mse(z)=0.9705  val mse(z)=0.9605
+MLP epoch  39/50  train mse(z)=0.9711  val mse(z)=0.9605
+MLP epoch  40/50  train mse(z)=0.9704  val mse(z)=0.9604
+MLP epoch  41/50  train mse(z)=0.9707  val mse(z)=0.9610
+MLP epoch  42/50  train mse(z)=0.9708  val mse(z)=0.9619
+MLP epoch  43/50  train mse(z)=0.9704  val mse(z)=0.9602
+MLP epoch  44/50  train mse(z)=0.9695  val mse(z)=0.9607
+MLP epoch  45/50  train mse(z)=0.9702  val mse(z)=0.9599
+MLP epoch  46/50  train mse(z)=0.9709  val mse(z)=0.9604
+MLP epoch  47/50  train mse(z)=0.9706  val mse(z)=0.9616
+MLP epoch  48/50  train mse(z)=0.9700  val mse(z)=0.9601
+MLP epoch  49/50  train mse(z)=0.9700  val mse(z)=0.9594
+MLP epoch  50/50  train mse(z)=0.9699  val mse(z)=0.9604
+Saved metrics: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260705_185825_d128_h64_dep1_bs64_ep200_lr1e-03_lxp0.0_lbt0.0_lcca0.0_sig10.0_s1/outputs/velocity_prediction_100ms/metrics.csv
+Saved plot: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260705_185825_d128_h64_dep1_bs64_ep200_lr1e-03_lxp0.0_lbt0.0_lcca0.0_sig10.0_s1/outputs/velocity_prediction_100ms/prediction_scatter.png
+Saved MLP decoder: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260705_185825_d128_h64_dep1_bs64_ep200_lr1e-03_lxp0.0_lbt0.0_lcca0.0_sig10.0_s1/outputs/velocity_prediction_100ms/mlp_decoder.pt
+
+Validation metrics:
+  linear_regression  R2 mean=0.0175  RMSE mean=240.0211  corr x/y=0.185/0.031
+  mlp                R2 mean=0.0358  RMSE mean=237.7227  corr x/y=0.238/0.123

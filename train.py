@@ -78,13 +78,19 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                                  "train_s", "val_s", "train_reg", "val_reg"])
 
     t0 = time.time()
+    quiet_train = os.environ.get("QUIET_TRAIN", "").lower() in {"1", "true", "yes"}
 
     for epoch in range(1, cfg.epochs + 1):
         scale = lambda_scale(epoch)
         # --- train ---
         model.train()
         epoch_losses, epoch_s, epoch_reg = [], [], []
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{cfg.epochs} [train]", leave=False)
+        pbar = tqdm(
+            train_loader,
+            desc=f"Epoch {epoch}/{cfg.epochs} [train]",
+            leave=False,
+            disable=quiet_train,
+        )
         for (batch,) in pbar:
             batch = batch.to(device)                    # (K, N, T)
             optimizer.zero_grad()
@@ -143,13 +149,14 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
             history["reg_raw"][k].append(sum(val_raw[k]) / len(val_raw[k]) if val_raw[k] else float("nan"))
             history["reg_scaled"][k].append(sum(val_scaled[k]) / len(val_scaled[k]) if val_scaled[k] else float("nan"))
 
-        print(
-            f"Epoch {epoch:3d}/{cfg.epochs}  "
-            f"train loss={mean_train_loss:.4f}  val loss={mean_val_loss:.4f}  "
-            f"S[mean]={mean_val_s:.4f}  reg={mean_val_reg:.4f}  "
-            f"λscale={scale:.2f}  "
-            f"lr={scheduler.get_last_lr()[0]:.2e}"
-        )
+        if not quiet_train or epoch == 1 or epoch % 10 == 0 or epoch == cfg.epochs:
+            print(
+                f"Epoch {epoch:3d}/{cfg.epochs}  "
+                f"train loss={mean_train_loss:.4f}  val loss={mean_val_loss:.4f}  "
+                f"S[mean]={mean_val_s:.4f}  reg={mean_val_reg:.4f}  "
+                f"λscale={scale:.2f}  "
+                f"lr={scheduler.get_last_lr()[0]:.2e}"
+            )
 
         with open(log_path, "a", newline="") as f:
             csv.writer(f).writerow([epoch, mean_train_loss, mean_val_loss,

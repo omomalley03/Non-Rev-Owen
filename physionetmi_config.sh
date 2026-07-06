@@ -21,40 +21,50 @@ export PHYSIONETMI_SUBJECTS_NPY="$CACHE_DIR/physionetmi_train_val_subjects.npy"
 
 # main_synth.py data settings.
 export SYNTH_DATA_PATH="$PHYSIONETMI_NPY"
+export SYNTH_LABELS_PATH="$PHYSIONETMI_LABELS_NPY"
 export SYNTH_DATA_LAYOUT="knt"
 export SYNTH_NORMALIZE="zscore"
 export SYNTH_PREPROCESS="none"
-export EEG_FS="160"
-export EEG_BANDS="mu:8-12,beta:13-30"
 export SYNTH_NOISE_STD="0"
-export SYNTH_MAX_TRIALS="2048"
-export SYNTH_SPLIT="train_eq_val"
-export SYNTH_VIZ_MAX_TRIALS="64"
-export SYNTH_VIZ_MAX_TIMEPOINTS="200"
+
+# Subject-aware train/val split:
+#   1. Use all cached PhysioNet trials before splitting.
+#   2. Randomly sample SYNTH_SUBJECT_COUNT participants with SEED.
+#   3. Randomly split only those participants' trials into 90% train / 10% val.
+#
+# The cache has 89 participants. Most have 90 trials; subject 88 has 114.
+# A 23-participant subset gives 2094 trials for SEED=0, close to the old
+# 2048-trial experiments, but without train=val leakage.
+export SYNTH_MAX_TRIALS="0"
+export SYNTH_SPLIT="subject_random"
+export SYNTH_SUBJECTS_PATH="$PHYSIONETMI_SUBJECTS_NPY"
+export SYNTH_SUBJECT_COUNT="89"
+export SYNTH_SUBJECT_IDS=""   # optional explicit comma-separated IDs; overrides count
+export SYNTH_VIZ_MAX_TRIALS="1000"
+export SYNTH_VIZ_MAX_TIMEPOINTS="1000"
+export SYNTH_VIZ_PARTICIPANT_MODE="top_zeta"  # top_zeta or random
+export SYNTH_VIZ_PARTICIPANT_COUNT="4"
 export VAL_SPLIT="0.1"
 
 # Model settings.
-# Best residual-branch architecture from the 2026-07-01 sweep. This uses the
-# CoCoT-style per-channel multi-kernel ResidualBranch front-end ported into
-# model.py; wider 8/16-filter variants raised raw S but damaged the 2D geometry.
-export D="2"
+export D="512"
 export HIDDEN_DIM="128"
 export DEPTH="1"
 export DROPOUT="0.2"
-export TEMPORAL_FRONTEND="residual"
+export TEMPORAL_FRONTEND="multiscale_symmetric"
 export TEMPORAL_FILTERS="4"
 export RESIDUAL_KERNELS="7,15,31,61"
 export TEMPORAL_KERNEL_SIZE="61"
 
 # Training settings.
-export BATCH_SIZE="128"
-export EPOCHS="50"
+export BATCH_SIZE="64"
+export EPOCHS="200"
 export LR="5e-4"
 export WEIGHT_DECAY="1e-4"
 export LAMBDA_XP="0.0"
 export LAMBDA_BT="0.0"
 export LAMBDA_PLANE_BT="0.0"
-export LAMBDA_BLOCK_CCA="0.0"
+export LAMBDA_BLOCK_CCA="1.0"
 export LAMBDA_START_FRAC="1.0"
 export S_OBJECTIVE="mean"
 export S_SOFTMIN_TAU="0.05"
