@@ -43,6 +43,57 @@ def _parse_subject_ids(spec: str) -> np.ndarray:
     return np.array([int(item.strip()) for item in spec.split(",") if item.strip()], dtype=np.int64)
 
 
+def _select_subject_sets(
+    subjects: np.ndarray,
+    rng: np.random.Generator,
+    subject_count: int = 0,
+    subject_ids: str = "",
+    holdout_subject_count: int = 0,
+    holdout_subject_ids: str = "",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Select train/val and held-out subject sets from available subject IDs."""
+    unique_subjects = np.unique(subjects)
+    explicit_subjects = _parse_subject_ids(subject_ids)
+
+    if explicit_subjects.size:
+        missing = np.setdiff1d(explicit_subjects, unique_subjects)
+        if missing.size:
+            raise ValueError(f"SYNTH_SUBJECT_IDS contains unknown subjects: {missing.tolist()}")
+        selected_subjects = np.sort(explicit_subjects)
+    elif subject_count and subject_count > 0:
+        if subject_count > len(unique_subjects):
+            raise ValueError(
+                f"SYNTH_SUBJECT_COUNT={subject_count} exceeds available subjects={len(unique_subjects)}"
+            )
+        selected_subjects = np.sort(rng.choice(unique_subjects, size=subject_count, replace=False))
+    else:
+        selected_subjects = unique_subjects
+
+    explicit_holdout = _parse_subject_ids(holdout_subject_ids)
+    if explicit_holdout.size:
+        missing = np.setdiff1d(explicit_holdout, selected_subjects)
+        if missing.size:
+            raise ValueError(
+                "SYNTH_HOLDOUT_SUBJECT_IDS must be within the selected subject pool; "
+                f"unknown or unselected subjects: {missing.tolist()}"
+            )
+        holdout_subjects = np.sort(explicit_holdout)
+    elif holdout_subject_count and holdout_subject_count > 0:
+        if holdout_subject_count >= len(selected_subjects):
+            raise ValueError(
+                "SYNTH_HOLDOUT_SUBJECT_COUNT must leave at least one subject for train/val; "
+                f"got holdout={holdout_subject_count}, selected={len(selected_subjects)}"
+            )
+        holdout_subjects = np.sort(
+            rng.choice(selected_subjects, size=holdout_subject_count, replace=False)
+        )
+    else:
+        holdout_subjects = np.array([], dtype=selected_subjects.dtype)
+
+    trainval_subjects = np.setdiff1d(selected_subjects, holdout_subjects)
+    return selected_subjects, trainval_subjects, holdout_subjects
+
+
 def train_val_split_synth(
     windows: np.ndarray,
     val_frac: float,
@@ -51,14 +102,21 @@ def train_val_split_synth(
     subjects: Optional[np.ndarray] = None,
     subject_count: int = 0,
     subject_ids: str = "",
+    holdout_subject_count: int = 0,
+    holdout_subject_ids: str = "",
 ):
     """Split synthetic windows for training/validation."""
     tensor = torch.from_numpy(windows)
     full_ds = TensorDataset(tensor)
 
     split = split.lower()
+    if split not in {"subject_random", "participant_random"} and (
+        holdout_subject_count or _parse_subject_ids(holdout_subject_ids).size
+    ):
+        raise ValueError("Subject holdout requires SYNTH_SPLIT=subject_random")
+
     if split in {"train_eq_val", "train_equals_val", "all", "none"}:
-        return full_ds, full_ds, None, len(tensor)
+        return full_ds, full_ds, None, len(tensor), np.array([], dtype=np.int64), 0
     if split in {"subject_random", "participant_random"}:
         if subjects is None:
             raise ValueError("SYNTH_SPLIT=subject_random requires SYNTH_SUBJECTS_PATH")
@@ -67,26 +125,17 @@ def train_val_split_synth(
                 f"subject IDs length ({len(subjects)}) must match windows length ({len(tensor)})"
             )
 
-        unique_subjects = np.unique(subjects)
-        explicit_subjects = _parse_subject_ids(subject_ids)
         rng = np.random.default_rng(seed)
-        if explicit_subjects.size:
-            missing = np.setdiff1d(explicit_subjects, unique_subjects)
-            if missing.size:
-                raise ValueError(f"SYNTH_SUBJECT_IDS contains unknown subjects: {missing.tolist()}")
-            selected_subjects = np.sort(explicit_subjects)
-        elif subject_count and subject_count > 0:
-            if subject_count > len(unique_subjects):
-                raise ValueError(
-                    f"SYNTH_SUBJECT_COUNT={subject_count} exceeds available subjects={len(unique_subjects)}"
-                )
-            selected_subjects = np.sort(
-                rng.choice(unique_subjects, size=subject_count, replace=False)
-            )
-        else:
-            selected_subjects = unique_subjects
+        _, trainval_subjects, holdout_subjects = _select_subject_sets(
+            subjects,
+            rng,
+            subject_count=subject_count,
+            subject_ids=subject_ids,
+            holdout_subject_count=holdout_subject_count,
+            holdout_subject_ids=holdout_subject_ids,
+        )
 
-        eligible = np.flatnonzero(np.isin(subjects, selected_subjects))
+        eligible = np.flatnonzero(np.isin(subjects, trainval_subjects))
         if len(eligible) < 2:
             raise ValueError("subject_random split requires at least two eligible trials")
         shuffled = rng.permutation(eligible)
@@ -94,11 +143,14 @@ def train_val_split_synth(
         n_train = len(shuffled) - n_val
         if n_train < 1:
             raise ValueError("subject_random split leaves no training trials")
+        holdout_idx = np.flatnonzero(np.isin(subjects, holdout_subjects))
         return (
             Subset(full_ds, shuffled[:n_train].tolist()),
             Subset(full_ds, shuffled[n_train:].tolist()),
-            selected_subjects,
+            trainval_subjects,
             len(eligible),
+            holdout_subjects,
+            len(holdout_idx),
         )
     if split != "random":
         raise ValueError("SYNTH_SPLIT must be one of: random, train_eq_val, subject_random")
@@ -107,7 +159,7 @@ def train_val_split_synth(
     n_train = len(tensor) - n_val
     generator = torch.Generator().manual_seed(seed)
     train_ds, val_ds = random_split(full_ds, [n_train, n_val], generator=generator)
-    return train_ds, val_ds, None, len(tensor)
+    return train_ds, val_ds, None, len(tensor), np.array([], dtype=np.int64), 0
 
 
 def main():
@@ -143,7 +195,7 @@ def main():
         print(f"  Labels: {dict(zip(unique_labels.tolist(), label_counts.tolist()))}")
 
     N = windows.shape[1]
-    train_ds, val_ds, selected_subjects, eligible_trials = train_val_split_synth(
+    train_ds, val_ds, trainval_subjects, eligible_trials, holdout_subjects, holdout_trials = train_val_split_synth(
         windows,
         cfg.val_split,
         cfg.seed,
@@ -151,13 +203,20 @@ def main():
         subjects=subjects,
         subject_count=getattr(cfg, "synth_subject_count", 0),
         subject_ids=getattr(cfg, "synth_subject_ids", ""),
+        holdout_subject_count=getattr(cfg, "synth_holdout_subject_count", 0),
+        holdout_subject_ids=getattr(cfg, "synth_holdout_subject_ids", ""),
     )
-    if selected_subjects is not None:
+    if trainval_subjects is not None:
         print(
-            f"  Subject subset: {len(selected_subjects)} subjects, "
+            f"  Train/val subject subset: {len(trainval_subjects)} subjects, "
             f"{eligible_trials} eligible trials"
         )
-        print(f"  Selected subjects: {selected_subjects.tolist()}")
+        print(f"  Train/val subjects: {trainval_subjects.tolist()}")
+        if len(holdout_subjects):
+            print(
+                f"  Held-out subjects: {holdout_subjects.tolist()} "
+                f"({holdout_trials} test-only trials)"
+            )
     print(f"  Train: {len(train_ds)}  |  Val: {len(val_ds)}  |  Split: {cfg.synth_split}")
 
     model = MLP(

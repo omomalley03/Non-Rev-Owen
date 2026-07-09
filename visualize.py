@@ -766,9 +766,7 @@ def plot_loss_curve(run_dir: str, cfg: Config) -> None:
                                      by train.py when at least one regularizer
                                      is active; absent for unregularised runs)
 
-    Produces the same multi-panel figure as train.py:
-      panel 0   : val S (non-rev) and total λ·reg over epochs
-      panel 1…N : one panel per active reg showing raw vs λ·reg magnitude
+    Produces the same single-panel training-dynamics figure as train.py.
     """
     import csv as _csv
 
@@ -779,24 +777,22 @@ def plot_loss_curve(run_dir: str, cfg: Config) -> None:
         return
 
     # read log.csv
-    epochs, val_s = [], []
+    epochs, val_s, val_losses = [], [], []
     with open(log_path, newline="") as f:
         for row in _csv.DictReader(f):
             epochs.append(int(row["epoch"]))
             val_s.append(float(row["val_s"]))
+            val_losses.append(float(row["val_loss"]))
 
     reg_lambdas = {
-        "xp":       cfg.lambda_xp,
-        "Barlow Twins":       cfg.lambda_bt,
+        "xp": cfg.lambda_xp,
+        "bt": cfg.lambda_bt,
         "plane_bt": getattr(cfg, "lambda_plane_bt", 0.0),
-        "":      getattr(cfg, "lambda_block_cca", 0.0),
+        "cca": getattr(cfg, "lambda_block_cca", 0.0),
     }
-    lambda_start = getattr(cfg, "lambda_start_frac", 1.0)
-    # active regs from cfg — this determines the panel count even for old runs
     active_regs = [k for k, v in reg_lambdas.items() if v > 0]
 
     # try to load per-epoch reg data (written by train.py; absent for old runs)
-    reg_raw:    dict[str, list[float]] = {}
     reg_scaled: dict[str, list[float]] = {}
     reg_path = os.path.join(out_dir, "reg_history.csv")
     if os.path.isfile(reg_path):
@@ -805,44 +801,84 @@ def plot_loss_curve(run_dir: str, cfg: Config) -> None:
             csv_regs = [c[4:] for c in (reader.fieldnames or [])
                         if c.startswith("raw_")]
             for k in csv_regs:
-                reg_raw[k], reg_scaled[k] = [], []
+                reg_scaled[k] = []
             for row in reader:
                 for k in csv_regs:
-                    reg_raw[k].append(float(row[f"raw_{k}"]))
                     reg_scaled[k].append(float(row[f"scaled_{k}"]))
-    has_reg_data = bool(reg_raw)
 
-    n_panels = 1 + len(active_regs)
-    fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 4), squeeze=False)
-    axes = axes[0]
-
-    ax = axes[0]
-    ax.plot(epochs, val_s, label="Mean S per plane", color="steelblue")
-    if has_reg_data:
-        total_scaled = [sum(reg_scaled[k][i] for k in active_regs if k in reg_scaled)
-                        for i in range(len(epochs))]
-        ax.plot(epochs, total_scaled, label="total λ·reg", color="tomato")
+    fig, ax = plt.subplots(figsize=(5, 4))
+    ax.plot(epochs, val_s, label="S mean/plane (↑)", color="steelblue")
+    if reg_scaled:
+        total_scaled = [
+            sum(
+                reg_scaled[k][i]
+                for k in active_regs
+                if k in reg_scaled and i < len(reg_scaled[k])
+            )
+            for i in range(len(epochs))
+        ]
+        ax.plot(epochs, total_scaled, label="total λ·reg (↓)", color="tomato")
     ax.set_xlabel("Epoch")
-    ax.set_title("Validation Set Loss")
-    ax.legend()
+    ax.set_ylabel("Embedding validation loss components")
     ax.spines[["top", "right"]].set_visible(False)
 
-    for ax, name in zip(axes[1:], active_regs):
-        lam = reg_lambdas.get(name)
-        lam_str = f"{lam:g}" if isinstance(lam, (int, float)) else "?"
-        ax.set_title(f"{name}  (λ={lam_str}, start={lambda_start:g})")
-        ax.set_xlabel("Epoch")
-        if name in reg_raw:
-            ax.plot(epochs, reg_raw[name],    color="gray",  ls="--", label="raw (unscaled)")
-            ax.plot(epochs, reg_scaled[name], color="tomato",          label="λ·reg (applied)")
-            ax.legend()
-        else:
-            ax.text(0.5, 0.5,
-                    "Per-epoch data not available.\nRetrain to generate reg_history.csv",
-                    transform=ax.transAxes, ha="center", va="center",
-                    fontsize=9, color="gray", style="italic")
-        ax.spines[["top", "right"]].set_visible(False)
+    s_ckpt_path = os.path.join(run_dir, "checkpoints", "val_s_checkpoints.csv")
+    if os.path.isfile(s_ckpt_path):
+        with open(s_ckpt_path, newline="") as f:
+            for row in _csv.DictReader(f):
+                checkpoint_epoch = int(row["epoch"])
+                idx = checkpoint_epoch - 1
+                if idx < 0 or idx >= len(val_s):
+                    continue
+                y = val_s[idx]
+                ax.scatter([checkpoint_epoch], [y], s=44, color="black", zorder=5)
+                ax.annotate(
+                    f"S>={float(row['threshold']):g}",
+                    xy=(checkpoint_epoch, y),
+                    xytext=(5, 5),
+                    textcoords="offset points",
+                    va="bottom",
+                    ha="left",
+                    fontsize=8,
+                    color="black",
+                )
 
+    best_epoch = None
+    best_ckpt_path = os.path.join(run_dir, "checkpoints", "best.pt")
+    if os.path.isfile(best_ckpt_path):
+        try:
+            ckpt = torch.load(best_ckpt_path, map_location="cpu", weights_only=False)
+            best_epoch = int(ckpt["epoch"])
+        except Exception as exc:
+            print(f"  [loss curve] could not read best.pt ({exc}); falling back to log.csv.")
+    if best_epoch is None and val_losses:
+        best_epoch = min(range(1, len(val_losses) + 1), key=lambda i: val_losses[i - 1])
+
+    if best_epoch is not None:
+        idx = best_epoch - 1
+        if 0 <= idx < len(val_s):
+            y = val_s[idx]
+            ax.scatter(
+                [best_epoch],
+                [y],
+                s=52,
+                color="goldenrod",
+                edgecolors="black",
+                linewidths=0.7,
+                zorder=6,
+            )
+            ax.annotate(
+                "best val loss",
+                xy=(best_epoch, y),
+                xytext=(5, -10),
+                textcoords="offset points",
+                va="top",
+                ha="left",
+                fontsize=8,
+                color="black",
+            )
+
+    ax.legend()
     fig.tight_layout()
     out_path = os.path.join(out_dir, "loss_curve.png")
     fig.savefig(out_path, dpi=150)

@@ -21,6 +21,21 @@ def _make_loader(dataset, batch_size: int, shuffle: bool, drop_last: bool):
         num_workers=0,
     )
 
+
+def _fmt_threshold(value: float) -> str:
+    return f"{value:g}"
+
+
+def _checkpoint_payload(model, cfg: Config, epoch: int, **metrics):
+    payload = {
+        "model_state_dict": model.state_dict(),
+        "config": cfg,
+        "epoch": epoch,
+    }
+    payload.update(metrics)
+    return payload
+
+
 # Unused learned plane-predictor adversary removed from the active training path
 # while the current sweep focuses on BT, plane-aware BT, and block-CCA.
 
@@ -65,6 +80,10 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         return start + (1.0 - start) * (epoch - 1) / (cfg.epochs - 1)
 
     best_val_loss = float("inf")
+    best_val_epoch = None
+    s_thresholds = sorted(set(float(x) for x in getattr(cfg, "val_s_checkpoint_thresholds", ()) or ()))
+    saved_s_thresholds = set()
+    s_checkpoint_records = []
     history = {"train_loss": [], "val_loss": [],
                "train_s": [], "val_s": [],
                "train_reg": [], "val_reg": [],
@@ -76,6 +95,14 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
     with open(log_path, "w", newline="") as f:
         csv.writer(f).writerow(["epoch", "train_loss", "val_loss",
                                  "train_s", "val_s", "train_reg", "val_reg"])
+
+    s_ckpt_log_path = os.path.join(cfg.ckpt_dir, "val_s_checkpoints.csv")
+    if s_thresholds:
+        with open(s_ckpt_log_path, "w", newline="") as f:
+            csv.writer(f).writerow([
+                "threshold", "epoch", "val_s", "val_loss", "train_loss",
+                "train_s", "path",
+            ])
 
     t0 = time.time()
     quiet_train = os.environ.get("QUIET_TRAIN", "").lower() in {"1", "true", "yes"}
@@ -165,12 +192,59 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
 
         if mean_val_loss < best_val_loss:
             best_val_loss = mean_val_loss
+            best_val_epoch = epoch
             torch.save(
-                {"model_state_dict": model.state_dict(), "config": cfg, "epoch": epoch},
+                _checkpoint_payload(
+                    model,
+                    cfg,
+                    epoch,
+                    val_loss=mean_val_loss,
+                    val_s=mean_val_s,
+                    train_loss=mean_train_loss,
+                    train_s=mean_train_s,
+                ),
                 os.path.join(cfg.ckpt_dir, "best.pt"),
             )
 
+        for threshold in s_thresholds:
+            if threshold in saved_s_thresholds:
+                continue
+            if mean_val_s >= threshold:
+                label = _fmt_threshold(threshold)
+                ckpt_name = f"val_s_{label}.pt"
+                ckpt_path = os.path.join(cfg.ckpt_dir, ckpt_name)
+                torch.save(
+                    _checkpoint_payload(
+                        model,
+                        cfg,
+                        epoch,
+                        val_s_threshold=threshold,
+                        val_loss=mean_val_loss,
+                        val_s=mean_val_s,
+                        train_loss=mean_train_loss,
+                        train_s=mean_train_s,
+                    ),
+                    ckpt_path,
+                )
+                saved_s_thresholds.add(threshold)
+                s_checkpoint_records.append((threshold, epoch))
+                with open(s_ckpt_log_path, "a", newline="") as f:
+                    csv.writer(f).writerow([
+                        threshold,
+                        epoch,
+                        mean_val_s,
+                        mean_val_loss,
+                        mean_train_loss,
+                        mean_train_s,
+                        ckpt_path,
+                    ])
+                print(
+                    f"Saved val-S checkpoint {ckpt_name}: "
+                    f"threshold={threshold:g} epoch={epoch} val_s={mean_val_s:.4f}"
+                )
+
     history["best_val_loss"] = best_val_loss
+    history["best_val_epoch"] = best_val_epoch
     history["elapsed_s"] = time.time() - t0
 
     # --- save per-reg history for post-hoc visualisation ---
@@ -189,14 +263,9 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                 w.writerow(row)
 
     # --- loss curve ---
-    # One panel for the S objective, then one panel per active regularizer
-    # showing its raw magnitude (unscaled) and the lambda·reg actually applied.
+    # Keep this to the main training-dynamics panel so checkpoint markers stay
+    # readable as the number of active regularizers changes.
     ep = list(range(1, cfg.epochs + 1))
-    n_panels = 1 + len(active_regs)
-    fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 4), squeeze=False)
-    axes = axes[0]
-
-    ax = axes[0]
     # Compute total λ·reg as the sum of individually tracked scaled components.
     # history["val_reg"] = loss + s is unreliable with the softmin objective because
     # non_reversibility_S("softmin") silently falls through to "sum" mode, so the
@@ -205,22 +274,62 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         sum(history["reg_scaled"][k][i] for k in active_regs)
         for i in range(len(ep))
     ] if active_regs else [0.0] * len(ep)
+    fig, ax = plt.subplots(figsize=(5, 4))
     ax.plot(ep, history["val_s"],     label="S mean/plane (↑)",  color="steelblue")
     ax.plot(ep, total_scaled_reg,     label="total λ·reg (↓)",   color="tomato")
     ax.set_xlabel("Epoch")
-    ax.set_title("Training dynamics")
-    ax.legend()
+    ax.set_ylabel("Embedding validation loss components")
     ax.spines[["top", "right"]].set_visible(False)
 
-    for ax, name in zip(axes[1:], active_regs):
-        ax.plot(ep, history["reg_raw"][name],    color="gray",  ls="--",
-                label="raw (unscaled)")
-        ax.plot(ep, history["reg_scaled"][name], color="tomato",
-                label="λ·reg (applied)")
-        ax.set_xlabel("Epoch")
-        ax.set_title(f"{name}  (λ={reg_lambdas[name]:g}, start={getattr(cfg, 'lambda_start_frac', 1.0):g})")
-        ax.legend()
-        ax.spines[["top", "right"]].set_visible(False)
+    if s_checkpoint_records:
+        for threshold, checkpoint_epoch in s_checkpoint_records:
+            idx = checkpoint_epoch - 1
+            if idx < 0 or idx >= len(history["val_s"]):
+                continue
+            y = history["val_s"][idx]
+            ax.scatter(
+                [checkpoint_epoch],
+                [y],
+                s=44,
+                color="black",
+                zorder=5,
+            )
+            ax.annotate(
+                f"S>={threshold:g}",
+                xy=(checkpoint_epoch, y),
+                xytext=(5, 5),
+                textcoords="offset points",
+                va="bottom",
+                ha="left",
+                fontsize=8,
+                color="black",
+            )
+
+    if best_val_epoch is not None:
+        idx = best_val_epoch - 1
+        if 0 <= idx < len(history["val_s"]):
+            y = history["val_s"][idx]
+            ax.scatter(
+                [best_val_epoch],
+                [y],
+                s=52,
+                color="goldenrod",
+                edgecolors="black",
+                linewidths=0.7,
+                zorder=6,
+            )
+            ax.annotate(
+                "best val loss",
+                xy=(best_val_epoch, y),
+                xytext=(5, -10),
+                textcoords="offset points",
+                va="top",
+                ha="left",
+                fontsize=8,
+                color="black",
+            )
+
+    ax.legend()
 
     fig.tight_layout()
     fig.savefig(os.path.join(cfg.out_dir, "loss_curve.png"), dpi=150)

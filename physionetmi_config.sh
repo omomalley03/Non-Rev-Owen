@@ -35,19 +35,21 @@ export SYNTH_NOISE_STD="0"
 # The cache has 89 participants. Most have 90 trials; subject 88 has 114.
 # A 23-participant subset gives 2094 trials for SEED=0, close to the old
 # 2048-trial experiments, but without train=val leakage.
-export SYNTH_MAX_TRIALS="0"
+export SYNTH_MAX_TRIALS="10000"
 export SYNTH_SPLIT="subject_random"
 export SYNTH_SUBJECTS_PATH="$PHYSIONETMI_SUBJECTS_NPY"
 export SYNTH_SUBJECT_COUNT="89"
 export SYNTH_SUBJECT_IDS=""   # optional explicit comma-separated IDs; overrides count
+export SYNTH_HOLDOUT_SUBJECT_COUNT="5"  # excluded from embedding train/val and used for decoder test
+export SYNTH_HOLDOUT_SUBJECT_IDS=""     # optional explicit comma-separated held-out IDs
 export SYNTH_VIZ_MAX_TRIALS="1000"
 export SYNTH_VIZ_MAX_TIMEPOINTS="1000"
 export SYNTH_VIZ_PARTICIPANT_MODE="top_zeta"  # top_zeta or random
-export SYNTH_VIZ_PARTICIPANT_COUNT="4"
+export SYNTH_VIZ_PARTICIPANT_COUNT="8"
 export VAL_SPLIT="0.1"
 
 # Model settings.
-export D="512"
+export D="256"
 export HIDDEN_DIM="128"
 export DEPTH="1"
 export DROPOUT="0.2"
@@ -57,7 +59,7 @@ export RESIDUAL_KERNELS="7,15,31,61"
 export TEMPORAL_KERNEL_SIZE="61"
 
 # Training settings.
-export BATCH_SIZE="64"
+export BATCH_SIZE="128"
 export EPOCHS="200"
 export LR="5e-4"
 export WEIGHT_DECAY="1e-4"

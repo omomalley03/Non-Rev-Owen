@@ -95,7 +95,7 @@ def main():
 
     print_summary(history, cfg)
 
-    if os.environ.get("SKIP_DIAGNOSTICS", "").lower() in {"1", "true", "yes"}:
+    if True:  # os.environ.get("SKIP_DIAGNOSTICS", "").lower() in {"1", "true", "yes"}:
         print("\nSkipping diagnostic plots because SKIP_DIAGNOSTICS=1.")
     else:
         print("\nGenerating diagnostic plots …")
@@ -119,6 +119,8 @@ def main():
     #     probe_results["label_encoder"], probe_results["val_acc"],
     #     out_path=os.path.join(cfg.out_dir, "11_condition_classifier.png"),
     # )
+
+    return run_dir, history
 
 
 if __name__ == "__main__":

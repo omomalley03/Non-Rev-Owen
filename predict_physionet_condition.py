@@ -5,9 +5,14 @@ embeddings for each EEG trial, and trains trial-level condition decoders:
 
   1. Logistic regression from flattened embedding trajectory ``d*T`` -> class
   2. MLP classifier from flattened embedding trajectory ``d*T`` -> class
+  3. Temporal Conv1d classifier from embedding trajectory ``d x T`` -> class
 
 Unlike the MC Maze velocity decoder, this is a trial-level classifier: each
 sample is one full single-trial embedding trajectory.
+
+If the checkpoint config defines SYNTH_HOLDOUT_SUBJECT_COUNT or
+SYNTH_HOLDOUT_SUBJECT_IDS, those participants are excluded from decoder
+train/validation and evaluated as a held-out subject test set.
 
 Examples
 --------
@@ -69,6 +74,53 @@ class TrajectoryConditionMLP(nn.Module):
 
     def forward(self, x):
         return self.net(x)
+
+
+class EmbeddingTemporalConvClassifier(nn.Module):
+    """Trial-level decoder: temporal Conv1d over frozen embedding trajectories."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        n_classes: int,
+        hidden_dim: int,
+        depth: int,
+        kernel_size: int,
+        dropout: float,
+    ):
+        super().__init__()
+        if depth < 1:
+            raise ValueError("depth must be at least 1")
+        if kernel_size < 1 or kernel_size % 2 == 0:
+            raise ValueError("kernel_size must be a positive odd integer")
+
+        padding = kernel_size // 2
+        layers = []
+        dim = in_channels
+        for _ in range(depth):
+            layers += [nn.Conv1d(dim, hidden_dim, kernel_size, padding=padding), nn.GELU()]
+            if dropout > 0:
+                layers.append(nn.Dropout(dropout))
+            dim = hidden_dim
+        self.temporal = nn.Sequential(*layers)
+        self.classifier = nn.Linear(dim, n_classes)
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_uniform_(m.weight, nonlinearity="linear")
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        x = self.temporal(x)
+        x = x.mean(dim=-1)
+        return self.classifier(x)
 
 
 def _unique_existing(paths):
@@ -173,11 +225,62 @@ def trajectory_features(F_train: np.ndarray, F_val: np.ndarray, standardize: boo
     return (X_train - feature_mean) / feature_std, (X_val - feature_mean) / feature_std, emb_mean, feature_mean, feature_std
 
 
-def classification_metrics(y_true, y_pred):
+def transform_trajectory_features(
+    F: np.ndarray,
+    emb_mean: np.ndarray,
+    feature_mean: np.ndarray | None,
+    feature_std: np.ndarray | None,
+) -> np.ndarray:
+    """Apply train-derived trajectory centering/standardization to another split."""
+    X = (F - emb_mean).reshape(F.shape[0], -1)
+    if feature_mean is None or feature_std is None:
+        return X
+    return (X - feature_mean) / feature_std
+
+
+def sequence_features(
+    F_train: np.ndarray,
+    F_val: np.ndarray,
+    standardize: bool,
+    emb_mean: np.ndarray | None = None,
+):
+    """Return centered (K, d, T) features for temporal-conv decoding."""
+    if emb_mean is None:
+        emb_mean = F_train.mean(axis=(0, 2), keepdims=True)
+    F_train = F_train - emb_mean
+    F_val = F_val - emb_mean
+    if not standardize:
+        return F_train, F_val, emb_mean, None, None
+
+    feature_mean = F_train.mean(axis=(0, 2), keepdims=True)
+    feature_std = np.maximum(F_train.std(axis=(0, 2), keepdims=True), 1e-6)
+    return (
+        (F_train - feature_mean) / feature_std,
+        (F_val - feature_mean) / feature_std,
+        emb_mean,
+        feature_mean,
+        feature_std,
+    )
+
+
+def transform_sequence_features(
+    F: np.ndarray,
+    emb_mean: np.ndarray,
+    feature_mean: np.ndarray | None,
+    feature_std: np.ndarray | None,
+) -> np.ndarray:
+    """Apply train-derived sequence centering/standardization to another split."""
+    F = F - emb_mean
+    if feature_mean is None or feature_std is None:
+        return F
+    return (F - feature_mean) / feature_std
+
+
+def classification_metrics(y_true, y_pred, prefix: str = ""):
     return {
-        "accuracy": float(accuracy_score(y_true, y_pred)),
-        "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
-        "macro_f1": float(f1_score(y_true, y_pred, average="macro")),
+        f"{prefix}accuracy": float(accuracy_score(y_true, y_pred)),
+        f"{prefix}balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
+        f"{prefix}macro_f1": float(f1_score(y_true, y_pred, average="macro")),
     }
 
 
@@ -266,6 +369,101 @@ def train_mlp_classifier(
     return pred, model, {"best_val_acc": best_acc, "best_val_ce": best_loss}
 
 
+def predict_mlp_classifier(model: nn.Module, X: np.ndarray, device: torch.device) -> np.ndarray:
+    model.eval()
+    with torch.no_grad():
+        X_t = torch.from_numpy(X.astype(np.float32)).to(device)
+        return model(X_t).argmax(dim=1).cpu().numpy()
+
+
+def train_temporal_conv_classifier(
+    F_train,
+    y_train,
+    F_val,
+    y_val,
+    n_classes: int,
+    hidden_dim: int,
+    depth: int,
+    kernel_size: int,
+    dropout: float,
+    epochs: int,
+    batch_size: int,
+    lr: float,
+    weight_decay: float,
+    seed: int,
+    device: torch.device,
+):
+    torch.manual_seed(seed)
+    train_ds = torch.utils.data.TensorDataset(
+        torch.from_numpy(F_train.astype(np.float32)),
+        torch.from_numpy(y_train.astype(np.int64)),
+    )
+    loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=False, num_workers=0)
+    F_val_t = torch.from_numpy(F_val.astype(np.float32)).to(device)
+    y_val_t = torch.from_numpy(y_val.astype(np.int64)).to(device)
+
+    model = EmbeddingTemporalConvClassifier(
+        in_channels=F_train.shape[1],
+        n_classes=n_classes,
+        hidden_dim=hidden_dim,
+        depth=depth,
+        kernel_size=kernel_size,
+        dropout=dropout,
+    ).to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    loss_fn = nn.CrossEntropyLoss()
+
+    best_acc = -1.0
+    best_loss = float("inf")
+    best_state = None
+    for epoch in range(1, epochs + 1):
+        model.train()
+        losses = []
+        correct = 0
+        total = 0
+        for xb, yb in loader:
+            xb = xb.to(device)
+            yb = yb.to(device)
+            opt.zero_grad()
+            logits = model(xb)
+            loss = loss_fn(logits, yb)
+            loss.backward()
+            opt.step()
+            losses.append(loss.item())
+            correct += int((logits.argmax(dim=1) == yb).sum().item())
+            total += int(yb.numel())
+
+        model.eval()
+        with torch.no_grad():
+            val_logits = model(F_val_t)
+            val_loss = loss_fn(val_logits, y_val_t).item()
+            val_pred = val_logits.argmax(dim=1)
+            val_acc = float((val_pred == y_val_t).float().mean().item())
+        if val_acc > best_acc or (val_acc == best_acc and val_loss < best_loss):
+            best_acc = val_acc
+            best_loss = val_loss
+            best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
+        print(
+            f"TemporalConv epoch {epoch:3d}/{epochs}  "
+            f"train ce={np.mean(losses):.4f} acc={correct / max(total, 1):.1%}  "
+            f"val ce={val_loss:.4f} acc={val_acc:.1%}"
+        )
+
+    model.load_state_dict(best_state)
+    model.eval()
+    with torch.no_grad():
+        pred = model(F_val_t).argmax(dim=1).cpu().numpy()
+    return pred, model, {"best_val_acc": best_acc, "best_val_ce": best_loss}
+
+
+def predict_temporal_conv_classifier(model: nn.Module, F: np.ndarray, device: torch.device) -> np.ndarray:
+    model.eval()
+    with torch.no_grad():
+        F_t = torch.from_numpy(F.astype(np.float32)).to(device)
+        return model(F_t).argmax(dim=1).cpu().numpy()
+
+
 def save_metrics(out_dir, rows):
     path = os.path.join(out_dir, "metrics.csv")
     fieldnames = ["model"]
@@ -280,7 +478,7 @@ def save_metrics(out_dir, rows):
     print(f"Saved metrics: {path}")
 
 
-def plot_confusions(out_dir, y_true, predictions, labels, label_names):
+def plot_confusions(out_dir, y_true, predictions, labels, label_names, filename="confusion_matrices.png"):
     fig, axes = plt.subplots(1, len(predictions), figsize=(5 * len(predictions), 4.5), squeeze=False)
     for ax, (name, y_pred) in zip(axes.ravel(), predictions.items()):
         cm = confusion_matrix(y_true, y_pred, labels=labels)
@@ -297,7 +495,7 @@ def plot_confusions(out_dir, y_true, predictions, labels, label_names):
                 ax.text(j, i, str(int(cm[i, j])), ha="center", va="center", fontsize=8)
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig.tight_layout()
-    path = os.path.join(out_dir, "confusion_matrices.png")
+    path = os.path.join(out_dir, filename)
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved plot: {path}")
@@ -309,6 +507,8 @@ def main():
     parser.add_argument("--data", default=None, help="Override synthetic data .npy path from checkpoint config.")
     parser.add_argument("--decoder-split", choices=["checkpoint", "random", "subject_random"], default="checkpoint",
                         help="Split for the decoder. 'checkpoint' uses cfg.synth_split.")
+    parser.add_argument("--decoder-type", choices=["all", "linear", "mlp", "temporal_conv"], default="all",
+                        help="Which downstream condition decoder(s) to train.")
     parser.add_argument("--embed-batch-size", type=int, default=256)
     parser.add_argument("--mlp-hidden-dim", type=int, default=256)
     parser.add_argument("--mlp-depth", type=int, default=2)
@@ -317,9 +517,29 @@ def main():
     parser.add_argument("--mlp-batch-size", type=int, default=128)
     parser.add_argument("--mlp-lr", type=float, default=1e-3)
     parser.add_argument("--mlp-weight-decay", type=float, default=1e-4)
+    parser.add_argument("--conv-hidden-dim", type=int, default=128)
+    parser.add_argument("--conv-depth", type=int, default=2)
+    parser.add_argument("--conv-kernel-size", type=int, default=31)
+    parser.add_argument("--conv-dropout", type=float, default=None,
+                        help="Temporal-conv dropout. Defaults to --mlp-dropout when omitted.")
     parser.add_argument("--no-standardize", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+    if args.mlp_depth < 1:
+        parser.error("--mlp-depth must be at least 1")
+    if args.mlp_hidden_dim < 1:
+        parser.error("--mlp-hidden-dim must be positive")
+    if args.mlp_epochs < 1:
+        parser.error("--mlp-epochs must be at least 1")
+    if args.mlp_batch_size < 1:
+        parser.error("--mlp-batch-size must be positive")
+    if args.conv_depth < 1:
+        parser.error("--conv-depth must be at least 1")
+    if args.conv_hidden_dim < 1:
+        parser.error("--conv-hidden-dim must be positive")
+    if args.conv_kernel_size < 1 or args.conv_kernel_size % 2 == 0:
+        parser.error("--conv-kernel-size must be a positive odd integer")
+    conv_dropout = args.mlp_dropout if args.conv_dropout is None else args.conv_dropout
 
     run_dir = resolve_run_dir(args.run)
     ckpt_path = os.path.join(run_dir, "checkpoints", "best.pt")
@@ -329,6 +549,10 @@ def main():
 
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     cfg: Config = ckpt["config"]
+    if not hasattr(cfg, "synth_holdout_subject_count"):
+        cfg.synth_holdout_subject_count = 0
+    if not hasattr(cfg, "synth_holdout_subject_ids"):
+        cfg.synth_holdout_subject_ids = ""
     print(f"Loaded checkpoint from epoch {ckpt.get('epoch')}")
 
     data_path = args.data or getattr(cfg, "synth_data_path", "")
@@ -344,7 +568,7 @@ def main():
         raise ValueError(f"subjects length ({len(subjects)}) must match windows ({len(windows)})")
 
     split = getattr(cfg, "synth_split", "random") if args.decoder_split == "checkpoint" else args.decoder_split
-    train_ds, val_ds = train_val_split_synth(
+    train_ds, val_ds, holdout_ds, trainval_subjects, holdout_subjects = train_val_split_synth(
         windows,
         cfg.val_split,
         cfg.seed,
@@ -352,20 +576,46 @@ def main():
         subjects=subjects,
         subject_count=getattr(cfg, "synth_subject_count", 0),
         subject_ids=getattr(cfg, "synth_subject_ids", ""),
+        holdout_subject_count=getattr(cfg, "synth_holdout_subject_count", 0),
+        holdout_subject_ids=getattr(cfg, "synth_holdout_subject_ids", ""),
+        return_holdout=True,
     )
     train_idx = _dataset_source_indices(train_ds)
     val_idx = _dataset_source_indices(val_ds)
+    holdout_idx = _dataset_source_indices(holdout_ds) if holdout_ds is not None else None
     y_train_raw = labels[train_idx]
     y_val_raw = labels[val_idx]
-    classes = np.array(sorted(np.unique(np.concatenate([y_train_raw, y_val_raw]))), dtype=np.int64)
+    y_test_raw = labels[holdout_idx] if holdout_idx is not None else None
+    class_arrays = [y_train_raw, y_val_raw]
+    if y_test_raw is not None:
+        class_arrays.append(y_test_raw)
+    classes = np.array(sorted(np.unique(np.concatenate(class_arrays))), dtype=np.int64)
     class_to_idx = {label: i for i, label in enumerate(classes)}
     y_train = np.array([class_to_idx[int(label)] for label in y_train_raw], dtype=np.int64)
     y_val = np.array([class_to_idx[int(label)] for label in y_val_raw], dtype=np.int64)
+    y_test = (
+        np.array([class_to_idx[int(label)] for label in y_test_raw], dtype=np.int64)
+        if y_test_raw is not None
+        else None
+    )
     label_names = [CONDITION_NAMES.get(int(label), f"condition {int(label)}") for label in classes]
 
     if len(set(train_idx.tolist()) & set(val_idx.tolist())):
         print("Warning: train and validation source indices overlap; decoder accuracy is not a held-out estimate.")
-    print(f"Decoder split: {split}  train={len(train_ds)} val={len(val_ds)}")
+    if holdout_idx is not None:
+        train_set = set(train_idx.tolist())
+        val_set = set(val_idx.tolist())
+        holdout_set = set(holdout_idx.tolist())
+        if train_set & holdout_set or val_set & holdout_set:
+            raise RuntimeError("Held-out subject indices overlap decoder train/validation indices.")
+    print(
+        f"Decoder split: {split}  train={len(train_ds)} val={len(val_ds)} "
+        f"test={len(holdout_ds) if holdout_ds is not None else 0}"
+    )
+    if trainval_subjects is not None:
+        print(f"Decoder train/val subjects: {np.asarray(trainval_subjects).tolist()}")
+    if holdout_subjects is not None and len(holdout_subjects):
+        print(f"Decoder held-out subjects: {np.asarray(holdout_subjects).tolist()}")
     print(f"Classes: {dict(zip(label_names, np.bincount(y_train, minlength=len(classes)).tolist()))} train")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -373,81 +623,193 @@ def main():
     print(f"Computing frozen embeddings on {device}...")
     F_train = compute_embeddings(embedder, train_ds, args.embed_batch_size, device)
     F_val = compute_embeddings(embedder, val_ds, args.embed_batch_size, device)
+    F_test = compute_embeddings(embedder, holdout_ds, args.embed_batch_size, device) if holdout_ds is not None else None
     X_train, X_val, emb_mean, feature_mean, feature_std = trajectory_features(
         F_train,
         F_val,
         standardize=not args.no_standardize,
     )
+    X_test = (
+        transform_trajectory_features(F_test, emb_mean, feature_mean, feature_std)
+        if F_test is not None
+        else None
+    )
+    F_train_seq, F_val_seq, _, seq_feature_mean, seq_feature_std = sequence_features(
+        F_train,
+        F_val,
+        standardize=not args.no_standardize,
+        emb_mean=emb_mean,
+    )
+    F_test_seq = (
+        transform_sequence_features(F_test, emb_mean, seq_feature_mean, seq_feature_std)
+        if F_test is not None
+        else None
+    )
     print(f"Decoder features: train={X_train.shape} val={X_val.shape}  raw embedding={F_train.shape[1:]} per trial")
+    print(f"Temporal-conv features: train={F_train_seq.shape} val={F_val_seq.shape}")
+    if X_test is not None and F_test_seq is not None:
+        print(f"Held-out test features: flat={X_test.shape} temporal={F_test_seq.shape}")
 
     out_dir = os.path.join(run_dir, "outputs", "condition_prediction")
     os.makedirs(out_dir, exist_ok=True)
+    if F_test is not None:
+        heldout_path = os.path.join(out_dir, "heldout_embeddings.npz")
+        np.savez_compressed(
+            heldout_path,
+            embeddings=F_test,
+            labels=y_test_raw,
+            subjects=subjects[holdout_idx] if subjects is not None else None,
+            source_indices=holdout_idx,
+            heldout_subjects=np.asarray(holdout_subjects),
+            classes=classes,
+            label_names=np.asarray(label_names),
+        )
+        print(f"Saved held-out embeddings: {heldout_path}")
 
-    print("Training logistic regression baseline...")
-    pred_lr, lr_model = train_logistic_regression(X_train, y_train, X_val, seed=args.seed)
-    lr_metrics = {"model": "logistic_regression", **classification_metrics(y_val, pred_lr)}
+    run_linear = args.decoder_type in {"all", "linear"}
+    run_mlp = args.decoder_type in {"all", "mlp"}
+    run_temporal_conv = args.decoder_type in {"all", "temporal_conv"}
+    rows = []
+    predictions = {}
+    test_predictions = {}
+    mlp = None
+    temporal_conv = None
 
-    print("Training MLP condition decoder...")
-    pred_mlp, mlp, mlp_info = train_mlp_classifier(
-        X_train,
-        y_train,
-        X_val,
-        y_val,
-        n_classes=len(classes),
-        hidden_dim=args.mlp_hidden_dim,
-        depth=args.mlp_depth,
-        dropout=args.mlp_dropout,
-        epochs=args.mlp_epochs,
-        batch_size=args.mlp_batch_size,
-        lr=args.mlp_lr,
-        weight_decay=args.mlp_weight_decay,
-        seed=args.seed,
-        device=device,
-    )
-    mlp_metrics = {
-        "model": "mlp",
-        **classification_metrics(y_val, pred_mlp),
-        "best_val_acc": float(mlp_info["best_val_acc"]),
-        "best_val_ce": float(mlp_info["best_val_ce"]),
-    }
+    if run_linear:
+        print("Training logistic regression baseline...")
+        pred_lr, lr_model = train_logistic_regression(X_train, y_train, X_val, seed=args.seed)
+        row = {"model": "logistic_regression", **classification_metrics(y_val, pred_lr)}
+        if X_test is not None and y_test is not None:
+            pred_lr_test = lr_model.predict(X_test)
+            row.update(classification_metrics(y_test, pred_lr_test, prefix="test_"))
+            test_predictions["logistic"] = pred_lr_test
+        rows.append(row)
+        predictions["logistic"] = pred_lr
 
-    rows = [lr_metrics, mlp_metrics]
+    if run_mlp:
+        print("Training MLP condition decoder...")
+        pred_mlp, mlp, mlp_info = train_mlp_classifier(
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            n_classes=len(classes),
+            hidden_dim=args.mlp_hidden_dim,
+            depth=args.mlp_depth,
+            dropout=args.mlp_dropout,
+            epochs=args.mlp_epochs,
+            batch_size=args.mlp_batch_size,
+            lr=args.mlp_lr,
+            weight_decay=args.mlp_weight_decay,
+            seed=args.seed,
+            device=device,
+        )
+        row = {
+            "model": "mlp",
+            **classification_metrics(y_val, pred_mlp),
+            "best_val_acc": float(mlp_info["best_val_acc"]),
+            "best_val_ce": float(mlp_info["best_val_ce"]),
+        }
+        if X_test is not None and y_test is not None:
+            pred_mlp_test = predict_mlp_classifier(mlp, X_test, device)
+            row.update(classification_metrics(y_test, pred_mlp_test, prefix="test_"))
+            test_predictions["mlp"] = pred_mlp_test
+        rows.append(row)
+        predictions["mlp"] = pred_mlp
+
+    if run_temporal_conv:
+        print("Training temporal-conv condition decoder...")
+        pred_conv, temporal_conv, conv_info = train_temporal_conv_classifier(
+            F_train_seq,
+            y_train,
+            F_val_seq,
+            y_val,
+            n_classes=len(classes),
+            hidden_dim=args.conv_hidden_dim,
+            depth=args.conv_depth,
+            kernel_size=args.conv_kernel_size,
+            dropout=conv_dropout,
+            epochs=args.mlp_epochs,
+            batch_size=args.mlp_batch_size,
+            lr=args.mlp_lr,
+            weight_decay=args.mlp_weight_decay,
+            seed=args.seed,
+            device=device,
+        )
+        row = {
+            "model": "temporal_conv",
+            **classification_metrics(y_val, pred_conv),
+            "best_val_acc": float(conv_info["best_val_acc"]),
+            "best_val_ce": float(conv_info["best_val_ce"]),
+        }
+        if F_test_seq is not None and y_test is not None:
+            pred_conv_test = predict_temporal_conv_classifier(temporal_conv, F_test_seq, device)
+            row.update(classification_metrics(y_test, pred_conv_test, prefix="test_"))
+            test_predictions["temporal_conv"] = pred_conv_test
+        rows.append(row)
+        predictions["temporal_conv"] = pred_conv
+
     save_metrics(out_dir, rows)
     plot_confusions(
         out_dir,
         y_val,
-        {"logistic": pred_lr, "mlp": pred_mlp},
+        predictions,
         labels=np.arange(len(classes)),
         label_names=label_names,
     )
+    if y_test is not None and test_predictions:
+        plot_confusions(
+            out_dir,
+            y_test,
+            test_predictions,
+            labels=np.arange(len(classes)),
+            label_names=label_names,
+            filename="confusion_matrices_holdout.png",
+        )
 
     torch.save(
         {
-            "mlp_state_dict": mlp.state_dict(),
+            "mlp_state_dict": mlp.state_dict() if mlp is not None else None,
+            "temporal_conv_state_dict": temporal_conv.state_dict() if temporal_conv is not None else None,
             "args": vars(args),
+            "resolved_conv_dropout": conv_dropout,
             "checkpoint_run_dir": run_dir,
             "checkpoint_epoch": ckpt.get("epoch"),
             "classes": classes,
             "label_names": label_names,
+            "train_indices": train_idx,
+            "val_indices": val_idx,
+            "holdout_indices": holdout_idx,
+            "trainval_subjects": np.asarray(trainval_subjects) if trainval_subjects is not None else None,
+            "holdout_subjects": np.asarray(holdout_subjects) if holdout_subjects is not None else None,
             "embedding_mean": emb_mean,
             "feature_mean": feature_mean,
             "feature_std": feature_std,
+            "seq_feature_mean": seq_feature_mean,
+            "seq_feature_std": seq_feature_std,
             "config": asdict(cfg),
             "metrics": rows,
         },
         os.path.join(out_dir, "mlp_condition_decoder.pt"),
     )
-    print(f"Saved MLP decoder: {os.path.join(out_dir, 'mlp_condition_decoder.pt')}")
+    print(f"Saved decoder checkpoint: {os.path.join(out_dir, 'mlp_condition_decoder.pt')}")
 
     print()
     print("Validation metrics:")
     for row in rows:
-        print(
+        msg = (
             f"  {row['model']:<20} "
             f"acc={row['accuracy']:.1%}  "
             f"balanced_acc={row['balanced_accuracy']:.1%}  "
             f"macro_f1={row['macro_f1']:.3f}"
         )
+        if "test_accuracy" in row:
+            msg += (
+                f"  |  heldout_test_acc={row['test_accuracy']:.1%}  "
+                f"test_balanced_acc={row['test_balanced_accuracy']:.1%}  "
+                f"test_macro_f1={row['test_macro_f1']:.3f}"
+            )
+        print(msg)
 
 
 if __name__ == "__main__":

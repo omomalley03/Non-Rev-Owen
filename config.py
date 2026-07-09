@@ -20,6 +20,13 @@ def _env_str(name: str, default: str) -> str:
     return default if value is None or value == "" else value
 
 
+def _env_float_tuple(name: str, default: tuple = ()) -> tuple:
+    value = os.environ.get(name)
+    if value is None or value.strip() == "":
+        return default
+    return tuple(float(part.strip()) for part in value.split(",") if part.strip())
+
+
 def _fmt(x):
     """Format a float for use in a filename (e.g. 1e-3 → '1e-3', 0.1 → '0.1')."""
     s = f"{x:.0e}" if x != 0 and (abs(x) < 0.01 or abs(x) >= 1000) else str(x)
@@ -64,6 +71,8 @@ class Config:
     synth_subjects_path: str = _env_str("SYNTH_SUBJECTS_PATH", "")
     synth_subject_count: int = _env_int("SYNTH_SUBJECT_COUNT", 0)           # 0 = all subjects
     synth_subject_ids: str = _env_str("SYNTH_SUBJECT_IDS", "")             # comma-separated explicit subject ids
+    synth_holdout_subject_count: int = _env_int("SYNTH_HOLDOUT_SUBJECT_COUNT", 0)  # excluded from train/val
+    synth_holdout_subject_ids: str = _env_str("SYNTH_HOLDOUT_SUBJECT_IDS", "")     # explicit held-out subjects
     synth_viz_max_trials: int = _env_int("SYNTH_VIZ_MAX_TRIALS", 64)
     synth_viz_max_timepoints: int = _env_int("SYNTH_VIZ_MAX_TIMEPOINTS", 400)
     synth_viz_participant_mode: str = _env_str("SYNTH_VIZ_PARTICIPANT_MODE", "top_zeta")  # top_zeta or random
@@ -92,6 +101,7 @@ class Config:
     lambda_start_frac: float = _env_float("LAMBDA_START_FRAC", 1.0)       # linear lambda warm-up: fraction of full lambda at epoch 1,
                                          # ramping linearly to 1.0 (full lambda) at the final epoch.
                                          # 1.0 = no warm-up (full lambda throughout)
+    val_s_checkpoint_thresholds: tuple = _env_float_tuple("VAL_S_CHECKPOINTS", ())
 
     s_objective: str = _env_str("S_OBJECTIVE", "mean")      # "sum" keeps old -S; "softmin" focuses the weakest plane
     s_softmin_tau: float = _env_float("S_SOFTMIN_TAU", 0.05)          # lower values focus harder on the weakest plane
@@ -134,6 +144,7 @@ class Config:
                          "synth_preprocess", "eeg_fs", "eeg_bands",
                          "synth_noise_std", "synth_max_trials", "synth_split",
                          "synth_labels_path", "synth_subjects_path", "synth_subject_count", "synth_subject_ids",
+                         "synth_holdout_subject_count", "synth_holdout_subject_ids",
                          "synth_viz_max_trials", "synth_viz_max_timepoints",
                          "synth_viz_participant_mode", "synth_viz_participant_count"],
             "model":    ["d", "hidden_dim", "depth", "dropout",
@@ -142,7 +153,8 @@ class Config:
             "training": ["batch_size", "epochs", "lr", "weight_decay",
                          "lambda_xp", "lambda_bt", "lambda_plane_bt",
                          "lambda_block_cca", "lambda_start_frac",
-                         "s_objective", "s_softmin_tau", "block_cca_eps"],
+                         "s_objective", "s_softmin_tau", "block_cca_eps",
+                         "val_s_checkpoint_thresholds"],
             "scheduler":["T_0", "T_mult"],
         }
         name_to_val = {f.name: getattr(self, f.name) for f in fields}

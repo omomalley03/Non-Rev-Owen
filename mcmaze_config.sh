@@ -59,6 +59,7 @@ export LAMBDA_BLOCK_CCA="1.0"
 export LAMBDA_START_FRAC="1.0"
 export S_OBJECTIVE="mean"
 export S_SOFTMIN_TAU="0.05"
+export VAL_S_CHECKPOINTS="0.1,0.2,0.3,0.4,0.5,0.6"
 export T_0="10"
 export T_MULT="2"
 
