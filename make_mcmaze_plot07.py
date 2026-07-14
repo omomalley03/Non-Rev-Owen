@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 
 from config import Config
 from data import gaussian_smooth, load_mcmaze_cached, make_windows, soft_normalize, train_val_split
-from model import MLP
+from model import MLP, infer_multiscale_symmetric_conv_layers
 from visualize import plot_covariance_heatmap
 
 
@@ -49,6 +49,10 @@ def make_plot07(run_dir: Path) -> Path:
         temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31),
         temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
         residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+        multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
+            ckpt["model_state_dict"],
+            getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+        ),
     )
     model.load_state_dict(ckpt["model_state_dict"])
     model = model.cpu().eval()

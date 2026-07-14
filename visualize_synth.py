@@ -36,7 +36,7 @@ from torch.utils.data import DataLoader, TensorDataset, random_split, Subset
 
 from config import Config
 from paths import SYNTH_RUNS_DIR
-from model import MLP
+from model import MLP, infer_multiscale_symmetric_conv_layers
 from loss import S_ratio as compute_S_ratio, _batch_rms_normalize, _whiten_2d, _plane_samples
 from synth_data import load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
 
@@ -953,7 +953,13 @@ def plot_condition_means_all_trials(
     counts = [int((labels == label).sum()) for label in present_labels]
     handles = _condition_legend_handles(present_labels)
     if handles:
-        fig.legend(handles=handles, loc="lower center", ncol=min(4, len(handles)), fontsize=8)
+        fig.legend(
+            handles=handles,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.02),
+            ncol=min(4, len(handles)),
+            fontsize=8,
+        )
     zeta_text = f"  (ζ = {s_ratio:.2f})" if np.isfinite(s_ratio) else ""
     fig.suptitle(
         f"Validation condition-averaged embedding trajectories{zeta_text}\n"
@@ -961,7 +967,7 @@ def plot_condition_means_all_trials(
         + ", ".join(f"{_condition_name(label)}={count}" for label, count in zip(present_labels, counts)),
         fontsize=11,
     )
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.12 if handles else 0.03, 1, 0.93))
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {out_path}")
@@ -1026,7 +1032,7 @@ def make_diagnostic_plots_synth(
     with torch.no_grad():
         F_hat_t = model(val_tensor.to(device))
         F_hat_t = F_hat_t - F_hat_t.mean(dim=cfg.F_mean_axis, keepdim=True)
-        s_ratio_val = compute_S_ratio(F_hat_t).item()
+        s_ratio_val = compute_S_ratio(_batch_rms_normalize(F_hat_t)).item()
         F_hat_t = F_hat_t.cpu()
         F_hat = F_hat_t.numpy()          # (K, d, T)
 
@@ -1229,6 +1235,10 @@ def main():
         temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31),
         temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
         residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+        multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
+            ckpt["model_state_dict"],
+            getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+        ),
     )
     model.load_state_dict(ckpt["model_state_dict"])
 

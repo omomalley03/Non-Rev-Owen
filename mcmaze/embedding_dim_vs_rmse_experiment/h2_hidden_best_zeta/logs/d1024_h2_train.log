@@ -1,0 +1,33 @@
+Run directory: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260713_092447_d1024_h2_dep2_bs64_ep80_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1
+Loading MC_Maze data …
+  Channels: 137  |  Bin width: 10 ms  |  Trials: 2295
+  Gaussian smoothing sigma: 10.0 ms = 1 bins
+  Soft-normalising per neuron (method='churchland')
+Windowing (trial_aligned, align=move_onset_time, pre=200ms, T=90) …
+  Windows shape: (2295, 137, 90)  (K, N, T)
+  Train: 1721  |  Val: 574  (dataset split column)
+Model parameters: 20,340
+
+Starting training for 80 epochs …
+
+Epoch   1/80  train loss=0.4769  val loss=-0.0000  S[mean]=0.0000  ζ=0.0000  reg=0.0000  λscale=1.00  lr=9.76e-04
+Epoch  10/80  train loss=-0.0008  val loss=-0.0000  S[mean]=0.0000  ζ=0.0000  reg=0.0000  λscale=1.00  lr=1.00e-03
+Epoch  20/80  train loss=-0.0140  val loss=-0.0000  S[mean]=0.0000  ζ=0.0000  reg=0.0000  λscale=1.00  lr=5.00e-04
+Epoch  30/80  train loss=-0.0143  val loss=-0.0000  S[mean]=0.0000  ζ=0.0000  reg=0.0000  λscale=1.00  lr=1.00e-03
+Epoch  40/80  train loss=-0.0146  val loss=-0.0000  S[mean]=0.0000  ζ=0.0000  reg=0.0000  λscale=1.00  lr=8.54e-04
+Epoch  50/80  train loss=-0.0150  val loss=-0.0000  S[mean]=0.0000  ζ=0.0000  reg=0.0000  λscale=1.00  lr=5.00e-04
+Epoch  60/80  train loss=-0.0151  val loss=-0.0000  S[mean]=0.0000  ζ=0.0000  reg=0.0000  λscale=1.00  lr=1.46e-04
+Epoch  70/80  train loss=-0.0150  val loss=-0.0000  S[mean]=0.0000  ζ=0.0000  reg=0.0000  λscale=1.00  lr=1.00e-03
+Epoch  80/80  train loss=-0.0150  val loss=-0.0000  S[mean]=0.0000  ζ=0.0000  reg=0.0000  λscale=1.00  lr=9.62e-04
+
+==================================================
+Training complete
+  Final train loss    : -0.0150
+  Best val ζ          : 0.0000
+  Val loss at best ζ  : -0.0000
+  Wall-clock time     : 144.4 s  (2.4 min)
+  Checkpoint          : /home/omo26/Non-Rev-Owen/mcmaze/runs/20260713_092447_d1024_h2_dep2_bs64_ep80_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1/checkpoints/best.pt
+  Loss curve          : '/home/omo26/Non-Rev-Owen/mcmaze/runs/20260713_092447_d1024_h2_dep2_bs64_ep80_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1/outputs/loss_curve.png'
+==================================================
+
+Skipping diagnostic plots because SKIP_DIAGNOSTICS=1.

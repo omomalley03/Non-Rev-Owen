@@ -87,6 +87,7 @@ class Config:
     temporal_kernel_size: int = _env_int("TEMPORAL_KERNEL_SIZE", 61)     # odd; zero-phase 'same' conv (tunable; sweep e.g. 15/31/51)
     temporal_frontend: str = _env_str("TEMPORAL_FRONTEND", "symmetric")  # symmetric, multiscale_symmetric, or residual
     residual_kernels: str = _env_str("RESIDUAL_KERNELS", "3,7,15,31")    # comma-separated odd kernels for multi-scale front-ends
+    multiscale_symmetric_conv_layers: int = _env_int("MULTISCALE_SYMMETRIC_CONV_LAYERS", 1)  # 1 or 2; only for multiscale_symmetric
 
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
@@ -101,7 +102,14 @@ class Config:
     lambda_start_frac: float = _env_float("LAMBDA_START_FRAC", 1.0)       # linear lambda warm-up: fraction of full lambda at epoch 1,
                                          # ramping linearly to 1.0 (full lambda) at the final epoch.
                                          # 1.0 = no warm-up (full lambda throughout)
+    val_checkpoint_metric: str = _env_str("VAL_CHECKPOINT_METRIC", "zeta")  # "zeta" or "s"
+    val_checkpoint_thresholds: tuple = _env_float_tuple("VAL_CHECKPOINTS", ())
+    val_zeta_checkpoint_thresholds: tuple = _env_float_tuple(
+        "VAL_ZETA_CHECKPOINTS",
+        (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+    )
     val_s_checkpoint_thresholds: tuple = _env_float_tuple("VAL_S_CHECKPOINTS", ())
+    checkpoint_every_epochs: int = _env_int("CHECKPOINT_EVERY_EPOCHS", 0)
 
     s_objective: str = _env_str("S_OBJECTIVE", "mean")      # "sum" keeps old -S; "softmin" focuses the weakest plane
     s_softmin_tau: float = _env_float("S_SOFTMIN_TAU", 0.05)          # lower values focus harder on the weakest plane
@@ -149,12 +157,16 @@ class Config:
                          "synth_viz_participant_mode", "synth_viz_participant_count"],
             "model":    ["d", "hidden_dim", "depth", "dropout",
                          "temporal_filters", "temporal_kernel_size",
-                         "temporal_frontend", "residual_kernels"],
+                         "temporal_frontend", "residual_kernels",
+                         "multiscale_symmetric_conv_layers"],
             "training": ["batch_size", "epochs", "lr", "weight_decay",
                          "lambda_xp", "lambda_bt", "lambda_plane_bt",
                          "lambda_block_cca", "lambda_start_frac",
                          "s_objective", "s_softmin_tau", "block_cca_eps",
-                         "val_s_checkpoint_thresholds"],
+                         "val_checkpoint_metric", "val_checkpoint_thresholds",
+                         "val_zeta_checkpoint_thresholds",
+                         "val_s_checkpoint_thresholds",
+                         "checkpoint_every_epochs"],
             "scheduler":["T_0", "T_mult"],
         }
         name_to_val = {f.name: getattr(self, f.name) for f in fields}

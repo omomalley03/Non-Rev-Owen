@@ -1,0 +1,70 @@
+Using run: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260713_091914_d32_h2_dep2_bs64_ep80_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1
+Loaded checkpoint from epoch 47
+Loading MC Maze data and computing neural windows...
+Trials: train=1721 val=574  window=90 bins
+Loading hand velocity and building future targets...
+Target: hand_vel +100 ms (10 bins), units=stored NWB values
+Valid future samples: 206,550/206,550
+Computing frozen hidden features on cuda...
+Decoder samples: train=154,890 val=51,660  features=d2
+Training linear regression decoder...
+Training MLP decoder...
+MLP epoch   1/50  train mse(z)=1.0217  val mse(z)=0.9958
+MLP epoch   2/50  train mse(z)=1.0068  val mse(z)=0.9936
+MLP epoch   3/50  train mse(z)=1.0053  val mse(z)=0.9929
+MLP epoch   4/50  train mse(z)=1.0032  val mse(z)=0.9927
+MLP epoch   5/50  train mse(z)=1.0026  val mse(z)=0.9923
+MLP epoch   6/50  train mse(z)=1.0019  val mse(z)=0.9923
+MLP epoch   7/50  train mse(z)=1.0015  val mse(z)=0.9922
+MLP epoch   8/50  train mse(z)=1.0005  val mse(z)=0.9922
+MLP epoch   9/50  train mse(z)=1.0001  val mse(z)=0.9924
+MLP epoch  10/50  train mse(z)=0.9997  val mse(z)=0.9926
+MLP epoch  11/50  train mse(z)=0.9994  val mse(z)=0.9923
+MLP epoch  12/50  train mse(z)=0.9992  val mse(z)=0.9923
+MLP epoch  13/50  train mse(z)=0.9993  val mse(z)=0.9923
+MLP epoch  14/50  train mse(z)=0.9989  val mse(z)=0.9923
+MLP epoch  15/50  train mse(z)=0.9989  val mse(z)=0.9923
+MLP epoch  16/50  train mse(z)=0.9985  val mse(z)=0.9922
+MLP epoch  17/50  train mse(z)=0.9981  val mse(z)=0.9924
+MLP epoch  18/50  train mse(z)=0.9986  val mse(z)=0.9921
+MLP epoch  19/50  train mse(z)=0.9981  val mse(z)=0.9923
+MLP epoch  20/50  train mse(z)=0.9982  val mse(z)=0.9922
+MLP epoch  21/50  train mse(z)=0.9980  val mse(z)=0.9925
+MLP epoch  22/50  train mse(z)=0.9979  val mse(z)=0.9922
+MLP epoch  23/50  train mse(z)=0.9984  val mse(z)=0.9921
+MLP epoch  24/50  train mse(z)=0.9981  val mse(z)=0.9921
+MLP epoch  25/50  train mse(z)=0.9979  val mse(z)=0.9921
+MLP epoch  26/50  train mse(z)=0.9980  val mse(z)=0.9921
+MLP epoch  27/50  train mse(z)=0.9976  val mse(z)=0.9920
+MLP epoch  28/50  train mse(z)=0.9979  val mse(z)=0.9929
+MLP epoch  29/50  train mse(z)=0.9982  val mse(z)=0.9920
+MLP epoch  30/50  train mse(z)=0.9979  val mse(z)=0.9921
+MLP epoch  31/50  train mse(z)=0.9978  val mse(z)=0.9921
+MLP epoch  32/50  train mse(z)=0.9977  val mse(z)=0.9926
+MLP epoch  33/50  train mse(z)=0.9977  val mse(z)=0.9921
+MLP epoch  34/50  train mse(z)=0.9979  val mse(z)=0.9921
+MLP epoch  35/50  train mse(z)=0.9977  val mse(z)=0.9921
+MLP epoch  36/50  train mse(z)=0.9976  val mse(z)=0.9920
+MLP epoch  37/50  train mse(z)=0.9978  val mse(z)=0.9921
+MLP epoch  38/50  train mse(z)=0.9979  val mse(z)=0.9922
+MLP epoch  39/50  train mse(z)=0.9979  val mse(z)=0.9920
+MLP epoch  40/50  train mse(z)=0.9976  val mse(z)=0.9920
+MLP epoch  41/50  train mse(z)=0.9975  val mse(z)=0.9923
+MLP epoch  42/50  train mse(z)=0.9976  val mse(z)=0.9922
+MLP epoch  43/50  train mse(z)=0.9978  val mse(z)=0.9921
+MLP epoch  44/50  train mse(z)=0.9975  val mse(z)=0.9921
+MLP epoch  45/50  train mse(z)=0.9978  val mse(z)=0.9921
+MLP epoch  46/50  train mse(z)=0.9974  val mse(z)=0.9925
+MLP epoch  47/50  train mse(z)=0.9976  val mse(z)=0.9920
+MLP epoch  48/50  train mse(z)=0.9977  val mse(z)=0.9920
+MLP epoch  49/50  train mse(z)=0.9976  val mse(z)=0.9920
+MLP epoch  50/50  train mse(z)=0.9976  val mse(z)=0.9920
+Saved decoder loss curve: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260713_091914_d32_h2_dep2_bs64_ep80_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1/outputs/velocity_prediction_100ms_hidden/mlp_loss_curve.png
+Saved decoder loss log: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260713_091914_d32_h2_dep2_bs64_ep80_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1/outputs/velocity_prediction_100ms_hidden/mlp_loss_curve.csv
+Saved metrics: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260713_091914_d32_h2_dep2_bs64_ep80_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1/outputs/velocity_prediction_100ms_hidden/metrics.csv
+Skipping decoder prediction scatter because prediction plots are disabled.
+Saved MLP decoder: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260713_091914_d32_h2_dep2_bs64_ep80_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1/outputs/velocity_prediction_100ms_hidden/mlp_decoder.pt
+
+Validation metrics:
+  linear_regression  R2 mean=0.0029  RMSE mean=241.9878  corr x/y=0.065/0.042
+  mlp                R2 mean=0.0032  RMSE mean=241.9576  corr x/y=0.067/0.044

@@ -65,6 +65,24 @@ def S_ratio(F: torch.Tensor) -> torch.Tensor:
     return minus_sum / (plus_sum + 1e-8)
 
 
+def non_reversibility_components(F: torch.Tensor, objective: str = "mean"):
+    """Return scaled C-, scaled C+, and ζ = C-/C+ for a batch.
+
+    With objective="mean", C- matches non_reversibility_S(F, "mean") and C+
+    uses the same scaling, so both are mean-per-plane quantities.
+    """
+    K = F.shape[0]
+    minus_sum, plus_sum = _pair_terms(F)
+    if objective == "mean":
+        scale = 4.0 / K ** 2 / F.shape[1]
+    else:
+        scale = 2.0 / K ** 2
+    c_minus = scale * minus_sum
+    c_plus = scale * plus_sum
+    zeta = minus_sum / (plus_sum + 1e-8)
+    return c_minus, c_plus, zeta
+
+
 def non_reversibility_S(F: torch.Tensor, objective: str = "sum") -> torch.Tensor:
     """
     Unnormalised non-reversibility score S .

@@ -28,7 +28,8 @@ def print_summary(history: dict, cfg: Config):
     print("=" * 50)
     print("Training complete")
     print(f"  Final train loss    : {history['train_loss'][-1]:.4f}")
-    print(f"  Best val loss       : {history['best_val_loss']:.4f}")
+    print(f"  Best val ζ          : {history['best_val_zeta']:.4f}")
+    print(f"  Val loss at best ζ  : {history['best_checkpoint_val_loss']:.4f}")
     print(f"  Wall-clock time     : {history['elapsed_s']:.1f} s  ({history['elapsed_s']/60:.1f} min)")
     print(f"  Checkpoint          : {cfg.ckpt_dir}/best.pt")
     print(f"  Loss curve          : '{cfg.out_dir}/loss_curve.png'")
@@ -86,6 +87,7 @@ def main():
         temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size,
         temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
         residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+        multiscale_symmetric_conv_layers=getattr(cfg, "multiscale_symmetric_conv_layers", 1),
     )
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
@@ -95,9 +97,19 @@ def main():
 
     print_summary(history, cfg)
 
-    if True:  # os.environ.get("SKIP_DIAGNOSTICS", "").lower() in {"1", "true", "yes"}:
+    if True: #os.environ.get("SKIP_DIAGNOSTICS", "").lower() in {"1", "true", "yes"}:
         print("\nSkipping diagnostic plots because SKIP_DIAGNOSTICS=1.")
     else:
+        best_ckpt_path = os.path.join(cfg.ckpt_dir, "best.pt")
+        if os.path.isfile(best_ckpt_path):
+            ckpt = torch.load(best_ckpt_path, map_location="cpu", weights_only=False)
+            model.load_state_dict(ckpt["model_state_dict"])
+            print(
+                "\nLoaded best checkpoint for diagnostics: "
+                f"epoch={ckpt.get('epoch')} "
+                f"selection={ckpt.get('checkpoint_selection', 'unknown')} "
+                f"val_zeta={ckpt.get('val_zeta', float('nan')):.4f}"
+            )
         print("\nGenerating diagnostic plots …")
         hand_windows = _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s)
         make_diagnostic_plots(

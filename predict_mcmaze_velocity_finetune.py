@@ -27,18 +27,19 @@ from config import Config
 from data import gaussian_smooth, load_mcmaze_cached, make_windows, soft_normalize, train_val_split
 from predict_mcmaze_velocity import (
     VelocityMLP,
-    build_model_from_checkpoint,
-    compute_embeddings,
+    compute_features,
     flatten_samples,
     future_velocity_windows,
     load_hand_velocity_resampled,
     plot_predictions,
     regression_metrics,
     resolve_run_dir,
+    save_decoder_loss_curve,
     save_metrics,
     standardize_train_val,
     train_mlp_decoder,
 )
+from model import MLP, infer_multiscale_symmetric_conv_layers
 
 
 class WindowVelocityDataset(Dataset):
@@ -85,6 +86,47 @@ def maybe_cap_indices(indices, max_count: int, seed: int):
     return sorted(int(i) for i in chosen)
 
 
+def infer_temporal_frontend(cfg: Config, state_dict) -> str:
+    """Infer checkpoint frontend variant so random/pretrained models match."""
+    temporal_frontend = getattr(cfg, "temporal_frontend", "symmetric")
+    if "temporal_conv.weight" in state_dict:
+        return "symmetric"
+    if any(k.startswith("temporal_conv.temporal_branches.0.norm.") for k in state_dict):
+        return "residual"
+    if any(k.startswith("temporal_conv.temporal_branches.0.conv.") for k in state_dict):
+        return "multiscale_symmetric"
+    return temporal_frontend
+
+
+def build_embedder(cfg: Config, state_dict, in_channels: int, init: str):
+    """Build the embedder architecture, optionally loading pretrained weights."""
+    temporal_frontend = infer_temporal_frontend(cfg, state_dict)
+    model = MLP(
+        in_channels=in_channels,
+        d=cfg.d,
+        hidden_dim=cfg.hidden_dim,
+        depth=cfg.depth,
+        dropout=getattr(cfg, "dropout", 0.0),
+        temporal_filters=getattr(cfg, "temporal_filters", 0),
+        temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31),
+        temporal_frontend=temporal_frontend,
+        residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+        multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
+            state_dict,
+            getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+        ),
+    )
+    if init == "pretrained":
+        model.load_state_dict(state_dict)
+    elif init != "random":
+        raise ValueError(f"embedder init must be 'pretrained' or 'random', got {init!r}")
+    return model
+
+
+def clone_state_dict_cpu(model: torch.nn.Module):
+    return {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+
+
 def flatten_batch(F, targets, valid, feature_mean, feature_std, target_mean, target_std):
     """Return standardized decoder inputs/targets for valid samples in a batch."""
     F = (F - feature_mean) / feature_std
@@ -93,6 +135,29 @@ def flatten_batch(F, targets, valid, feature_mean, feature_std, target_mean, tar
     y_flat = y.permute(0, 2, 1).reshape(-1, 2)
     keep = valid.reshape(-1)
     return X_flat[keep], y_flat[keep]
+
+
+def embedder_hidden_features(embedder, windows):
+    """Differentiable penultimate-layer features with the final projection removed."""
+    if len(embedder.net) <= 1 or not isinstance(embedder.net[-1], nn.Linear):
+        raise ValueError("Cannot remove final linear layer: embedder.net does not end with nn.Linear")
+
+    x = windows
+    if embedder.temporal_conv is not None:
+        x = embedder.temporal_conv(x)
+    B, C, T = x.shape
+    x = x.permute(0, 2, 1).reshape(B * T, C)
+    H = embedder.net[:-1](x)
+    hidden_dim = H.shape[1]
+    return H.reshape(B, T, hidden_dim).permute(0, 2, 1)
+
+
+def embedder_features(embedder, windows, feature_layer: str):
+    if feature_layer == "output":
+        return embedder(windows)
+    if feature_layer == "hidden":
+        return embedder_hidden_features(embedder, windows)
+    raise ValueError(f"unknown feature_layer {feature_layer!r}")
 
 
 def train_finetuned_model(
@@ -139,7 +204,7 @@ def train_finetuned_model(
                 windows = windows.to(device)
                 targets = targets.to(device)
                 valid = valid.to(device)
-                F = embedder(windows)
+                F = embedder_features(embedder, windows, args.feature_layer)
                 X_flat, y_flat = flatten_batch(
                     F, targets, valid, feature_mean, feature_std, target_mean, target_std
                 )
@@ -165,7 +230,7 @@ def train_finetuned_model(
             targets = targets.to(device)
             valid = valid.to(device)
             optimizer.zero_grad()
-            F = embedder(windows)
+            F = embedder_features(embedder, windows, args.feature_layer)
             X_flat, y_flat = flatten_batch(
                 F, targets, valid, feature_mean, feature_std, target_mean, target_std
             )
@@ -250,9 +315,15 @@ def main():
     parser.add_argument("--run", default=None, help="Integer rank, explicit run dir, or omit for newest.")
     parser.add_argument("--checkpoint", default=None,
                         help="Checkpoint path/name. Defaults to checkpoints/best.pt under --run.")
+    parser.add_argument("--embedder-init", choices=["pretrained", "random"], default="pretrained",
+                        help="Initialize the embedder from checkpoint weights or random weights with the same architecture.")
+    parser.add_argument("--output-suffix", default=None,
+                        help="Optional suffix for the output directory name.")
     parser.add_argument("--horizon-ms", type=int, default=100)
     parser.add_argument("--velocity-scale", choices=["stored", "si"], default="stored")
     parser.add_argument("--embed-batch-size", type=int, default=256)
+    parser.add_argument("--feature-layer", choices=["output", "hidden"], default="output",
+                        help="Use normal embedder output or remove the final linear layer and decode from hidden features.")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--trial-batch-size", type=int, default=64)
     parser.add_argument("--mlp-hidden-dim", type=int, default=128)
@@ -274,6 +345,7 @@ def main():
         raise FileNotFoundError(f"No checkpoint at {ckpt_path!r}")
     print(f"Using run: {run_dir}")
     print(f"Using checkpoint: {ckpt_path}")
+    print(f"Embedder initialization: {args.embedder_init}")
 
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     cfg: Config = ckpt["config"]
@@ -298,7 +370,13 @@ def main():
         num_workers=0,
     )
 
-    frozen_embedder = build_model_from_checkpoint(cfg, ckpt["model_state_dict"], spikes_raw.shape[0])
+    initial_embedder = build_embedder(
+        cfg,
+        ckpt["model_state_dict"],
+        spikes_raw.shape[0],
+        init=args.embedder_init,
+    )
+    initial_embedder_state = clone_state_dict_cpu(initial_embedder)
     frozen_train_subset = torch.utils.data.Subset(
         torch.utils.data.TensorDataset(torch.from_numpy(windows)),
         train_indices,
@@ -308,20 +386,36 @@ def main():
         val_indices,
     )
 
-    print(f"Computing frozen embeddings on {device} for feature statistics and baseline...")
-    F_train = compute_embeddings(frozen_embedder, frozen_train_subset, args.embed_batch_size, device)
-    F_val = compute_embeddings(frozen_embedder, frozen_val_subset, args.embed_batch_size, device)
+    print(
+        f"Computing {args.embedder_init}-init frozen {args.feature_layer} features "
+        f"on {device} for feature statistics and baseline..."
+    )
+    frozen_embedder = initial_embedder
+    F_train = compute_features(
+        frozen_embedder, frozen_train_subset, args.embed_batch_size, device, args.feature_layer
+    )
+    F_val = compute_features(
+        frozen_embedder, frozen_val_subset, args.embed_batch_size, device, args.feature_layer
+    )
     X_train, y_train = flatten_samples(F_train, targets, valid, train_indices)
     X_val, y_val = flatten_samples(F_val, targets, valid, val_indices)
     X_train_std, X_val_std, feature_mean, feature_std = standardize_train_val(X_train, X_val)
     target_mean = y_train.mean(axis=0, keepdims=True)
     target_std = np.maximum(y_train.std(axis=0, keepdims=True), 1e-6)
-    print(f"Decoder samples: train={len(X_train):,} val={len(X_val):,}  features=d{X_train.shape[1]}")
+    decoder_in_dim = int(X_train.shape[1])
+    print(f"Decoder samples: train={len(X_train):,} val={len(X_val):,}  features=d{decoder_in_dim}")
 
-    out_dir = os.path.join(run_dir, "outputs", f"velocity_prediction_finetune_{args.horizon_ms}ms")
+    feature_suffix = "_hidden" if args.feature_layer == "hidden" else ""
+    if args.output_suffix is not None:
+        out_name = f"velocity_prediction_finetune_{args.output_suffix}_{args.horizon_ms}ms{feature_suffix}"
+    elif args.embedder_init == "random":
+        out_name = f"velocity_prediction_finetune_random_init_{args.horizon_ms}ms{feature_suffix}"
+    else:
+        out_name = f"velocity_prediction_finetune_{args.horizon_ms}ms{feature_suffix}"
+    out_dir = os.path.join(run_dir, "outputs", out_name)
     os.makedirs(out_dir, exist_ok=True)
 
-    print("Training frozen-embedding MLP baseline...")
+    print(f"Training {args.embedder_init}-init frozen-embedding MLP baseline...")
     pred_frozen, frozen_decoder, frozen_info = train_mlp_decoder(
         X_train_std,
         y_train,
@@ -339,14 +433,29 @@ def main():
     )
     frozen_metrics = {
         "model": "frozen_mlp",
+        "embedder_init": args.embedder_init,
+        "feature_layer": args.feature_layer,
+        "feature_dim": decoder_in_dim,
         **regression_metrics(y_val, pred_frozen),
         "best_val_mse_z": float(frozen_info["best_val_mse_z"]),
     }
+    save_decoder_loss_curve(
+        out_dir,
+        frozen_info["history"],
+        stem="frozen_mlp_loss_curve",
+        title=f"{args.embedder_init}-init frozen-embedding MLP decoder loss",
+    )
 
-    print("Fine-tuning embedder + MLP decoder...")
-    finetune_embedder = build_model_from_checkpoint(cfg, ckpt["model_state_dict"], spikes_raw.shape[0])
+    print(f"Fine-tuning {args.embedder_init}-init embedder + MLP decoder...")
+    finetune_embedder = build_embedder(
+        cfg,
+        ckpt["model_state_dict"],
+        spikes_raw.shape[0],
+        init=args.embedder_init,
+    )
+    finetune_embedder.load_state_dict(initial_embedder_state)
     finetune_decoder = VelocityMLP(
-        cfg.d,
+        decoder_in_dim,
         hidden_dim=args.mlp_hidden_dim,
         depth=args.mlp_depth,
         dropout=args.mlp_dropout,
@@ -369,9 +478,18 @@ def main():
     )
     finetuned_metrics = {
         "model": "finetuned_mlp",
+        "embedder_init": args.embedder_init,
+        "feature_layer": args.feature_layer,
+        "feature_dim": decoder_in_dim,
         **regression_metrics(y_val_ft, pred_ft),
         "best_val_mse_z": float(finetune_info["best_val_mse_z"]),
     }
+    save_decoder_loss_curve(
+        out_dir,
+        history,
+        stem="finetuned_mlp_loss_curve",
+        title=f"{args.embedder_init}-init fine-tuned MLP decoder loss",
+    )
 
     rows = [frozen_metrics, finetuned_metrics]
     save_metrics(out_dir, rows)
@@ -395,11 +513,15 @@ def main():
             "checkpoint_epoch": ckpt.get("epoch"),
             "feature_mean": feature_mean,
             "feature_std": feature_std,
+            "feature_layer": args.feature_layer,
+            "feature_dim": decoder_in_dim,
             "target_mean": target_mean,
             "target_std": target_std,
             "velocity_meta": vel_meta,
+            "embedder_init": args.embedder_init,
             "config": asdict(cfg),
             "metrics": rows,
+            "frozen_decoder_history": frozen_info["history"],
             "history": history,
         },
         os.path.join(out_dir, "finetuned_model.pt"),

@@ -40,7 +40,7 @@ from data import (
     soft_normalize,
     train_val_split,
 )
-from model import MLP
+from model import MLP, infer_multiscale_symmetric_conv_layers
 from paths import RUNS_BASE, RUNS_DIR
 
 
@@ -227,6 +227,10 @@ def build_model_from_checkpoint(cfg: Config, state_dict, in_channels: int):
         temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31),
         temporal_frontend=temporal_frontend,
         residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+        multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
+            state_dict,
+            getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+        ),
     )
     model.load_state_dict(state_dict)
     return model
@@ -241,6 +245,37 @@ def compute_embeddings(model, dataset, batch_size: int, device: torch.device):
             F = model(batch.to(device)).cpu().numpy()
             chunks.append(F)
     return np.concatenate(chunks, axis=0).astype(np.float32)
+
+
+def compute_hidden_features(model, dataset, batch_size: int, device: torch.device):
+    """Compute penultimate MLP features by removing the final projection layer."""
+    if len(model.net) <= 1 or not isinstance(model.net[-1], nn.Linear):
+        raise ValueError("Cannot remove final linear layer: model.net does not end with nn.Linear")
+
+    model = model.to(device).eval()
+    hidden_net = model.net[:-1]
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    chunks = []
+    with torch.no_grad():
+        for (batch,) in loader:
+            x = batch.to(device)
+            if model.temporal_conv is not None:
+                x = model.temporal_conv(x)
+            B, C, T = x.shape
+            x = x.permute(0, 2, 1).reshape(B * T, C)
+            H = hidden_net(x)
+            hidden_dim = H.shape[1]
+            H = H.reshape(B, T, hidden_dim).permute(0, 2, 1)
+            chunks.append(H.cpu().numpy())
+    return np.concatenate(chunks, axis=0).astype(np.float32)
+
+
+def compute_features(model, dataset, batch_size: int, device: torch.device, feature_layer: str):
+    if feature_layer == "output":
+        return compute_embeddings(model, dataset, batch_size, device)
+    if feature_layer == "hidden":
+        return compute_hidden_features(model, dataset, batch_size, device)
+    raise ValueError(f"unknown feature_layer {feature_layer!r}")
 
 
 def flatten_samples(F: np.ndarray, targets: np.ndarray, valid: np.ndarray, indices):
@@ -328,6 +363,7 @@ def train_mlp_decoder(
 
     best_loss = float("inf")
     best_state = None
+    history = []
     for epoch in range(1, epochs + 1):
         model.train()
         losses = []
@@ -343,12 +379,14 @@ def train_mlp_decoder(
         model.eval()
         with torch.no_grad():
             val_loss = loss_fn(model(X_val_t), y_val_t).item()
+        train_loss = float(np.mean(losses)) if losses else float("nan")
+        history.append({"epoch": epoch, "train_mse_z": train_loss, "val_mse_z": float(val_loss)})
         if val_loss < best_loss:
             best_loss = val_loss
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         print(
             f"MLP epoch {epoch:3d}/{epochs}  "
-            f"train mse(z)={np.mean(losses):.4f}  val mse(z)={val_loss:.4f}"
+            f"train mse(z)={train_loss:.4f}  val mse(z)={val_loss:.4f}"
         )
 
     model.load_state_dict(best_state)
@@ -356,7 +394,12 @@ def train_mlp_decoder(
     with torch.no_grad():
         pred_z = model(X_val_t).cpu().numpy()
     pred = pred_z * y_std + y_mean
-    return pred, model, {"target_mean": y_mean, "target_std": y_std, "best_val_mse_z": best_loss}
+    return pred, model, {
+        "target_mean": y_mean,
+        "target_std": y_std,
+        "best_val_mse_z": best_loss,
+        "history": history,
+    }
 
 
 def maybe_subsample(X, y, max_samples: int, seed: int):
@@ -379,6 +422,58 @@ def save_metrics(out_dir, rows):
         writer.writeheader()
         writer.writerows(rows)
     print(f"Saved metrics: {path}")
+
+
+def save_decoder_loss_curve(
+    out_dir,
+    history,
+    stem: str = "mlp_loss_curve",
+    title: str = "MLP velocity decoder loss",
+    make_plot: bool = True,
+):
+    if not history:
+        return
+
+    csv_path = os.path.join(out_dir, f"{stem}.csv")
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["epoch", "train_mse_z", "val_mse_z"])
+        writer.writeheader()
+        writer.writerows(history)
+
+    if not make_plot:
+        print(f"Saved decoder loss log: {csv_path}")
+        return
+
+    epochs = [int(row["epoch"]) for row in history]
+    train = [float(row["train_mse_z"]) for row in history]
+    val = [float(row["val_mse_z"]) for row in history]
+
+    fig, ax = plt.subplots(figsize=(5.4, 4.0))
+    ax.plot(epochs, train, label="train MSE (z)", color="steelblue", linewidth=1.8)
+    ax.plot(epochs, val, label="val MSE (z)", color="tomato", linewidth=1.8)
+    best_idx = int(np.nanargmin(val)) if np.isfinite(val).any() else None
+    if best_idx is not None:
+        ax.scatter(
+            [epochs[best_idx]],
+            [val[best_idx]],
+            s=42,
+            color="goldenrod",
+            edgecolors="black",
+            linewidths=0.6,
+            zorder=5,
+            label="best val",
+        )
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("MSE on standardized velocity")
+    ax.set_title(title)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.legend()
+    fig.tight_layout()
+    png_path = os.path.join(out_dir, f"{stem}.png")
+    fig.savefig(png_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved decoder loss curve: {png_path}")
+    print(f"Saved decoder loss log: {csv_path}")
 
 
 def plot_predictions(out_dir, y_true, predictions, max_points: int, seed: int):
@@ -405,6 +500,11 @@ def plot_predictions(out_dir, y_true, predictions, max_points: int, seed: int):
     print(f"Saved plot: {path}")
 
 
+def prediction_plots_disabled(args=None) -> bool:
+    env_disabled = os.environ.get("NONREV_SKIP_PREDICTION_PLOTS", "").lower() in {"1", "true", "yes"}
+    return env_disabled or bool(getattr(args, "disable_plots", False))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", default=None, help="Integer rank, explicit run dir, or omit for newest.")
@@ -412,6 +512,8 @@ def main():
     parser.add_argument("--velocity-scale", choices=["stored", "si"], default="stored",
                         help="Use raw stored NWB values or apply NWB conversion to SI units.")
     parser.add_argument("--embed-batch-size", type=int, default=256)
+    parser.add_argument("--feature-layer", choices=["output", "hidden"], default="output",
+                        help="Use normal embedder output or remove the final linear layer and use hidden features.")
     parser.add_argument("--mlp-hidden-dim", type=int, default=128)
     parser.add_argument("--mlp-depth", type=int, default=2)
     parser.add_argument("--mlp-dropout", type=float, default=0.1)
@@ -422,6 +524,8 @@ def main():
     parser.add_argument("--max-train-samples", type=int, default=0,
                         help="Optional random cap for decoder training samples; 0 uses all.")
     parser.add_argument("--max-plot-points", type=int, default=5000)
+    parser.add_argument("--disable-plots", action="store_true",
+                        help="Skip prediction scatter PNG; decoder loss curve is still written.")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -471,9 +575,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model_from_checkpoint(cfg, ckpt["model_state_dict"], spikes_raw.shape[0])
 
-    print(f"Computing frozen embeddings on {device}...")
-    F_train = compute_embeddings(model, train_ds, args.embed_batch_size, device)
-    F_val = compute_embeddings(model, val_ds, args.embed_batch_size, device)
+    print(f"Computing frozen {args.feature_layer} features on {device}...")
+    F_train = compute_features(model, train_ds, args.embed_batch_size, device, args.feature_layer)
+    F_val = compute_features(model, val_ds, args.embed_batch_size, device, args.feature_layer)
 
     X_train, y_train = flatten_samples(F_train, targets, valid, train_ds.indices)
     X_val, y_val = flatten_samples(F_val, targets, valid, val_ds.indices)
@@ -481,12 +585,20 @@ def main():
     X_train, X_val, feature_mean, feature_std = standardize_train_val(X_train, X_val)
     print(f"Decoder samples: train={len(X_train):,} val={len(X_val):,}  features=d{X_train.shape[1]}")
 
-    out_dir = os.path.join(run_dir, "outputs", f"velocity_prediction_{args.horizon_ms}ms")
+    out_name = f"velocity_prediction_{args.horizon_ms}ms"
+    if args.feature_layer == "hidden":
+        out_name += "_hidden"
+    out_dir = os.path.join(run_dir, "outputs", out_name)
     os.makedirs(out_dir, exist_ok=True)
 
     print("Training linear regression decoder...")
     pred_linear = train_linear_regression(X_train, y_train, X_val)
-    linear_metrics = {"model": "linear_regression", **regression_metrics(y_val, pred_linear)}
+    metric_context = {"feature_layer": args.feature_layer, "feature_dim": int(X_train.shape[1])}
+    linear_metrics = {
+        "model": "linear_regression",
+        **metric_context,
+        **regression_metrics(y_val, pred_linear),
+    }
 
     print("Training MLP decoder...")
     pred_mlp, mlp, mlp_info = train_mlp_decoder(
@@ -506,19 +618,25 @@ def main():
     )
     mlp_metrics = {
         "model": "mlp",
+        **metric_context,
         **regression_metrics(y_val, pred_mlp),
         "best_val_mse_z": float(mlp_info["best_val_mse_z"]),
     }
+    disable_prediction_plot = prediction_plots_disabled(args)
+    save_decoder_loss_curve(out_dir, mlp_info["history"])
 
     rows = [linear_metrics, mlp_metrics]
     save_metrics(out_dir, rows)
-    plot_predictions(
-        out_dir,
-        y_val,
-        {"linear": pred_linear, "mlp": pred_mlp},
-        max_points=args.max_plot_points,
-        seed=args.seed,
-    )
+    if disable_prediction_plot:
+        print("Skipping decoder prediction scatter because prediction plots are disabled.")
+    else:
+        plot_predictions(
+            out_dir,
+            y_val,
+            {"linear": pred_linear, "mlp": pred_mlp},
+            max_points=args.max_plot_points,
+            seed=args.seed,
+        )
 
     torch.save(
         {
@@ -530,6 +648,7 @@ def main():
             "feature_std": feature_std,
             "target_mean": mlp_info["target_mean"],
             "target_std": mlp_info["target_std"],
+            "decoder_history": mlp_info["history"],
             "velocity_meta": vel_meta,
             "config": asdict(cfg),
             "metrics": rows,

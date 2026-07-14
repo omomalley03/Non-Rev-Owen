@@ -42,26 +42,27 @@ export SYNTH_SUBJECT_COUNT="89"
 export SYNTH_SUBJECT_IDS=""   # optional explicit comma-separated IDs; overrides count
 export SYNTH_HOLDOUT_SUBJECT_COUNT="5"  # excluded from embedding train/val and used for decoder test
 export SYNTH_HOLDOUT_SUBJECT_IDS=""     # optional explicit comma-separated held-out IDs
-export SYNTH_VIZ_MAX_TRIALS="1000"
+export SYNTH_VIZ_MAX_TRIALS="1"
 export SYNTH_VIZ_MAX_TIMEPOINTS="1000"
 export SYNTH_VIZ_PARTICIPANT_MODE="top_zeta"  # top_zeta or random
 export SYNTH_VIZ_PARTICIPANT_COUNT="8"
-export VAL_SPLIT="0.1"
+export VAL_SPLIT="0.2"
 
 # Model settings.
-export D="256"
-export HIDDEN_DIM="128"
-export DEPTH="1"
+export D="128"
+export HIDDEN_DIM="256"
+export DEPTH="2"
 export DROPOUT="0.2"
 export TEMPORAL_FRONTEND="multiscale_symmetric"
 export TEMPORAL_FILTERS="4"
-export RESIDUAL_KERNELS="7,15,31,61"
+export MULTISCALE_SYMMETRIC_CONV_LAYERS="1"
+export RESIDUAL_KERNELS="7, 15,31,61"
 export TEMPORAL_KERNEL_SIZE="61"
 
 # Training settings.
 export BATCH_SIZE="128"
-export EPOCHS="200"
-export LR="5e-4"
+export EPOCHS="150"
+export LR="1e-3"
 export WEIGHT_DECAY="1e-4"
 export LAMBDA_XP="0.0"
 export LAMBDA_BT="0.0"

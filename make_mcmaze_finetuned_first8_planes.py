@@ -12,8 +12,9 @@ import torch
 from torch.utils.data import DataLoader
 
 from data import gaussian_smooth, load_mcmaze_cached, make_windows, soft_normalize, train_val_split
-from model import MLP
-from visualize import _get_condition_groups
+from loss import S_ratio as compute_S_ratio, _batch_rms_normalize
+from model import MLP, infer_multiscale_symmetric_conv_layers
+from visualize import _get_condition_groups, _plot_planes_time_coded
 
 
 def _cfg_get(cfg: dict, name: str, default=None):
@@ -60,6 +61,10 @@ def load_finetuned_embeddings(model_path: Path):
         temporal_kernel_size=_cfg_get(cfg, "temporal_kernel_size", 31),
         temporal_frontend=_cfg_get(cfg, "temporal_frontend", "symmetric"),
         residual_kernels=_cfg_get(cfg, "residual_kernels", "3,7,15,31"),
+        multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
+            saved["embedder_state_dict"],
+            _cfg_get(cfg, "multiscale_symmetric_conv_layers", 1),
+        ),
     )
     model.load_state_dict(saved["embedder_state_dict"])
     model.eval()
@@ -69,8 +74,9 @@ def load_finetuned_embeddings(model_path: Path):
         F = model(val_tensor)
         mean_axis = _cfg_get(cfg, "F_mean_axis", (0, 2))
         F = F - F.mean(dim=mean_axis, keepdim=True)
+        zeta = compute_S_ratio(_batch_rms_normalize(F)).item()
 
-    return F.cpu().numpy(), groups, colors
+    return F.cpu().numpy(), groups, colors, zeta
 
 
 def plot_first_planes(F_hat, groups, colors, out_path: Path, n_planes: int = 8):
@@ -104,16 +110,36 @@ def plot_first_planes(F_hat, groups, colors, out_path: Path, n_planes: int = 8):
     plt.close(fig)
 
 
+def first_n_planes_embedding(F_hat: np.ndarray, n_planes: int) -> np.ndarray:
+    """Return an embedding containing only the first n 2D planes."""
+    _, d, _ = F_hat.shape
+    n_planes = min(int(n_planes), d // 2)
+    return F_hat[:, : 2 * n_planes, :]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--time-coded-out",
+        type=Path,
+        default=None,
+        help="Optional output path for the full 02-style time-coded embedding plot.",
+    )
     parser.add_argument("--n-planes", type=int, default=8)
     args = parser.parse_args()
 
-    F_hat, groups, colors = load_finetuned_embeddings(args.model)
+    F_hat, groups, colors, zeta = load_finetuned_embeddings(args.model)
     plot_first_planes(F_hat, groups, colors, args.out, args.n_planes)
+    time_coded_out = args.time_coded_out
+    if time_coded_out is None:
+        time_coded_out = args.out.with_name(f"{args.out.stem}_02_time_coded{args.out.suffix}")
+    time_coded_out.parent.mkdir(parents=True, exist_ok=True)
+    _plot_planes_time_coded(first_n_planes_embedding(F_hat, args.n_planes), groups, zeta, out_path=str(time_coded_out))
     print(args.out)
+    print(time_coded_out)
+    print(f"zeta={zeta:.6f}")
 
 
 if __name__ == "__main__":

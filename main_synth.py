@@ -29,7 +29,8 @@ def print_summary(history: dict, cfg: Config):
     print("=" * 50)
     print("Training complete")
     print(f"  Final train loss    : {history['train_loss'][-1]:.4f}")
-    print(f"  Best val loss       : {history['best_val_loss']:.4f}")
+    print(f"  Best val ζ          : {history['best_val_zeta']:.4f}")
+    print(f"  Val loss at best ζ  : {history['best_checkpoint_val_loss']:.4f}")
     print(f"  Wall-clock time     : {history['elapsed_s']:.1f} s  ({history['elapsed_s']/60:.1f} min)")
     print(f"  Checkpoint          : {cfg.ckpt_dir}/best.pt")
     print(f"  Loss curve          : {cfg.out_dir}/loss_curve.png")
@@ -224,6 +225,7 @@ def main():
         temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size,
         temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
         residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+        multiscale_symmetric_conv_layers=getattr(cfg, "multiscale_symmetric_conv_layers", 1),
     )
     if model.temporal_conv is not None:
         print(model.temporal_conv.weight.shape)
@@ -240,6 +242,16 @@ def main():
     print_summary(history, cfg)
 
     print("\nGenerating synthetic diagnostic plots …")
+    best_ckpt_path = os.path.join(cfg.ckpt_dir, "best.pt")
+    if os.path.isfile(best_ckpt_path):
+        ckpt = torch.load(best_ckpt_path, map_location="cpu", weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
+        print(
+            "Loaded best checkpoint for diagnostics: "
+            f"epoch={ckpt.get('epoch')} "
+            f"selection={ckpt.get('checkpoint_selection', 'unknown')} "
+            f"val_zeta={ckpt.get('val_zeta', float('nan')):.4f}"
+        )
     make_diagnostic_plots_synth(
         model=model,
         val_ds=val_ds,

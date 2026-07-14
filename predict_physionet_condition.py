@@ -20,6 +20,8 @@ Examples
     python predict_physionet_condition.py
     python predict_physionet_condition.py --run 2 --mlp-epochs 100
     python predict_physionet_condition.py --decoder-split random
+    python predict_physionet_condition.py --run 2 --feature-layer hidden
+    python predict_physionet_condition.py --run 2 --embedder-init random --feature-layer hidden
 """
 
 from __future__ import annotations
@@ -40,7 +42,7 @@ from sklearn.metrics import accuracy_score, balanced_accuracy_score, confusion_m
 from torch.utils.data import DataLoader
 
 from config import Config
-from model import MLP
+from model import MLP, infer_multiscale_symmetric_conv_layers
 from paths import RUNS_BASE, SYNTH_RUNS_DIR
 from synth_data import load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
 from visualize_synth import _dataset_source_indices, train_val_split_synth
@@ -173,7 +175,7 @@ def resolve_run_dir(arg_run):
     return os.path.abspath(arg_run)
 
 
-def build_model_from_checkpoint(cfg: Config, state_dict, in_channels: int):
+def build_model_from_checkpoint(cfg: Config, state_dict, in_channels: int, init: str = "pretrained"):
     temporal_frontend = getattr(cfg, "temporal_frontend", "symmetric")
     if "temporal_conv.weight" in state_dict:
         temporal_frontend = "symmetric"
@@ -192,8 +194,15 @@ def build_model_from_checkpoint(cfg: Config, state_dict, in_channels: int):
         temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31),
         temporal_frontend=temporal_frontend,
         residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+        multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
+            state_dict,
+            getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+        ),
     )
-    model.load_state_dict(state_dict)
+    if init == "pretrained":
+        model.load_state_dict(state_dict)
+    elif init != "random":
+        raise ValueError(f"embedder init must be 'pretrained' or 'random', got {init!r}")
     return model
 
 
@@ -205,6 +214,37 @@ def compute_embeddings(model, dataset, batch_size: int, device: torch.device) ->
         for (batch,) in loader:
             chunks.append(model(batch.to(device)).cpu())
     return torch.cat(chunks, dim=0).numpy().astype(np.float32)
+
+
+def compute_hidden_features(model, dataset, batch_size: int, device: torch.device) -> np.ndarray:
+    """Compute penultimate MLP features by removing the final projection layer."""
+    if len(model.net) <= 1 or not isinstance(model.net[-1], nn.Linear):
+        raise ValueError("Cannot remove final linear layer: model.net does not end with nn.Linear")
+
+    model = model.to(device).eval()
+    hidden_net = model.net[:-1]
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    chunks = []
+    with torch.no_grad():
+        for (batch,) in loader:
+            x = batch.to(device)
+            if model.temporal_conv is not None:
+                x = model.temporal_conv(x)
+            B, C, T = x.shape
+            x = x.permute(0, 2, 1).reshape(B * T, C)
+            H = hidden_net(x)
+            hidden_dim = H.shape[1]
+            H = H.reshape(B, T, hidden_dim).permute(0, 2, 1)
+            chunks.append(H.cpu())
+    return torch.cat(chunks, dim=0).numpy().astype(np.float32)
+
+
+def compute_features(model, dataset, batch_size: int, device: torch.device, feature_layer: str) -> np.ndarray:
+    if feature_layer == "output":
+        return compute_embeddings(model, dataset, batch_size, device)
+    if feature_layer == "hidden":
+        return compute_hidden_features(model, dataset, batch_size, device)
+    raise ValueError(f"unknown feature_layer {feature_layer!r}")
 
 
 def trajectory_features(F_train: np.ndarray, F_val: np.ndarray, standardize: bool):
@@ -507,9 +547,13 @@ def main():
     parser.add_argument("--data", default=None, help="Override synthetic data .npy path from checkpoint config.")
     parser.add_argument("--decoder-split", choices=["checkpoint", "random", "subject_random"], default="checkpoint",
                         help="Split for the decoder. 'checkpoint' uses cfg.synth_split.")
+    parser.add_argument("--embedder-init", choices=["pretrained", "random"], default="pretrained",
+                        help="Initialize the frozen embedder from checkpoint weights or random weights with the same architecture.")
     parser.add_argument("--decoder-type", choices=["all", "linear", "mlp", "temporal_conv"], default="all",
                         help="Which downstream condition decoder(s) to train.")
     parser.add_argument("--embed-batch-size", type=int, default=256)
+    parser.add_argument("--feature-layer", choices=["output", "hidden"], default="output",
+                        help="Use normal embedder output or remove the final linear layer and decode from hidden features.")
     parser.add_argument("--mlp-hidden-dim", type=int, default=256)
     parser.add_argument("--mlp-depth", type=int, default=2)
     parser.add_argument("--mlp-dropout", type=float, default=0.2)
@@ -546,6 +590,7 @@ def main():
     if not os.path.isfile(ckpt_path):
         raise FileNotFoundError(f"No checkpoint at {ckpt_path!r}")
     print(f"Using run: {run_dir}")
+    print(f"Embedder initialization: {args.embedder_init}")
 
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     cfg: Config = ckpt["config"]
@@ -619,11 +664,20 @@ def main():
     print(f"Classes: {dict(zip(label_names, np.bincount(y_train, minlength=len(classes)).tolist()))} train")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    embedder = build_model_from_checkpoint(cfg, ckpt["model_state_dict"], windows.shape[1])
-    print(f"Computing frozen embeddings on {device}...")
-    F_train = compute_embeddings(embedder, train_ds, args.embed_batch_size, device)
-    F_val = compute_embeddings(embedder, val_ds, args.embed_batch_size, device)
-    F_test = compute_embeddings(embedder, holdout_ds, args.embed_batch_size, device) if holdout_ds is not None else None
+    embedder = build_model_from_checkpoint(
+        cfg,
+        ckpt["model_state_dict"],
+        windows.shape[1],
+        init=args.embedder_init,
+    )
+    print(f"Computing {args.embedder_init}-init frozen {args.feature_layer} features on {device}...")
+    F_train = compute_features(embedder, train_ds, args.embed_batch_size, device, args.feature_layer)
+    F_val = compute_features(embedder, val_ds, args.embed_batch_size, device, args.feature_layer)
+    F_test = (
+        compute_features(embedder, holdout_ds, args.embed_batch_size, device, args.feature_layer)
+        if holdout_ds is not None
+        else None
+    )
     X_train, X_val, emb_mean, feature_mean, feature_std = trajectory_features(
         F_train,
         F_val,
@@ -645,12 +699,23 @@ def main():
         if F_test is not None
         else None
     )
-    print(f"Decoder features: train={X_train.shape} val={X_val.shape}  raw embedding={F_train.shape[1:]} per trial")
+    feature_context = {
+        "embedder_init": args.embedder_init,
+        "feature_layer": args.feature_layer,
+        "feature_dim": int(F_train.shape[1]),
+        "flat_feature_dim": int(X_train.shape[1]),
+    }
+    print(f"Decoder features: train={X_train.shape} val={X_val.shape}  raw features={F_train.shape[1:]} per trial")
     print(f"Temporal-conv features: train={F_train_seq.shape} val={F_val_seq.shape}")
     if X_test is not None and F_test_seq is not None:
         print(f"Held-out test features: flat={X_test.shape} temporal={F_test_seq.shape}")
 
-    out_dir = os.path.join(run_dir, "outputs", "condition_prediction")
+    out_name = "condition_prediction"
+    if args.embedder_init == "random":
+        out_name += "_random_init"
+    if args.feature_layer == "hidden":
+        out_name += "_hidden"
+    out_dir = os.path.join(run_dir, "outputs", out_name)
     os.makedirs(out_dir, exist_ok=True)
     if F_test is not None:
         heldout_path = os.path.join(out_dir, "heldout_embeddings.npz")
@@ -663,6 +728,9 @@ def main():
             heldout_subjects=np.asarray(holdout_subjects),
             classes=classes,
             label_names=np.asarray(label_names),
+            embedder_init=np.asarray(args.embedder_init),
+            feature_layer=np.asarray(args.feature_layer),
+            feature_dim=np.asarray(int(F_test.shape[1])),
         )
         print(f"Saved held-out embeddings: {heldout_path}")
 
@@ -678,7 +746,11 @@ def main():
     if run_linear:
         print("Training logistic regression baseline...")
         pred_lr, lr_model = train_logistic_regression(X_train, y_train, X_val, seed=args.seed)
-        row = {"model": "logistic_regression", **classification_metrics(y_val, pred_lr)}
+        row = {
+            "model": "logistic_regression",
+            **feature_context,
+            **classification_metrics(y_val, pred_lr),
+        }
         if X_test is not None and y_test is not None:
             pred_lr_test = lr_model.predict(X_test)
             row.update(classification_metrics(y_test, pred_lr_test, prefix="test_"))
@@ -706,6 +778,7 @@ def main():
         )
         row = {
             "model": "mlp",
+            **feature_context,
             **classification_metrics(y_val, pred_mlp),
             "best_val_acc": float(mlp_info["best_val_acc"]),
             "best_val_ce": float(mlp_info["best_val_ce"]),
@@ -738,6 +811,7 @@ def main():
         )
         row = {
             "model": "temporal_conv",
+            **feature_context,
             **classification_metrics(y_val, pred_conv),
             "best_val_acc": float(conv_info["best_val_acc"]),
             "best_val_ce": float(conv_info["best_val_ce"]),
@@ -775,6 +849,7 @@ def main():
             "resolved_conv_dropout": conv_dropout,
             "checkpoint_run_dir": run_dir,
             "checkpoint_epoch": ckpt.get("epoch"),
+            "embedder_init": args.embedder_init,
             "classes": classes,
             "label_names": label_names,
             "train_indices": train_idx,
@@ -783,6 +858,9 @@ def main():
             "trainval_subjects": np.asarray(trainval_subjects) if trainval_subjects is not None else None,
             "holdout_subjects": np.asarray(holdout_subjects) if holdout_subjects is not None else None,
             "embedding_mean": emb_mean,
+            "feature_layer": args.feature_layer,
+            "feature_dim": int(F_train.shape[1]),
+            "flat_feature_dim": int(X_train.shape[1]),
             "feature_mean": feature_mean,
             "feature_std": feature_std,
             "seq_feature_mean": seq_feature_mean,
