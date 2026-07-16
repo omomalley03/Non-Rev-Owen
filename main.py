@@ -97,7 +97,7 @@ def main():
 
     print_summary(history, cfg)
 
-    if True: #os.environ.get("SKIP_DIAGNOSTICS", "").lower() in {"1", "true", "yes"}:
+    if os.environ.get("SKIP_DIAGNOSTICS", "").lower() in {"1", "true", "yes"}:
         print("\nSkipping diagnostic plots because SKIP_DIAGNOSTICS=1.")
     else:
         best_ckpt_path = os.path.join(cfg.ckpt_dir, "best.pt")

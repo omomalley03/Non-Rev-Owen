@@ -1,0 +1,39 @@
+Epoch   1/30  train loss=0.0052  val loss=-0.0031  S[mean]=0.0131  ζ=0.1646  reg=0.0100  λscale=1.00  lr=9.76e-04
+Saved val-ζ checkpoint val_zeta_0.1.pt: threshold=0.1 epoch=1 val_zeta=0.1646
+Saved val-ζ checkpoint val_zeta_0.2.pt: threshold=0.2 epoch=5 val_zeta=0.2039
+Epoch  10/30  train loss=-0.0077  val loss=-0.0120  S[mean]=0.0143  ζ=0.2104  reg=0.0024  λscale=1.00  lr=1.00e-03
+Epoch  20/30  train loss=-0.0150  val loss=-0.0245  S[mean]=0.0279  ζ=0.2657  reg=0.0034  λscale=1.00  lr=5.00e-04
+Epoch  30/30  train loss=-0.0217  val loss=-0.0279  S[mean]=0.0327  ζ=0.2638  reg=0.0049  λscale=1.00  lr=1.00e-03
+{
+  "attempt": 15,
+  "batch_size": 128,
+  "best_val_c_plus": 0.11117710918188095,
+  "best_val_epoch": 22,
+  "best_val_s": 0.030103379860520363,
+  "best_val_zeta": 0.2669675312936306,
+  "candidate": {
+    "conv_layers": 1,
+    "depth": 2,
+    "kernels": "3,7,15,31,63",
+    "lr": "1e-3",
+    "temporal_filters": 16
+  },
+  "conv_layers": 1,
+  "d": 128,
+  "depth": 2,
+  "elapsed_s": 43.727885246276855,
+  "eligible_trials": 2094,
+  "epochs": 30,
+  "final_val_c_plus": 0.12229792959988117,
+  "final_val_s": 0.03273822506889701,
+  "final_val_zeta": 0.2638261877000332,
+  "hidden_dim": 256,
+  "holdout_trials": 0,
+  "kernels": "3,7,15,31,63",
+  "lambda_block_cca": 1.0,
+  "lr": 0.001,
+  "n_train": 1676,
+  "n_val": 418,
+  "run_dir": "/home/omo26/Non-Rev-Owen/physionetmi/multiscale_symmetric_sweep_23subj/runs/15_tf16_k3-7-15-31-63_cl1_dep2_lr0.001",
+  "temporal_filters": 16
+}

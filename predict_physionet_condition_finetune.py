@@ -775,7 +775,7 @@ def main():
                         help="Differentiable condition decoder to train and fine-tune jointly with the embedder.")
     parser.add_argument("--output-suffix", default=None,
                         help="Optional suffix for the output directory name.")
-    parser.add_argument("--embed-batch-size", type=int, default=256)
+    parser.add_argument("--embed-batch-size", type=int, default=128)
     parser.add_argument("--epochs", type=int, default=50, help="Joint fine-tuning epochs.")
     parser.add_argument("--frozen-epochs", type=int, default=0,
                         help="Frozen decoder baseline epochs. Default 0 reuses --epochs.")
@@ -785,12 +785,12 @@ def main():
     parser.add_argument("--mlp-dropout", type=float, default=0.2)
     parser.add_argument("--conv-hidden-dim", type=int, default=128)
     parser.add_argument("--conv-depth", type=int, default=2)
-    parser.add_argument("--conv-kernel-size", type=int, default=31)
-    parser.add_argument("--conv-dropout", type=float, default=None,
+    parser.add_argument("--conv-kernel-size", type=int, default=15)
+    parser.add_argument("--conv-dropout", type=float, default=0.4,
                         help="Temporal-conv dropout. Defaults to --mlp-dropout when omitted.")
-    parser.add_argument("--decoder-lr", type=float, default=1e-3)
+    parser.add_argument("--decoder-lr", type=float, default=3e-4)
     parser.add_argument("--embedder-lr", type=float, default=1e-4)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--weight-decay", type=float, default=1e-3)
     parser.add_argument("--batch-size", type=int, default=128,
                         help="Batch size for the frozen decoder baseline.")
     parser.add_argument("--max-plot-points", type=int, default=5000)

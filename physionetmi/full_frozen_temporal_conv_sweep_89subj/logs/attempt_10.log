@@ -1,0 +1,185 @@
+TemporalConv epoch   1/50  train ce=1.3763 acc=35.0%  val ce=1.2655 acc=44.8%
+TemporalConv epoch   2/50  train ce=1.2463 acc=45.2%  val ce=1.2087 acc=46.6%
+TemporalConv epoch   3/50  train ce=1.1997 acc=48.4%  val ce=1.2395 acc=45.7%
+TemporalConv epoch   4/50  train ce=1.1678 acc=50.4%  val ce=1.1778 acc=47.3%
+TemporalConv epoch   5/50  train ce=1.1335 acc=52.0%  val ce=1.1788 acc=50.5%
+TemporalConv epoch   6/50  train ce=1.1005 acc=54.5%  val ce=1.1355 acc=53.8%
+TemporalConv epoch   7/50  train ce=1.0804 acc=55.0%  val ce=1.1606 acc=50.1%
+TemporalConv epoch   8/50  train ce=1.0583 acc=56.3%  val ce=1.1455 acc=50.3%
+TemporalConv epoch   9/50  train ce=1.0174 acc=57.7%  val ce=1.1433 acc=51.2%
+TemporalConv epoch  10/50  train ce=1.0177 acc=58.0%  val ce=1.1285 acc=53.0%
+TemporalConv epoch  11/50  train ce=0.9847 acc=59.8%  val ce=1.1424 acc=52.3%
+TemporalConv epoch  12/50  train ce=0.9628 acc=60.5%  val ce=1.1416 acc=54.0%
+TemporalConv epoch  13/50  train ce=0.9322 acc=62.2%  val ce=1.1615 acc=52.5%
+TemporalConv epoch  14/50  train ce=0.8962 acc=64.4%  val ce=1.1345 acc=54.6%
+TemporalConv epoch  15/50  train ce=0.8754 acc=65.1%  val ce=1.1393 acc=52.4%
+TemporalConv epoch  16/50  train ce=0.8409 acc=66.5%  val ce=1.1430 acc=54.1%
+TemporalConv epoch  17/50  train ce=0.8127 acc=68.5%  val ce=1.2109 acc=52.3%
+TemporalConv epoch  18/50  train ce=0.7918 acc=68.7%  val ce=1.2341 acc=51.6%
+TemporalConv epoch  19/50  train ce=0.7729 acc=70.4%  val ce=1.1886 acc=54.2%
+TemporalConv epoch  20/50  train ce=0.7351 acc=71.2%  val ce=1.2102 acc=52.6%
+TemporalConv epoch  21/50  train ce=0.6951 acc=73.3%  val ce=1.2174 acc=54.3%
+TemporalConv epoch  22/50  train ce=0.6736 acc=74.3%  val ce=1.2592 acc=52.6%
+TemporalConv epoch  23/50  train ce=0.6463 acc=75.0%  val ce=1.2606 acc=52.5%
+TemporalConv epoch  24/50  train ce=0.6233 acc=75.7%  val ce=1.3579 acc=51.8%
+TemporalConv epoch  25/50  train ce=0.5960 acc=77.1%  val ce=1.3213 acc=51.4%
+TemporalConv epoch  26/50  train ce=0.5401 acc=79.9%  val ce=1.3631 acc=52.8%
+TemporalConv epoch  27/50  train ce=0.5014 acc=81.3%  val ce=1.3891 acc=50.0%
+TemporalConv epoch  28/50  train ce=0.5249 acc=80.1%  val ce=1.3655 acc=50.3%
+TemporalConv epoch  29/50  train ce=0.5011 acc=81.7%  val ce=1.3854 acc=51.8%
+TemporalConv epoch  30/50  train ce=0.4549 acc=84.2%  val ce=1.4525 acc=50.9%
+TemporalConv epoch  31/50  train ce=0.4007 acc=85.8%  val ce=1.5876 acc=52.3%
+TemporalConv epoch  32/50  train ce=0.3913 acc=85.8%  val ce=1.6211 acc=51.7%
+TemporalConv epoch  33/50  train ce=0.4013 acc=85.2%  val ce=1.6269 acc=51.4%
+TemporalConv epoch  34/50  train ce=0.3481 acc=88.3%  val ce=1.6318 acc=51.2%
+TemporalConv epoch  35/50  train ce=0.3349 acc=87.9%  val ce=1.6244 acc=52.2%
+TemporalConv epoch  36/50  train ce=0.2887 acc=90.0%  val ce=1.7700 acc=52.5%
+TemporalConv epoch  37/50  train ce=0.3042 acc=89.6%  val ce=1.6995 acc=52.2%
+TemporalConv epoch  38/50  train ce=0.3063 acc=89.2%  val ce=1.8294 acc=51.6%
+TemporalConv epoch  39/50  train ce=0.2330 acc=92.4%  val ce=1.9139 acc=51.6%
+TemporalConv epoch  40/50  train ce=0.2470 acc=91.4%  val ce=1.9201 acc=49.1%
+TemporalConv epoch  41/50  train ce=0.2387 acc=91.6%  val ce=2.1294 acc=49.8%
+TemporalConv epoch  42/50  train ce=0.2046 acc=93.5%  val ce=2.0706 acc=49.7%
+TemporalConv epoch  43/50  train ce=0.2056 acc=92.9%  val ce=2.0077 acc=51.8%
+TemporalConv epoch  44/50  train ce=0.1611 acc=95.4%  val ce=2.2138 acc=51.5%
+TemporalConv epoch  45/50  train ce=0.1477 acc=95.3%  val ce=2.3991 acc=50.7%
+TemporalConv epoch  46/50  train ce=0.1589 acc=95.1%  val ce=2.2458 acc=52.2%
+TemporalConv epoch  47/50  train ce=0.1316 acc=96.2%  val ce=2.1695 acc=52.2%
+TemporalConv epoch  48/50  train ce=0.1508 acc=95.0%  val ce=2.4276 acc=50.3%
+TemporalConv epoch  49/50  train ce=0.1415 acc=95.8%  val ce=2.3604 acc=50.3%
+TemporalConv epoch  50/50  train ce=0.1286 acc=95.8%  val ce=2.3789 acc=50.9%
+{
+  "attempt": 10,
+  "best_embed_val_epoch": 150,
+  "best_embed_val_zeta": 0.27890753373503685,
+  "conv_layers": 1,
+  "d": 128,
+  "decoder_best_val_acc": 0.546174168586731,
+  "decoder_best_val_ce": 1.1345146894454956,
+  "decoder_depth": 2,
+  "decoder_dropout": 0.3,
+  "decoder_epochs": 50,
+  "decoder_epochs_ran": 50,
+  "decoder_hidden_dim": 128,
+  "decoder_kernel_size": 15,
+  "decoder_lr": 0.001,
+  "decoder_weight_decay": 0.001,
+  "embed_depth": 2,
+  "embed_dropout": 0.2,
+  "embed_epochs": 150,
+  "embed_lr": 0.0001,
+  "feature_layer": "hidden",
+  "filters_per_kernel": 1,
+  "frozen_val_c_plus": 0.046986743807792664,
+  "frozen_val_s": 0.0009276338969357312,
+  "frozen_val_zeta": 0.019742459058761597,
+  "hidden_dim": 256,
+  "holdout_subjects": [
+    3,
+    13,
+    28,
+    33,
+    66
+  ],
+  "kernel_count": 4,
+  "kernels": "7,15,31,61",
+  "lambda_block_cca": 2.0,
+  "n_test": 450,
+  "n_train": 6068,
+  "n_val": 1516,
+  "run_dir": "/home/omo26/Non-Rev-Owen/physionetmi/full_frozen_temporal_conv_sweep_89subj/runs/10_ref_d128_tf4_k7-15-31-61_cl1_ed2_ep150_elr0.0001_lcca2_ch128_cd2_ck15_cdrop0.3",
+  "source_run_dir": "/home/omo26/Non-Rev-Owen/physionetmi/synth_runs/20260714_112036_d128_h256_dep2_bs128_ep150_lr1e-04_lxp0.0_lbt0.0_lcca2.0_sig10.0_s1",
+  "temporal_filters": 4,
+  "test_accuracy": 0.5088888888888888,
+  "test_balanced_accuracy": 0.5096142122594605,
+  "test_macro_f1": 0.5098405607850452,
+  "trainval_subjects": [
+    1,
+    2,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    29,
+    30,
+    31,
+    32,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87,
+    88,
+    89
+  ],
+  "val_accuracy": 0.5461741424802111,
+  "val_balanced_accuracy": 0.5463308074023212,
+  "val_macro_f1": 0.5415595272306979
+}

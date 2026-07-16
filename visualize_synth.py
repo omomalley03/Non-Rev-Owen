@@ -1052,24 +1052,24 @@ def make_diagnostic_plots_synth(
     phasors_raw_plot = _time_downsample(phasors_raw, max_timepoints)
 
     # ── plots ─────────────────────────────────────────────────────────────────
-    _plot_all_trials_time_coded(
-        phasors_raw_plot,
-        title="Raw — time-coded  (top-2 PCA)",
-        xlabel="PC 1", ylabel="PC 2",
-        out_path=os.path.join(out_dir, "01_raw_time_coded.png"),
-    )
-    _plot_planes_time_coded(
-        F_hat_plot, s_ratio_val,
-        out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
-    )
-    _plot_dim_grid(
-        F_hat_plot, s_ratio_val,
-        out_path=os.path.join(out_dir, "03_dim_grid_time_coded.png"),
-    )
-    _plot_planes_participant_hsv(
-        F_hat_plot, val_participant_ids, s_ratio_val,
-        out_path=os.path.join(out_dir, "04_embed_planes_participant_hsv.png"),
-    )
+    # _plot_all_trials_time_coded(
+    #     phasors_raw_plot,
+    #     title="Raw — time-coded  (top-2 PCA)",
+    #     xlabel="PC 1", ylabel="PC 2",
+    #     out_path=os.path.join(out_dir, "01_raw_time_coded.png"),
+    # )
+    # _plot_planes_time_coded(
+    #     F_hat_plot, s_ratio_val,
+    #     out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
+    # )
+    # _plot_dim_grid(
+    #     F_hat_plot, s_ratio_val,
+    #     out_path=os.path.join(out_dir, "03_dim_grid_time_coded.png"),
+    # )
+    # _plot_planes_participant_hsv(
+    #     F_hat_plot, val_participant_ids, s_ratio_val,
+    #     out_path=os.path.join(out_dir, "04_embed_planes_participant_hsv.png"),
+    # )
     if val_labels_plot is not None:
         plot_condition_means_all_trials(
             F_hat_plot,
@@ -1077,15 +1077,15 @@ def make_diagnostic_plots_synth(
             s_ratio_val,
             out_path=os.path.join(out_dir, "18_val_condition_means_all_trials.png"),
         )
-    plot_covariance_heatmap(
-        F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
-    )
-    plot_between_within_variance(
-        F_hat, out_path=os.path.join(out_dir, "08_between_within_variance.png"),
-    )
-    plot_norm_distribution(
-        F_hat, out_path=os.path.join(out_dir, "09_embedding_norm_distribution.png"),
-    )
+    # plot_covariance_heatmap(
+    #     F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
+    # )
+    # plot_between_within_variance(
+    #     F_hat, out_path=os.path.join(out_dir, "08_between_within_variance.png"),
+    # )
+    # plot_norm_distribution(
+    #     F_hat, out_path=os.path.join(out_dir, "09_embedding_norm_distribution.png"),
+    # )
 
     plot_conv_kernels(model=model, out_path=os.path.join(out_dir, "11_conv_kernels.png"))
     if train_ds is not None and subjects is not None:

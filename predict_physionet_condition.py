@@ -432,6 +432,8 @@ def train_temporal_conv_classifier(
     weight_decay: float,
     seed: int,
     device: torch.device,
+    early_stop_epoch=None,
+    early_stop_min_acc=None,
 ):
     torch.manual_seed(seed)
     train_ds = torch.utils.data.TensorDataset(
@@ -489,12 +491,23 @@ def train_temporal_conv_classifier(
             f"train ce={np.mean(losses):.4f} acc={correct / max(total, 1):.1%}  "
             f"val ce={val_loss:.4f} acc={val_acc:.1%}"
         )
+        if (
+            early_stop_epoch is not None
+            and early_stop_min_acc is not None
+            and epoch >= int(early_stop_epoch)
+            and best_acc < float(early_stop_min_acc)
+        ):
+            print(
+                f"TemporalConv early stop at epoch {epoch}: "
+                f"best val acc={best_acc:.1%} below {float(early_stop_min_acc):.1%}"
+            )
+            break
 
     model.load_state_dict(best_state)
     model.eval()
     with torch.no_grad():
         pred = model(F_val_t).argmax(dim=1).cpu().numpy()
-    return pred, model, {"best_val_acc": best_acc, "best_val_ce": best_loss}
+    return pred, model, {"best_val_acc": best_acc, "best_val_ce": best_loss, "epochs_ran": epoch}
 
 
 def predict_temporal_conv_classifier(model: nn.Module, F: np.ndarray, device: torch.device) -> np.ndarray:

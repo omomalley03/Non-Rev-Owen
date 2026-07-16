@@ -1,0 +1,202 @@
+Epoch   1/150  train loss=0.0183  val loss=0.0129  S[mean]=0.0077  ζ=0.1285  reg=0.0206  λscale=1.00  lr=9.76e-05
+Saved val-ζ checkpoint val_zeta_0.1.pt: threshold=0.1 epoch=1 val_zeta=0.1285
+Epoch  10/150  train loss=-0.0066  val loss=-0.0040  S[mean]=0.0080  ζ=0.1586  reg=0.0039  λscale=1.00  lr=1.00e-04
+Epoch  20/150  train loss=-0.0073  val loss=-0.0060  S[mean]=0.0082  ζ=0.1842  reg=0.0021  λscale=1.00  lr=5.00e-05
+Epoch  30/150  train loss=-0.0073  val loss=-0.0061  S[mean]=0.0082  ζ=0.1897  reg=0.0021  λscale=1.00  lr=1.00e-04
+Saved val-ζ checkpoint val_zeta_0.2.pt: threshold=0.2 epoch=34 val_zeta=0.2018
+Epoch  40/150  train loss=-0.0076  val loss=-0.0065  S[mean]=0.0085  ζ=0.2179  reg=0.0020  λscale=1.00  lr=8.54e-05
+Epoch  50/150  train loss=-0.0083  val loss=-0.0074  S[mean]=0.0095  ζ=0.2386  reg=0.0020  λscale=1.00  lr=5.00e-05
+Epoch  60/150  train loss=-0.0086  val loss=-0.0078  S[mean]=0.0097  ζ=0.2464  reg=0.0019  λscale=1.00  lr=1.46e-05
+Epoch  70/150  train loss=-0.0086  val loss=-0.0079  S[mean]=0.0098  ζ=0.2478  reg=0.0019  λscale=1.00  lr=1.00e-04
+Epoch  80/150  train loss=-0.0110  val loss=-0.0116  S[mean]=0.0136  ζ=0.2662  reg=0.0020  λscale=1.00  lr=9.62e-05
+Epoch  90/150  train loss=-0.0176  val loss=-0.0159  S[mean]=0.0213  ζ=0.2758  reg=0.0054  λscale=1.00  lr=8.54e-05
+Epoch 100/150  train loss=-0.0311  val loss=-0.0237  S[mean]=0.0350  ζ=0.2793  reg=0.0113  λscale=1.00  lr=6.91e-05
+Epoch 110/150  train loss=-0.0425  val loss=-0.0333  S[mean]=0.0474  ζ=0.2844  reg=0.0141  λscale=1.00  lr=5.00e-05
+Epoch 120/150  train loss=-0.0422  val loss=-0.0370  S[mean]=0.0507  ζ=0.2896  reg=0.0138  λscale=1.00  lr=3.09e-05
+Epoch 130/150  train loss=-0.0463  val loss=-0.0395  S[mean]=0.0531  ζ=0.2921  reg=0.0136  λscale=1.00  lr=1.46e-05
+Epoch 140/150  train loss=-0.0438  val loss=-0.0412  S[mean]=0.0549  ζ=0.2937  reg=0.0137  λscale=1.00  lr=3.81e-06
+Epoch 150/150  train loss=-0.0475  val loss=-0.0415  S[mean]=0.0553  ζ=0.2939  reg=0.0138  λscale=1.00  lr=1.00e-04
+TemporalConv epoch   1/50  train ce=1.7699 acc=26.6%  val ce=1.3685 acc=28.2%
+TemporalConv epoch   2/50  train ce=1.3671 acc=28.4%  val ce=1.3636 acc=30.6%
+TemporalConv epoch   3/50  train ce=1.3590 acc=30.7%  val ce=1.3558 acc=28.8%
+TemporalConv epoch   4/50  train ce=1.3488 acc=31.3%  val ce=1.3455 acc=31.0%
+TemporalConv epoch   5/50  train ce=1.3387 acc=33.3%  val ce=1.3402 acc=32.9%
+TemporalConv epoch   6/50  train ce=1.3347 acc=33.8%  val ce=1.3328 acc=35.4%
+TemporalConv epoch   7/50  train ce=1.3241 acc=35.4%  val ce=1.3316 acc=36.5%
+TemporalConv epoch   8/50  train ce=1.3129 acc=35.5%  val ce=1.3296 acc=35.1%
+TemporalConv epoch   9/50  train ce=1.3092 acc=35.1%  val ce=1.3253 acc=35.1%
+TemporalConv epoch  10/50  train ce=1.3072 acc=35.5%  val ce=1.3126 acc=35.3%
+TemporalConv epoch  11/50  train ce=1.2958 acc=36.5%  val ce=1.3092 acc=36.1%
+TemporalConv epoch  12/50  train ce=1.2866 acc=36.6%  val ce=1.3333 acc=35.2%
+TemporalConv epoch  13/50  train ce=1.2982 acc=36.3%  val ce=1.3581 acc=33.5%
+TemporalConv epoch  14/50  train ce=1.2845 acc=36.5%  val ce=1.2979 acc=35.5%
+TemporalConv epoch  15/50  train ce=1.2750 acc=37.2%  val ce=1.3013 acc=35.9%
+TemporalConv epoch  16/50  train ce=1.2618 acc=37.7%  val ce=1.3047 acc=35.8%
+TemporalConv epoch  17/50  train ce=1.2641 acc=37.0%  val ce=1.3083 acc=35.0%
+TemporalConv epoch  18/50  train ce=1.2550 acc=38.3%  val ce=1.3057 acc=34.6%
+TemporalConv epoch  19/50  train ce=1.2557 acc=38.2%  val ce=1.3165 acc=34.0%
+TemporalConv epoch  20/50  train ce=1.2350 acc=39.2%  val ce=1.3006 acc=34.7%
+TemporalConv epoch  21/50  train ce=1.2304 acc=38.5%  val ce=1.3049 acc=35.6%
+TemporalConv epoch  22/50  train ce=1.2269 acc=39.6%  val ce=1.3084 acc=34.7%
+TemporalConv epoch  23/50  train ce=1.2188 acc=39.9%  val ce=1.3147 acc=34.5%
+TemporalConv epoch  24/50  train ce=1.2146 acc=40.0%  val ce=1.3360 acc=36.5%
+TemporalConv epoch  25/50  train ce=1.1900 acc=41.1%  val ce=1.3446 acc=35.0%
+TemporalConv epoch  26/50  train ce=1.1804 acc=41.6%  val ce=1.3041 acc=36.0%
+TemporalConv epoch  27/50  train ce=1.1745 acc=42.4%  val ce=1.3447 acc=34.6%
+TemporalConv epoch  28/50  train ce=1.1717 acc=41.5%  val ce=1.3177 acc=35.0%
+TemporalConv epoch  29/50  train ce=1.1593 acc=42.7%  val ce=1.3438 acc=35.0%
+TemporalConv epoch  30/50  train ce=1.1451 acc=43.0%  val ce=1.3220 acc=35.5%
+TemporalConv epoch  31/50  train ce=1.1365 acc=44.0%  val ce=1.3855 acc=34.6%
+TemporalConv epoch  32/50  train ce=1.1291 acc=43.3%  val ce=1.3359 acc=34.2%
+TemporalConv epoch  33/50  train ce=1.1232 acc=44.2%  val ce=1.3217 acc=35.4%
+TemporalConv epoch  34/50  train ce=1.1041 acc=45.5%  val ce=1.3574 acc=34.2%
+TemporalConv epoch  35/50  train ce=1.1017 acc=45.1%  val ce=1.3381 acc=35.6%
+TemporalConv epoch  36/50  train ce=1.0926 acc=45.9%  val ce=1.4004 acc=34.5%
+TemporalConv epoch  37/50  train ce=1.0754 acc=46.2%  val ce=1.3616 acc=35.3%
+TemporalConv epoch  38/50  train ce=1.0646 acc=47.4%  val ce=1.4408 acc=35.3%
+TemporalConv epoch  39/50  train ce=1.0536 acc=47.7%  val ce=1.3595 acc=35.8%
+TemporalConv epoch  40/50  train ce=1.0448 acc=48.0%  val ce=1.4230 acc=35.4%
+TemporalConv epoch  41/50  train ce=1.0543 acc=47.1%  val ce=1.4646 acc=35.3%
+TemporalConv epoch  42/50  train ce=1.0443 acc=47.3%  val ce=1.3938 acc=34.4%
+TemporalConv epoch  43/50  train ce=1.0334 acc=48.9%  val ce=1.4746 acc=35.3%
+TemporalConv epoch  44/50  train ce=1.0291 acc=48.2%  val ce=1.4040 acc=34.7%
+TemporalConv epoch  45/50  train ce=1.0015 acc=49.8%  val ce=1.4954 acc=34.7%
+TemporalConv epoch  46/50  train ce=0.9879 acc=51.0%  val ce=1.4816 acc=34.9%
+TemporalConv epoch  47/50  train ce=0.9819 acc=50.7%  val ce=1.5858 acc=34.8%
+TemporalConv epoch  48/50  train ce=0.9599 acc=52.0%  val ce=1.5322 acc=35.7%
+TemporalConv epoch  49/50  train ce=0.9465 acc=53.1%  val ce=1.5324 acc=36.3%
+TemporalConv epoch  50/50  train ce=0.9519 acc=52.9%  val ce=1.5246 acc=37.0%
+{
+  "attempt": 6,
+  "best_embed_val_epoch": 150,
+  "best_embed_val_zeta": 0.2939101668695609,
+  "conv_layers": 1,
+  "d": 128,
+  "decoder_best_val_acc": 0.3700527846813202,
+  "decoder_best_val_ce": 1.52464759349823,
+  "decoder_depth": 2,
+  "decoder_dropout": 0.4,
+  "decoder_epochs": 50,
+  "decoder_hidden_dim": 256,
+  "decoder_kernel_size": 31,
+  "decoder_lr": 0.001,
+  "decoder_weight_decay": 0.001,
+  "embed_depth": 2,
+  "embed_dropout": 0.2,
+  "embed_epochs": 150,
+  "embed_lr": 0.0001,
+  "feature_layer": "hidden",
+  "filters_per_kernel": 2,
+  "frozen_val_c_plus": 0.11537272483110428,
+  "frozen_val_s": 0.0015932884998619556,
+  "frozen_val_zeta": 0.013809923082590103,
+  "hidden_dim": 256,
+  "holdout_subjects": [
+    3,
+    13,
+    28,
+    33,
+    66
+  ],
+  "kernel_count": 4,
+  "kernels": "7,15,31,61",
+  "lambda_block_cca": 2.0,
+  "n_test": 450,
+  "n_train": 6068,
+  "n_val": 1516,
+  "run_dir": "/home/omo26/Non-Rev-Owen/physionetmi/full_frozen_temporal_conv_sweep_89subj/runs/06_train_d128_tf8_k7-15-31-61_cl1_ed2_elr0.0001_lcca2_ch256_cd2_ck31_cdrop0.4",
+  "source_run_dir": "",
+  "temporal_filters": 8,
+  "test_accuracy": 0.35333333333333333,
+  "test_balanced_accuracy": 0.3512636291180924,
+  "test_macro_f1": 0.34090638288914155,
+  "trainval_subjects": [
+    1,
+    2,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    29,
+    30,
+    31,
+    32,
+    34,
+    35,
+    36,
+    37,
+    38,
+    39,
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47,
+    48,
+    49,
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79,
+    80,
+    81,
+    82,
+    83,
+    84,
+    85,
+    86,
+    87,
+    88,
+    89
+  ],
+  "val_accuracy": 0.37005277044854884,
+  "val_balanced_accuracy": 0.3718296497530459,
+  "val_macro_f1": 0.3572594340300313
+}
