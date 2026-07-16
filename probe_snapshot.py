@@ -3,7 +3,7 @@ both (a) reproduces the whole embedding and (b) mixes multiple sources."""
 import os, numpy as np, torch
 from config import Config
 from paths import SYNTH_RUNS_DIR
-from model import MLP
+from model import MLP, infer_multiscale_symmetric_conv_layers
 
 run_dir = sorted([os.path.join(SYNTH_RUNS_DIR, d) for d in os.listdir(SYNTH_RUNS_DIR)
                   if os.path.isfile(os.path.join(SYNTH_RUNS_DIR, d, "checkpoints", "best.pt"))],
@@ -16,8 +16,19 @@ windows = np.transpose(data, (0, 2, 1))
 rng = np.random.default_rng(cfg.seed)
 windows = windows + rng.normal(0, cfg.synth_noise_std, windows.shape).astype(np.float32)
 K, O, T = windows.shape
-model = MLP(O, cfg.d, cfg.hidden_dim, cfg.depth, cfg.dropout)
-model.load_state_dict(ckpt["model_state_dict"]); model.eval()
+state_dict = ckpt["model_state_dict"]
+model = MLP(
+    O, cfg.d, cfg.hidden_dim, cfg.depth, cfg.dropout,
+    temporal_filters=getattr(cfg, "temporal_filters", 0),
+    temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31),
+    temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
+    residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+    multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
+        state_dict,
+        getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+    ),
+)
+model.load_state_dict(state_dict); model.eval()
 
 # (a) per-snapshot test: feed ONE frame repeated T times -> output is constant in time
 one = torch.from_numpy(windows[:, :, 5:6].repeat(T, axis=2))

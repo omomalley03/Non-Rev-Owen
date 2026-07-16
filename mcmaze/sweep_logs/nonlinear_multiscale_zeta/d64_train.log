@@ -1,0 +1,51 @@
+Run directory: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260710_090338_d64_h256_dep2_bs64_ep200_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1
+Loading MC_Maze data …
+  Channels: 137  |  Bin width: 10 ms  |  Trials: 2295
+  Gaussian smoothing sigma: 10.0 ms = 1 bins
+  Soft-normalising per neuron (method='churchland')
+Windowing (trial_aligned, align=move_onset_time, pre=200ms, T=90) …
+  Windows shape: (2295, 137, 90)  (K, N, T)
+  Train: 1721  |  Val: 574  (dataset split column)
+Model parameters: 173,670
+
+Starting training for 200 epochs …
+
+Epoch   1/200  train loss=-0.0188  val loss=-0.0327  S[mean]=0.0371  ζ=0.2097  reg=0.0044  λscale=1.00  lr=9.76e-04
+Saved val-S checkpoint val_s_0.1.pt: threshold=0.1 epoch=2 val_s=0.1002
+Saved val-S checkpoint val_s_0.2.pt: threshold=0.2 epoch=3 val_s=0.2339
+Saved val-S checkpoint val_s_0.3.pt: threshold=0.3 epoch=4 val_s=0.3266
+Saved val-S checkpoint val_s_0.4.pt: threshold=0.4 epoch=5 val_s=0.4090
+Saved val-S checkpoint val_s_0.5.pt: threshold=0.5 epoch=8 val_s=0.5066
+Epoch  10/200  train loss=-0.3793  val loss=-0.4260  S[mean]=0.5195  ζ=0.4075  reg=0.0935  λscale=1.00  lr=1.00e-03
+Saved val-S checkpoint val_s_0.6.pt: threshold=0.6 epoch=12 val_s=0.6229
+Epoch  20/200  train loss=-0.6222  val loss=-0.6764  S[mean]=0.8137  ζ=0.4571  reg=0.1374  λscale=1.00  lr=5.00e-04
+Epoch  30/200  train loss=-0.6568  val loss=-0.6953  S[mean]=0.8301  ζ=0.4566  reg=0.1349  λscale=1.00  lr=1.00e-03
+Epoch  40/200  train loss=-0.7045  val loss=-0.7402  S[mean]=0.8699  ζ=0.4469  reg=0.1298  λscale=1.00  lr=8.54e-04
+Epoch  50/200  train loss=-0.7233  val loss=-0.7570  S[mean]=0.8790  ζ=0.4382  reg=0.1220  λscale=1.00  lr=5.00e-04
+Epoch  60/200  train loss=-0.7340  val loss=-0.7649  S[mean]=0.8826  ζ=0.4348  reg=0.1177  λscale=1.00  lr=1.46e-04
+Epoch  70/200  train loss=-0.7377  val loss=-0.7662  S[mean]=0.8832  ζ=0.4341  reg=0.1170  λscale=1.00  lr=1.00e-03
+Epoch  80/200  train loss=-0.7470  val loss=-0.7749  S[mean]=0.8865  ζ=0.4197  reg=0.1116  λscale=1.00  lr=9.62e-04
+Epoch  90/200  train loss=-0.7567  val loss=-0.7857  S[mean]=0.8901  ζ=0.4088  reg=0.1045  λscale=1.00  lr=8.54e-04
+Epoch 100/200  train loss=-0.7666  val loss=-0.7904  S[mean]=0.8912  ζ=0.4002  reg=0.1009  λscale=1.00  lr=6.91e-04
+Epoch 110/200  train loss=-0.7708  val loss=-0.7970  S[mean]=0.8924  ζ=0.3930  reg=0.0954  λscale=1.00  lr=5.00e-04
+Epoch 120/200  train loss=-0.7767  val loss=-0.8000  S[mean]=0.8935  ζ=0.3883  reg=0.0936  λscale=1.00  lr=3.09e-04
+Epoch 130/200  train loss=-0.7810  val loss=-0.8016  S[mean]=0.8938  ζ=0.3856  reg=0.0922  λscale=1.00  lr=1.46e-04
+Epoch 140/200  train loss=-0.7813  val loss=-0.8024  S[mean]=0.8940  ζ=0.3847  reg=0.0916  λscale=1.00  lr=3.81e-05
+Epoch 150/200  train loss=-0.7817  val loss=-0.8025  S[mean]=0.8940  ζ=0.3845  reg=0.0915  λscale=1.00  lr=1.00e-03
+Epoch 160/200  train loss=-0.7817  val loss=-0.8066  S[mean]=0.8932  ζ=0.3742  reg=0.0866  λscale=1.00  lr=9.90e-04
+Epoch 170/200  train loss=-0.7908  val loss=-0.8100  S[mean]=0.8934  ζ=0.3681  reg=0.0834  λscale=1.00  lr=9.62e-04
+Epoch 180/200  train loss=-0.7928  val loss=-0.8122  S[mean]=0.8926  ζ=0.3631  reg=0.0804  λscale=1.00  lr=9.16e-04
+Epoch 190/200  train loss=-0.7996  val loss=-0.8162  S[mean]=0.8931  ζ=0.3592  reg=0.0769  λscale=1.00  lr=8.54e-04
+Epoch 200/200  train loss=-0.8052  val loss=-0.8184  S[mean]=0.8931  ζ=0.3561  reg=0.0747  λscale=1.00  lr=7.78e-04
+
+==================================================
+Training complete
+  Final train loss    : -0.8052
+  Best val ζ          : 0.4571
+  Val loss at best ζ  : -0.6764
+  Wall-clock time     : 245.9 s  (4.1 min)
+  Checkpoint          : /home/omo26/Non-Rev-Owen/mcmaze/runs/20260710_090338_d64_h256_dep2_bs64_ep200_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1/checkpoints/best.pt
+  Loss curve          : '/home/omo26/Non-Rev-Owen/mcmaze/runs/20260710_090338_d64_h256_dep2_bs64_ep200_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1/outputs/loss_curve.png'
+==================================================
+
+Skipping diagnostic plots because SKIP_DIAGNOSTICS=1.

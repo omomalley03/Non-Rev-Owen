@@ -32,11 +32,16 @@
 #! sbatch directives end here (put any additional directives above this line)
 
 #! ######################################################################################
-#! Redirect data + run outputs to personal scratch (override the macOS defaults in
-#! config.py / paths.py without editing them).
+#! Redirect data + run outputs to personal scratch. Prefer a git-ignored
+#! env.hpc.sh when present; otherwise keep the existing Wilkes3 defaults.
 
-export SYNTH_DATA_PATH="/rds/user/omo26/hpc-work/eeg_data/faced_data.npy"
-export RUNS_BASE="/home/omo26/rds/hpc-work/EEG_NonRev/hpc_runs"
+if [ -f env.hpc.sh ]; then
+        source env.hpc.sh
+else
+        export RUNS_BASE="${RUNS_BASE:-/home/omo26/rds/hpc-work/EEG_NonRev/hpc_runs}"
+        export SYNTH_DATA_PATH="${SYNTH_DATA_PATH:-/rds/user/omo26/hpc-work/eeg_data/faced_data.npy}"
+        export CACHE_DIR="${CACHE_DIR:-$RUNS_BASE/cache}"
+fi
 
 #! ######################################################################################
 
@@ -67,7 +72,7 @@ export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-32}
 
 cd $workdir
 echo -e "Changed directory to `pwd`.\n"
-mkdir -p logs "$RUNS_BASE/synth_runs"
+mkdir -p logs "$RUNS_BASE/synth_runs" "$CACHE_DIR"
 JOBID=$SLURM_JOB_ID
 CMD="$application > logs/out.$JOBID"
 
@@ -77,6 +82,7 @@ echo "Running on master node: `hostname`"
 echo "Current directory: `pwd`"
 echo "SYNTH_DATA_PATH: $SYNTH_DATA_PATH"
 echo "RUNS_BASE:       $RUNS_BASE"
+echo "CACHE_DIR:       $CACHE_DIR"
 
 if [ "$SLURM_JOB_NODELIST" ]; then
         export NODEFILE=`generate_pbs_nodefile`

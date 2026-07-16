@@ -19,6 +19,8 @@ Usage
     python visualize.py --run runs/foo    # explicit path
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 
@@ -33,7 +35,7 @@ from torch.utils.data import DataLoader
 from config import Config
 from paths import RUNS_DIR
 from data import load_mcmaze_cached, gaussian_smooth, make_windows, train_val_split
-from model import MLP
+from model import MLP, infer_multiscale_symmetric_conv_layers
 from loss import S_ratio as compute_S_ratio, _batch_rms_normalize
 
 
@@ -764,9 +766,7 @@ def plot_loss_curve(run_dir: str, cfg: Config) -> None:
                                      by train.py when at least one regularizer
                                      is active; absent for unregularised runs)
 
-    Produces the same multi-panel figure as train.py:
-      panel 0   : val S (non-rev) and total λ·reg over epochs
-      panel 1…N : one panel per active reg showing raw vs λ·reg magnitude
+    Produces the same single-panel training-dynamics figure as train.py.
     """
     import csv as _csv
 
@@ -777,24 +777,28 @@ def plot_loss_curve(run_dir: str, cfg: Config) -> None:
         return
 
     # read log.csv
-    epochs, val_s = [], []
+    epochs, val_s, val_c_plus, val_zeta, val_losses = [], [], [], [], []
     with open(log_path, newline="") as f:
         for row in _csv.DictReader(f):
             epochs.append(int(row["epoch"]))
             val_s.append(float(row["val_s"]))
+            if row.get("val_c_plus") not in (None, ""):
+                val_c_plus.append(float(row["val_c_plus"]))
+            if row.get("val_zeta") not in (None, ""):
+                val_zeta.append(float(row["val_zeta"]))
+            val_losses.append(float(row["val_loss"]))
+    has_c_plus = len(val_c_plus) == len(epochs)
+    has_zeta = len(val_zeta) == len(epochs)
 
     reg_lambdas = {
-        "xp":       cfg.lambda_xp,
-        "Barlow Twins":       cfg.lambda_bt,
+        "xp": cfg.lambda_xp,
+        "bt": cfg.lambda_bt,
         "plane_bt": getattr(cfg, "lambda_plane_bt", 0.0),
-        "":      getattr(cfg, "lambda_block_cca", 0.0),
+        "cca": getattr(cfg, "lambda_block_cca", 0.0),
     }
-    lambda_start = getattr(cfg, "lambda_start_frac", 1.0)
-    # active regs from cfg — this determines the panel count even for old runs
     active_regs = [k for k, v in reg_lambdas.items() if v > 0]
 
     # try to load per-epoch reg data (written by train.py; absent for old runs)
-    reg_raw:    dict[str, list[float]] = {}
     reg_scaled: dict[str, list[float]] = {}
     reg_path = os.path.join(out_dir, "reg_history.csv")
     if os.path.isfile(reg_path):
@@ -803,44 +807,92 @@ def plot_loss_curve(run_dir: str, cfg: Config) -> None:
             csv_regs = [c[4:] for c in (reader.fieldnames or [])
                         if c.startswith("raw_")]
             for k in csv_regs:
-                reg_raw[k], reg_scaled[k] = [], []
+                reg_scaled[k] = []
             for row in reader:
                 for k in csv_regs:
-                    reg_raw[k].append(float(row[f"raw_{k}"]))
                     reg_scaled[k].append(float(row[f"scaled_{k}"]))
-    has_reg_data = bool(reg_raw)
 
-    n_panels = 1 + len(active_regs)
-    fig, axes = plt.subplots(1, n_panels, figsize=(5 * n_panels, 4), squeeze=False)
-    axes = axes[0]
-
-    ax = axes[0]
-    ax.plot(epochs, val_s, label="Mean S per plane", color="steelblue")
-    if has_reg_data:
-        total_scaled = [sum(reg_scaled[k][i] for k in active_regs if k in reg_scaled)
-                        for i in range(len(epochs))]
-        ax.plot(epochs, total_scaled, label="total λ·reg", color="tomato")
+    fig, ax = plt.subplots(figsize=(5.6, 4))
+    ax.plot(epochs, val_s, label="S mean/plane (↑)", color="steelblue")
+    if has_c_plus:
+        ax.plot(
+            epochs,
+            val_c_plus,
+            label=r"$\|C^{(+)}\|_F^2$",
+            color="mediumpurple",
+            alpha=0.35,
+        )
+    if reg_scaled:
+        total_scaled = [
+            sum(
+                reg_scaled[k][i]
+                for k in active_regs
+                if k in reg_scaled and i < len(reg_scaled[k])
+            )
+            for i in range(len(epochs))
+        ]
+        ax.plot(epochs, total_scaled, label="total λ·reg (↓)", color="tomato")
     ax.set_xlabel("Epoch")
-    ax.set_title("Validation Set Loss")
-    ax.legend()
+    ax.set_ylabel("Embedding validation loss components")
     ax.spines[["top", "right"]].set_visible(False)
 
-    for ax, name in zip(axes[1:], active_regs):
-        lam = reg_lambdas.get(name)
-        lam_str = f"{lam:g}" if isinstance(lam, (int, float)) else "?"
-        ax.set_title(f"{name}  (λ={lam_str}, start={lambda_start:g})")
-        ax.set_xlabel("Epoch")
-        if name in reg_raw:
-            ax.plot(epochs, reg_raw[name],    color="gray",  ls="--", label="raw (unscaled)")
-            ax.plot(epochs, reg_scaled[name], color="tomato",          label="λ·reg (applied)")
-            ax.legend()
-        else:
-            ax.text(0.5, 0.5,
-                    "Per-epoch data not available.\nRetrain to generate reg_history.csv",
-                    transform=ax.transAxes, ha="center", va="center",
-                    fontsize=9, color="gray", style="italic")
-        ax.spines[["top", "right"]].set_visible(False)
+    ax_zeta = None
+    if has_zeta:
+        ax_zeta = ax.twinx()
+        ax_zeta.plot(epochs, val_zeta, label="ζ", color="seagreen", alpha=0.6)
+        ax_zeta.set_ylabel("Validation ζ")
+        ax_zeta.spines["top"].set_visible(False)
 
+    best_epoch = None
+    best_label = "best val loss"
+    best_ckpt_path = os.path.join(run_dir, "checkpoints", "best.pt")
+    if os.path.isfile(best_ckpt_path):
+        try:
+            ckpt = torch.load(best_ckpt_path, map_location="cpu", weights_only=False)
+            best_epoch = int(ckpt["epoch"])
+            if ckpt.get("checkpoint_selection") == "best_val_zeta":
+                best_label = "best val ζ"
+        except Exception as exc:
+            print(f"  [loss curve] could not read best.pt ({exc}); falling back to log.csv.")
+    if has_zeta and best_label != "best val ζ":
+        best_epoch = max(range(1, len(val_zeta) + 1), key=lambda i: val_zeta[i - 1])
+        best_label = "best val ζ"
+    if best_epoch is None and val_losses:
+        best_epoch = min(range(1, len(val_losses) + 1), key=lambda i: val_losses[i - 1])
+
+    if best_epoch is not None:
+        idx = best_epoch - 1
+        best_on_zeta = best_label == "best val ζ" and ax_zeta is not None and 0 <= idx < len(val_zeta)
+        if 0 <= idx < len(val_s):
+            target_ax = ax_zeta if best_on_zeta else ax
+            series = val_zeta if best_on_zeta else val_s
+            y = series[idx]
+            target_ax.scatter(
+                [best_epoch],
+                [y],
+                s=52,
+                color="goldenrod",
+                edgecolors="black",
+                linewidths=0.7,
+                zorder=6,
+            )
+            target_ax.annotate(
+                best_label,
+                xy=(best_epoch, y),
+                xytext=(5, -10),
+                textcoords="offset points",
+                va="top",
+                ha="left",
+                fontsize=8,
+                color="black",
+            )
+
+    handles, labels = ax.get_legend_handles_labels()
+    if ax_zeta is not None:
+        z_handles, z_labels = ax_zeta.get_legend_handles_labels()
+        handles += z_handles
+        labels += z_labels
+    ax.legend(handles, labels, loc="lower right")
     fig.tight_layout()
     out_path = os.path.join(out_dir, "loss_curve.png")
     fig.savefig(out_path, dpi=150)
@@ -938,7 +990,7 @@ def make_diagnostic_plots(
     with torch.no_grad():
         F_hat_t = model(val_tensor)
         F_hat_t = F_hat_t - F_hat_t.mean(dim=cfg.F_mean_axis, keepdim=True)  # zero-mean per dim across batch and time
-        s_ratio_val = compute_S_ratio(F_hat_t).item()
+        s_ratio_val = compute_S_ratio(_batch_rms_normalize(F_hat_t)).item()
         F_hat = F_hat_t.numpy()
 
     ch_var = val_np.var(axis=(0, 2))
@@ -988,6 +1040,7 @@ def make_diagnostic_plots(
     #     F_hat, s_ratio_val,
     #     out_path=os.path.join(out_dir, "10_dim_grid_time_coded.png"),
     # )
+    # plot_conditions_diagnostic()
 
     print(f"\nS_ratio (embedding, all val pairs): {s_ratio_val:.4f}")
     print(f"Signed area (raw):  μ={areas_raw.mean():+.4f}  σ={areas_raw.std():.4f}"
@@ -1043,14 +1096,35 @@ def main():
     train_ds, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
     hand_windows = _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_width_s)
 
-    model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,
-                temporal_filters=getattr(cfg, "temporal_filters", 0),
-                temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31))
-    model.load_state_dict(ckpt["model_state_dict"])
+    state_dict = ckpt["model_state_dict"]
+    temporal_frontend = getattr(cfg, "temporal_frontend", "symmetric")
+    if "temporal_conv.weight" in state_dict:
+        temporal_frontend = "symmetric"
+    elif any(k.startswith("temporal_conv.temporal_branches.0.norm.") for k in state_dict):
+        temporal_frontend = "residual"
+    elif any(k.startswith("temporal_conv.temporal_branches.0.conv.") for k in state_dict):
+        temporal_frontend = "multiscale_symmetric"
+
+    model = MLP(
+        in_channels=N,
+        d=cfg.d,
+        hidden_dim=cfg.hidden_dim,
+        depth=cfg.depth,
+        dropout=cfg.dropout,
+        temporal_filters=getattr(cfg, "temporal_filters", 0),
+        temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31),
+        temporal_frontend=temporal_frontend,
+        residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+        multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
+            state_dict,
+            getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+        ),
+    )
+    model.load_state_dict(state_dict)
 
     make_diagnostic_plots(
         model=model,
-        val_ds=val_ds,
+        val_ds=train_ds,
         trial_info=trial_info,
         cfg=cfg,
         run_dir=run_dir,

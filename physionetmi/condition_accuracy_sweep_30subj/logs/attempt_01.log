@@ -1,0 +1,31 @@
+Epoch   1/50  train loss=0.0077  val loss=0.0030  S[mean]=0.0095  ζ=0.1061  reg=0.0124  λscale=1.00  lr=9.76e-04
+Saved val-ζ checkpoint val_zeta_0.1.pt: threshold=0.1 epoch=1 val_zeta=0.1061
+Epoch  10/50  train loss=-0.0083  val loss=-0.0084  S[mean]=0.0111  ζ=0.1547  reg=0.0027  λscale=1.00  lr=1.00e-03
+Saved val-ζ checkpoint val_zeta_0.2.pt: threshold=0.2 epoch=12 val_zeta=0.2009
+Epoch  20/50  train loss=-0.1014  val loss=-0.1011  S[mean]=0.1665  ζ=0.2561  reg=0.0654  λscale=1.00  lr=5.00e-04
+Traceback (most recent call last):
+  File "/home/omo26/Non-Rev-Owen/run_physionet_condition_accuracy_sweep.py", line 558, in <module>
+    main()
+  File "/home/omo26/Non-Rev-Owen/run_physionet_condition_accuracy_sweep.py", line 550, in main
+    result = run_one(args.run_one, args.candidate_json)
+  File "/home/omo26/Non-Rev-Owen/run_physionet_condition_accuracy_sweep.py", line 252, in run_one
+    history = train(model, train_ds, val_ds, cfg)
+  File "/home/omo26/Non-Rev-Owen/train.py", line 197, in train
+    for (batch,) in val_loader:
+  File "/home/omo26/micromamba/envs/nonrev/lib/python3.9/site-packages/torch/utils/data/dataloader.py", line 734, in __next__
+    data = self._next_data()
+  File "/home/omo26/micromamba/envs/nonrev/lib/python3.9/site-packages/torch/utils/data/dataloader.py", line 790, in _next_data
+    data = self._dataset_fetcher.fetch(index)  # may raise StopIteration
+  File "/home/omo26/micromamba/envs/nonrev/lib/python3.9/site-packages/torch/utils/data/_utils/fetch.py", line 55, in fetch
+    return self.collate_fn(data)
+  File "/home/omo26/micromamba/envs/nonrev/lib/python3.9/site-packages/torch/utils/data/_utils/collate.py", line 398, in default_collate
+    return collate(batch, collate_fn_map=default_collate_fn_map)
+  File "/home/omo26/micromamba/envs/nonrev/lib/python3.9/site-packages/torch/utils/data/_utils/collate.py", line 211, in collate
+    return [
+  File "/home/omo26/micromamba/envs/nonrev/lib/python3.9/site-packages/torch/utils/data/_utils/collate.py", line 212, in <listcomp>
+    collate(samples, collate_fn_map=collate_fn_map)
+  File "/home/omo26/micromamba/envs/nonrev/lib/python3.9/site-packages/torch/utils/data/_utils/collate.py", line 155, in collate
+    return collate_fn_map[elem_type](batch, collate_fn_map=collate_fn_map)
+  File "/home/omo26/micromamba/envs/nonrev/lib/python3.9/site-packages/torch/utils/data/_utils/collate.py", line 272, in collate_tensor_fn
+    return torch.stack(batch, 0, out=out)
+KeyboardInterrupt

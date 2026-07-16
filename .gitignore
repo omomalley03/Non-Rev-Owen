@@ -1,6 +1,8 @@
 .claude
 .venv
 __pycache__
+env.*.sh
+!env.example.sh
 *.md
 save_data.py
 *.npz

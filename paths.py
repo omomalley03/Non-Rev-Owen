@@ -1,31 +1,35 @@
-"""Central definition of where run outputs are saved and loaded.
+"""Central definition of where data, caches, and run outputs live.
 
 Every script (main.py, main_synth.py, visualize*.py, star.py, probe_*.py) reads
 RUNS_DIR / SYNTH_RUNS_DIR from here, so the whole pipeline can be pointed at an
-external drive in one place.
+external drive, scratch directory, or local repo in one place.
 
-Runs live on the external drive under RUNS_BASE, which must contain the
-``runs/`` and ``synth_runs/`` subdirectories. To change location, edit
-_DEFAULT_RUNS_BASE below, or (preferred, survives a drive rename) export the env
-var before running anything:
+Set RUNS_BASE in a per-machine env file to move all machine-specific paths
+without editing source:
 
-    export RUNS_BASE="/Volumes/ADATA HD710/POC_MLP"
+    export RUNS_BASE="$HOME/POC_MLP"
 
-The env var, when set, always wins over the hard-coded default.
+Derived defaults:
+    runs/            -> $RUNS_BASE/runs
+    synth_runs/      -> $RUNS_BASE/synth_runs
+    cache/           -> $RUNS_BASE/cache
+
+When DATASET_NAME is exported, run outputs are grouped by dataset:
+    runs/            -> $RUNS_BASE/$DATASET_NAME/runs
+    synth_runs/      -> $RUNS_BASE/$DATASET_NAME/synth_runs
+
+CACHE_DIR can still be set directly when the cache should live somewhere else.
 """
 
 import os
 
-# ── EDIT THIS ────────────────────────────────────────────────────────────────
-# Folder on the external drive that contains the `runs/` and `synth_runs/`
-# subdirectories. Volume names are case-sensitive and may contain spaces.
-# _DEFAULT_RUNS_BASE = "/Volumes/ADATA HD710/data_owen/FACED/processed/"
-# _DEFAULT_RUNS_BASE = "/Volumes/ADATA HD710/POC_MLP"
-_DEFAULT_RUNS_BASE = "/Users/omomalley03/Documents/Dissertation/POC_MLP"
-# ─────────────────────────────────────────────────────────────────────────────
+# If RUNS_BASE is not exported, keep everything under the repo directory.
+_DEFAULT_RUNS_BASE = os.path.dirname(os.path.abspath(__file__))
 
 RUNS_BASE = os.environ.get("RUNS_BASE", _DEFAULT_RUNS_BASE)
+DATASET_NAME = os.environ.get("DATASET_NAME", "").strip()
+_RUNS_ROOT = os.path.join(RUNS_BASE, DATASET_NAME) if DATASET_NAME else RUNS_BASE
 
-RUNS_DIR = os.path.join(RUNS_BASE, "runs")
-SYNTH_RUNS_DIR = os.path.join(RUNS_BASE, "synth_runs")
-# 
+RUNS_DIR = os.path.join(_RUNS_ROOT, "runs")
+SYNTH_RUNS_DIR = os.path.join(_RUNS_ROOT, "synth_runs")
+CACHE_DIR = os.environ.get("CACHE_DIR", os.path.join(RUNS_BASE, "cache"))

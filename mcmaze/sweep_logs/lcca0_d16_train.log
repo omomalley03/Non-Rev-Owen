@@ -1,0 +1,44 @@
+Run directory: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260705_185537_d16_h64_dep1_bs64_ep200_lr1e-03_lxp0.0_lbt0.0_lcca0.0_sig10.0_s1
+Loading MC_Maze data …
+  Channels: 137  |  Bin width: 10 ms  |  Trials: 2295
+  Gaussian smoothing sigma: 10.0 ms = 1 bins
+  Soft-normalising per neuron (method='churchland')
+Windowing (trial_aligned, align=move_onset_time, pre=200ms, T=90) …
+  Windows shape: (2295, 137, 90)  (K, N, T)
+  Train: 1721  |  Val: 574  (dataset split column)
+Model parameters: 24,950
+
+Starting training for 200 epochs …
+
+Epoch   1/200  train loss=-0.1693  val loss=-0.4411  S[mean]=0.4411  reg=0.0000  λscale=1.00  lr=9.76e-04
+Epoch  10/200  train loss=-0.7922  val loss=-0.7915  S[mean]=0.7915  reg=0.0000  λscale=1.00  lr=1.00e-03
+Epoch  20/200  train loss=-0.8161  val loss=-0.8116  S[mean]=0.8116  reg=0.0000  λscale=1.00  lr=5.00e-04
+Epoch  30/200  train loss=-0.8201  val loss=-0.8137  S[mean]=0.8137  reg=0.0000  λscale=1.00  lr=1.00e-03
+Epoch  40/200  train loss=-0.8209  val loss=-0.8162  S[mean]=0.8162  reg=0.0000  λscale=1.00  lr=8.54e-04
+Epoch  50/200  train loss=-0.8231  val loss=-0.8170  S[mean]=0.8170  reg=0.0000  λscale=1.00  lr=5.00e-04
+Epoch  60/200  train loss=-0.8254  val loss=-0.8175  S[mean]=0.8175  reg=0.0000  λscale=1.00  lr=1.46e-04
+Epoch  70/200  train loss=-0.8259  val loss=-0.8175  S[mean]=0.8175  reg=0.0000  λscale=1.00  lr=1.00e-03
+Epoch  80/200  train loss=-0.8241  val loss=-0.8175  S[mean]=0.8175  reg=0.0000  λscale=1.00  lr=9.62e-04
+Epoch  90/200  train loss=-0.8252  val loss=-0.8176  S[mean]=0.8176  reg=0.0000  λscale=1.00  lr=8.54e-04
+Epoch 100/200  train loss=-0.8255  val loss=-0.8181  S[mean]=0.8181  reg=0.0000  λscale=1.00  lr=6.91e-04
+Epoch 110/200  train loss=-0.8277  val loss=-0.8190  S[mean]=0.8190  reg=0.0000  λscale=1.00  lr=5.00e-04
+Epoch 120/200  train loss=-0.8261  val loss=-0.8189  S[mean]=0.8189  reg=0.0000  λscale=1.00  lr=3.09e-04
+Epoch 130/200  train loss=-0.8271  val loss=-0.8190  S[mean]=0.8190  reg=0.0000  λscale=1.00  lr=1.46e-04
+Epoch 140/200  train loss=-0.8279  val loss=-0.8190  S[mean]=0.8190  reg=0.0000  λscale=1.00  lr=3.81e-05
+Epoch 150/200  train loss=-0.8287  val loss=-0.8190  S[mean]=0.8190  reg=0.0000  λscale=1.00  lr=1.00e-03
+Epoch 160/200  train loss=-0.8257  val loss=-0.8192  S[mean]=0.8192  reg=0.0000  λscale=1.00  lr=9.90e-04
+Epoch 170/200  train loss=-0.8252  val loss=-0.8190  S[mean]=0.8190  reg=0.0000  λscale=1.00  lr=9.62e-04
+Epoch 180/200  train loss=-0.8252  val loss=-0.8193  S[mean]=0.8193  reg=0.0000  λscale=1.00  lr=9.16e-04
+Epoch 190/200  train loss=-0.8276  val loss=-0.8194  S[mean]=0.8194  reg=0.0000  λscale=1.00  lr=8.54e-04
+Epoch 200/200  train loss=-0.8265  val loss=-0.8190  S[mean]=0.8190  reg=0.0000  λscale=1.00  lr=7.78e-04
+
+==================================================
+Training complete
+  Final train loss    : -0.8265
+  Best val loss       : -0.8199
+  Wall-clock time     : 15.3 s  (0.3 min)
+  Checkpoint          : /home/omo26/Non-Rev-Owen/mcmaze/runs/20260705_185537_d16_h64_dep1_bs64_ep200_lr1e-03_lxp0.0_lbt0.0_lcca0.0_sig10.0_s1/checkpoints/best.pt
+  Loss curve          : '/home/omo26/Non-Rev-Owen/mcmaze/runs/20260705_185537_d16_h64_dep1_bs64_ep200_lr1e-03_lxp0.0_lbt0.0_lcca0.0_sig10.0_s1/outputs/loss_curve.png'
+==================================================
+
+Skipping diagnostic plots because SKIP_DIAGNOSTICS=1.

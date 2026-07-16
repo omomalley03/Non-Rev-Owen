@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import torch
 
 from config import Config
@@ -63,6 +65,24 @@ def S_ratio(F: torch.Tensor) -> torch.Tensor:
     return minus_sum / (plus_sum + 1e-8)
 
 
+def non_reversibility_components(F: torch.Tensor, objective: str = "mean"):
+    """Return scaled C-, scaled C+, and ζ = C-/C+ for a batch.
+
+    With objective="mean", C- matches non_reversibility_S(F, "mean") and C+
+    uses the same scaling, so both are mean-per-plane quantities.
+    """
+    K = F.shape[0]
+    minus_sum, plus_sum = _pair_terms(F)
+    if objective == "mean":
+        scale = 4.0 / K ** 2 / F.shape[1]
+    else:
+        scale = 2.0 / K ** 2
+    c_minus = scale * minus_sum
+    c_plus = scale * plus_sum
+    zeta = minus_sum / (plus_sum + 1e-8)
+    return c_minus, c_plus, zeta
+
+
 def non_reversibility_S(F: torch.Tensor, objective: str = "sum") -> torch.Tensor:
     """
     Unnormalised non-reversibility score S .
@@ -113,19 +133,19 @@ def non_rev_regularizer_systematic(F: torch.Tensor, cfg: Config) -> torch.Tensor
 def barlow_twins_reg(F: torch.Tensor, eps: float = 1e-6, normalize: bool = False) -> torch.Tensor:
     """Barlow Twins covariance regularizer on the per-timepoint embeddings.
 
-    Flattens F from (K, d, T) → (M, d) where M = K*T, treating every
-    (trial, timestep) pair as an independent sample. Computes the
-    empirical (d, d) Cov. Returns mean((Cov - I)²) normalised by d²,
-    so lambda_bt has the same interpretation regardless of d.
+    Flattens F from (K, d, T) to (M, d), treating every (trial, timestep) pair
+    as a sample. Returns mean((Cov - I)^2) normalized by d^2, so lambda_bt has
+    the same scale across embedding dimensions.
     """
     K, d, T = F.shape
-    Z = F.permute(0, 2, 1).reshape(K * T, d)          # (M, d)
-
+    Z = F.permute(0, 2, 1).reshape(K * T, d)
     M = Z.shape[0]
-    Z = Z - Z.mean(dim=0, keepdim=True)               # zero-mean per dim
-    Cov = (Z.T @ Z) / M
-
+    Z = Z - Z.mean(dim=0, keepdim=True)
+    Cov = (Z.T @ Z) / max(M, 1)
     return ((Cov - torch.eye(d, device=F.device)) ** 2).sum() / (d * d)
+
+
+
 
 
 def plane_barlow_twins_reg(F: torch.Tensor) -> torch.Tensor:

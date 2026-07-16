@@ -27,7 +27,7 @@ from torch.utils.data import DataLoader
 
 from config import Config
 from data import load_mcmaze, gaussian_smooth, make_windows, train_val_split
-from model import MLP
+from model import MLP, infer_multiscale_symmetric_conv_layers
 from visualize import _resolve_run_dir
 
 
@@ -151,11 +151,18 @@ def main():
     train_ds, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
 
     dropout = getattr(cfg, "dropout", 0.0)
+    state_dict = ckpt["model_state_dict"]
     model = MLP(in_channels=N, d=cfg.d, hidden_dim=cfg.hidden_dim,
                 depth=cfg.depth, dropout=dropout,
                 temporal_filters=getattr(cfg, "temporal_filters", 0),
-                temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31))
-    model.load_state_dict(ckpt["model_state_dict"])
+                temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31),
+                temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
+                residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+                multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
+                    state_dict,
+                    getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+                ))
+    model.load_state_dict(state_dict)
 
     out_dir = os.path.join(run_dir, "outputs")
     os.makedirs(out_dir, exist_ok=True)

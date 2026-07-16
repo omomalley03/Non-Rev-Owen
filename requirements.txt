@@ -7,3 +7,4 @@ einops
 tqdm
 matplotlib
 seaborn
+lmdb

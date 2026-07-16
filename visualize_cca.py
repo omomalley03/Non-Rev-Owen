@@ -15,6 +15,8 @@ Usage
     python visualize_cca.py --run 2                  # 2nd most recent
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 
@@ -102,7 +104,7 @@ def compute_canonical_corr_matrix(F: torch.Tensor, eps: float = 1e-4) -> np.ndar
 def load_and_infer(run_dir: str):
     """Load checkpoint, prepare data, run inference. Returns (F, F_hat, cfg, groups, S_p)."""
     from data import load_mcmaze_cached, gaussian_smooth, make_windows, train_val_split
-    from model import MLP
+    from model import MLP, infer_multiscale_symmetric_conv_layers
 
     ckpt_path = os.path.join(run_dir, "checkpoints", "best.pt")
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
@@ -128,11 +130,20 @@ def load_and_infer(run_dir: str):
         trial_info = trial_info.drop(columns=["split"], errors="ignore")
     train_ds, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
 
+    state_dict = ckpt["model_state_dict"]
     model = MLP(
         in_channels=windows.shape[1], d=cfg.d, hidden_dim=cfg.hidden_dim,
         depth=cfg.depth, dropout=getattr(cfg, "dropout", 0.0),
+        temporal_filters=getattr(cfg, "temporal_filters", 0),
+        temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31),
+        temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
+        residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+        multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
+            state_dict,
+            getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+        ),
     )
-    model.load_state_dict(ckpt["model_state_dict"])
+    model.load_state_dict(state_dict)
     model.eval()
 
     loader = DataLoader(val_ds, batch_size=len(val_ds), shuffle=False)

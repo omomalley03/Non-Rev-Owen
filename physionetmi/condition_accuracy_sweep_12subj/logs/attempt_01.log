@@ -1,0 +1,4 @@
+Epoch   1/50  train loss=0.0316  val loss=0.0222  S[mean]=0.0130  ζ=0.1149  reg=0.0353  λscale=1.00  lr=9.76e-04
+Saved val-ζ checkpoint val_zeta_0.1.pt: threshold=0.1 epoch=1 val_zeta=0.1149
+Epoch  10/50  train loss=-0.0058  val loss=-0.0067  S[mean]=0.0159  ζ=0.1547  reg=0.0092  λscale=1.00  lr=1.00e-03
+Saved val-ζ checkpoint val_zeta_0.2.pt: threshold=0.2 epoch=14 val_zeta=0.2020

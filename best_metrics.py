@@ -6,7 +6,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from config import Config
-from model import MLP
+from model import MLP, infer_multiscale_symmetric_conv_layers
 from loss import (
     non_reversibility_S,
     non_reversibility_S_per_plane,
@@ -34,9 +34,18 @@ def append_best_model_metrics(run_dir: str, val_ds, cfg: Config, n_xp_perms: int
     (val_tensor,) = next(iter(loader))
     N_in = val_tensor.shape[1]
 
-    model = MLP(in_channels=N_in, d=cfg.d, hidden_dim=cfg.hidden_dim,
-                depth=cfg.depth, dropout=cfg.dropout,
-                temporal_filters=cfg.temporal_filters, temporal_kernel_size=cfg.temporal_kernel_size)
+    model = MLP(
+        in_channels=N_in, d=cfg.d, hidden_dim=cfg.hidden_dim,
+        depth=cfg.depth, dropout=cfg.dropout,
+        temporal_filters=getattr(cfg, "temporal_filters", 0),
+        temporal_kernel_size=getattr(cfg, "temporal_kernel_size", 31),
+        temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
+        residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
+        multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
+            ckpt["model_state_dict"],
+            getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+        ),
+    )
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
