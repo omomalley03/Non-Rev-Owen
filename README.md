@@ -1,4 +1,4 @@
-# Non-Rev
+# Non-Reversibility as a Pretraining Objective for Spatio-Temporal Foundation Models
 
 This project trains neural embeddings with non-reversibility and redundancy-control objectives, then evaluates whether those embeddings preserve behaviourally useful information. The main datasets are MC Maze neural activity and Physionet motor-imagery EEG.
 
