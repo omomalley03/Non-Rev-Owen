@@ -1,5 +1,5 @@
 """
-Dead-simple synthetic spikes from intersecting sine waves.
+Synthetic spikes from intersecting sine waves.
 
 Idea
 ----
