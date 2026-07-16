@@ -1,0 +1,1 @@
+rank,attempt,val_accuracy,val_balanced_accuracy,val_macro_f1,test_accuracy,test_balanced_accuracy,test_macro_f1,d,temporal_filters,filters_per_kernel,kernels,conv_layers,embed_depth,embed_lr,lambda_block_cca,mlp_hidden_dim,mlp_depth,mlp_dropout,mlp_lr,best_embed_val_zeta,frozen_val_zeta,run_dir

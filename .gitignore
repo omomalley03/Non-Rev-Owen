@@ -1,18 +1,49 @@
-.claude
-.venv
-__pycache__
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments and local config
+.venv/
 env.*.sh
 !env.example.sh
-*.md
-save_data.py
-*.npz
-*.npy
-*.csv
 
+# Data caches and converted datasets
+cache/
+**/cache/
+*.npy
+*.npz
+*.lmdb
+*.mdb
+*.h5
+*.hdf5
+
+# Experiment outputs and model artifacts
 runs/
 synth_runs/
-cache/
+**/runs/
+**/synth_runs/
+**/raw_velocity_runs/
+**/checkpoints/
+**/outputs/
+*.pt
+*.pth
+*.ckpt
 
-*.ipynb
+# Logs / scheduler output
+logs/
+**/logs/
+*.log
+slurm-*.out
+machine.file.*
 
-experiments/
+# Notebook-generated metadata
+.ipynb_checkpoints/

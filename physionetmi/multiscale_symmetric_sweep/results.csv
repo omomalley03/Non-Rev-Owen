@@ -1,0 +1,1 @@
+rank,attempt,best_val_zeta,best_val_s,best_val_c_plus,final_val_zeta,temporal_filters,kernels,conv_layers,depth,lr,best_val_epoch,elapsed_s,run_dir
