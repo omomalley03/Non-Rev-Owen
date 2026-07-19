@@ -161,7 +161,8 @@ def main():
                 multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
                     state_dict,
                     getattr(cfg, "multiscale_symmetric_conv_layers", 1),
-                ))
+                ),
+                antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0))
     model.load_state_dict(state_dict)
 
     out_dir = os.path.join(run_dir, "outputs")

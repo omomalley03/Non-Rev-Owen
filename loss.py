@@ -218,9 +218,9 @@ def block_cca_reg(F: torch.Tensor, eps: float = 1e-4) -> torch.Tensor:
     return C[~eye].pow(2).sum() / (D * (D - 1))
 
 
-# Regularizer registry: name -> (config lambda attr, raw-magnitude function).
-# `xp` (cross-plane non-rev) needs cfg, so it is handled separately below.
-REG_TYPES = ("xp", "bt", "plane_bt", "cca")
+# Regularizer registry: xp and plane-aware BT are intentionally disabled for the
+# mixed-parity experiments; block CCA is the active cross-plane regularizer.
+REG_TYPES = ("bt", "cca")
 
 
 def loss_fn(F: torch.Tensor, cfg=None, lambda_xp: float | None = None, lambda_bt: float | None = None,
@@ -236,14 +236,15 @@ def loss_fn(F: torch.Tensor, cfg=None, lambda_xp: float | None = None, lambda_bt
     (unscaled) magnitude and info["reg_scaled"] holds `lambda_scale·λ·raw`.
     """
     if cfg is not None:
-        lambda_xp = cfg.lambda_xp
+        # lambda_xp is intentionally ignored while using mixed parity heads.
+        lambda_xp = 0.0
         lambda_bt = cfg.lambda_bt
-    lambda_xp = 0.0 if lambda_xp is None else lambda_xp
+    lambda_xp = 0.0
     lambda_bt = 0.1 if lambda_bt is None else lambda_bt
     weights = {
-        "xp": lambda_xp,
+        # "xp": lambda_xp,
         "bt": lambda_bt,
-        "plane_bt": getattr(cfg, "lambda_plane_bt", 0.0),
+        # "plane_bt": getattr(cfg, "lambda_plane_bt", 0.0),
         "cca": getattr(cfg, "lambda_block_cca", 0.0),
     }
 
@@ -258,12 +259,12 @@ def loss_fn(F: torch.Tensor, cfg=None, lambda_xp: float | None = None, lambda_bt
 
     # raw regularizer magnitudes (unscaled by lambda); only compute active ones
     raw = {}
-    if weights["xp"] > 0:
-        raw["xp"] = non_rev_regularizer(F_hat, cfg)
+    # if weights["xp"] > 0:
+    #     raw["xp"] = non_rev_regularizer(F_hat, cfg)
     if weights["bt"] > 0:
         raw["bt"] = barlow_twins_reg(F)
-    if weights["plane_bt"] > 0:
-        raw["plane_bt"] = plane_barlow_twins_reg(F)
+    # if weights["plane_bt"] > 0:
+    #     raw["plane_bt"] = plane_barlow_twins_reg(F)
     if weights["cca"] > 0:
         raw["cca"] = block_cca_reg(F)
 

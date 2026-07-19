@@ -29,11 +29,38 @@ def _split_dims(total_dim: int, num_splits: int) -> list[int]:
 
 def infer_multiscale_symmetric_conv_layers(state_dict, default: int = 1) -> int:
     if any(
-        key.startswith("temporal_conv.temporal_branches.") and ".conv2." in key
+        key.startswith("temporal_conv.")
+        and ".temporal_branches." in key
+        and ".conv2." in key
         for key in state_dict
     ):
         return 2
     return int(default)
+
+
+def _make_pointwise_mlp(
+    in_dim: int,
+    out_dim: int,
+    hidden_dim: int,
+    depth: int,
+    dropout: float,
+) -> nn.Sequential:
+    layers = []
+    current_dim = in_dim
+    for _ in range(depth - 1):
+        layers += [nn.Linear(current_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU()]
+        if dropout > 0.0:
+            layers.append(nn.Dropout(dropout))
+        current_dim = hidden_dim
+    layers.append(nn.Linear(current_dim, out_dim))
+    return nn.Sequential(*layers)
+
+
+def _apply_pointwise_net(x: torch.Tensor, net: nn.Module, out_dim: int) -> torch.Tensor:
+    B, C, T = x.shape
+    y = x.permute(0, 2, 1).reshape(B * T, C)
+    y = net(y)
+    return y.reshape(B, T, out_dim).permute(0, 2, 1)
 
 
 class SymmetricConv1d(nn.Module):
@@ -155,7 +182,7 @@ class SymmetricBranchConv1d(nn.Module):
         )
 
 class AntiSymmetricBranchConv1d(nn.Module):
-    """One zero-phase depthwise branch for a single temporal scale."""
+    """One derivative-like depthwise branch for a single temporal scale."""
 
     def __init__(
         self,
@@ -163,13 +190,14 @@ class AntiSymmetricBranchConv1d(nn.Module):
         filters_per_channel: int,
         kernel_size: int,
         conv_layers: int = 1,
+        bias: bool = True,
     ):
         super().__init__()
         if kernel_size < 1 or kernel_size % 2 == 0:
-            raise ValueError("symmetric branch kernels must be positive odd integers")
+            raise ValueError("anti-symmetric branch kernels must be positive odd integers")
         conv_layers = int(conv_layers)
         if conv_layers not in {1, 2}:
-            raise ValueError("symmetric branch conv_layers must be 1 or 2")
+            raise ValueError("anti-symmetric branch conv_layers must be 1 or 2")
         out_channels = in_channels * filters_per_channel
         self.conv = nn.Conv1d(
             in_channels,
@@ -177,9 +205,11 @@ class AntiSymmetricBranchConv1d(nn.Module):
             kernel_size=kernel_size,
             padding=kernel_size // 2,
             groups=in_channels,
+            bias=bias,
         )
         nn.init.uniform_(self.conv.weight, -1.0 / kernel_size ** 0.5, 1.0 / kernel_size ** 0.5)
-        nn.init.zeros_(self.conv.bias)
+        if self.conv.bias is not None:
+            nn.init.zeros_(self.conv.bias)
         self.conv2 = None
         self.activation = None
         if conv_layers == 2:
@@ -190,10 +220,12 @@ class AntiSymmetricBranchConv1d(nn.Module):
                 kernel_size=kernel_size,
                 padding=kernel_size // 2,
                 groups=in_channels,
+                bias=bias,
             )
             scale = (kernel_size * filters_per_channel) ** 0.5
             nn.init.uniform_(self.conv2.weight, -1.0 / scale, 1.0 / scale)
-            nn.init.zeros_(self.conv2.bias)
+            if self.conv2.bias is not None:
+                nn.init.zeros_(self.conv2.bias)
         self.kernel = int(kernel_size)
         self.groups = int(in_channels)
         self.conv_layers = int(conv_layers)
@@ -280,7 +312,7 @@ class MultiScaleSymmetricConv1d(nn.Module):
 
 
 class MultiScaleAntiSymmetricConv1d(nn.Module):
-    """Per-channel zero-phase temporal filter bank with multiple kernel scales."""
+    """Per-channel derivative-like temporal filter bank with multiple kernel scales."""
 
     def __init__(
         self,
@@ -288,6 +320,7 @@ class MultiScaleAntiSymmetricConv1d(nn.Module):
         filters_per_channel: int,
         kernels=(7, 15, 31, 61),
         conv_layers: int = 1,
+        bias: bool = True,
     ):
         super().__init__()
         kernels = _parse_kernels(kernels)
@@ -302,6 +335,7 @@ class MultiScaleAntiSymmetricConv1d(nn.Module):
                     branch_dim,
                     kernel,
                     conv_layers=conv_layers,
+                    bias=bias,
                 )
                 for kernel, branch_dim in zip(kernels, branch_dims)
             ]
@@ -310,6 +344,7 @@ class MultiScaleAntiSymmetricConv1d(nn.Module):
         self.filters_per_channel = int(filters_per_channel)
         self.kernels = kernels
         self.conv_layers = int(conv_layers)
+        self.bias = bool(bias)
         self.out_channels = self.in_channels * self.filters_per_channel
 
     @property
@@ -321,6 +356,44 @@ class MultiScaleAntiSymmetricConv1d(nn.Module):
         if N != self.in_channels:
             raise ValueError(f"expected {self.in_channels} channels, got {N}")
         return torch.cat([branch(x) for branch in self.temporal_branches], dim=1)
+
+
+class MixedParityTemporalConv1d(nn.Module):
+    """Independent symmetric and anti-symmetric temporal filter banks."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        filters_per_channel: int,
+        kernels=(7, 15, 31, 61),
+        conv_layers: int = 1,
+    ):
+        super().__init__()
+        self.sym_conv = MultiScaleSymmetricConv1d(
+            in_channels,
+            filters_per_channel,
+            kernels=kernels,
+            conv_layers=conv_layers,
+        )
+        self.anti_conv = MultiScaleAntiSymmetricConv1d(
+            in_channels,
+            filters_per_channel,
+            kernels=kernels,
+            conv_layers=conv_layers,
+            bias=False,
+        )
+        self.in_channels = int(in_channels)
+        self.filters_per_channel = int(filters_per_channel)
+        self.kernels = _parse_kernels(kernels)
+        self.conv_layers = int(conv_layers)
+        self.out_channels = self.sym_conv.out_channels + self.anti_conv.out_channels
+
+    @property
+    def weight(self):
+        return torch.cat([self.sym_conv.weight, self.anti_conv.weight])
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.sym_conv(x), self.anti_conv(x)
 
 
 # class ResidualBranch(nn.Module):
@@ -387,11 +460,59 @@ class MLP(nn.Module):
     def __init__(self, in_channels: int, d: int = 128, hidden_dim: int = 256, depth: int = 3, dropout: float = 0.0,
                  temporal_filters: int = 0, temporal_kernel_size: int = 31,
                  temporal_frontend: str = "symmetric", residual_kernels=(3, 7, 15, 31),
-                 multiscale_symmetric_conv_layers: int = 1):
+                 multiscale_symmetric_conv_layers: int = 1, antisymmetric_planes: int = 0):
         super().__init__()
         assert depth >= 1, "depth must be at least 1"
 
         temporal_frontend = (temporal_frontend or "symmetric").lower()
+        self.temporal_frontend = temporal_frontend
+        self.mixed_parity = temporal_frontend in {
+            "mixed_parity",
+            "mixed_symmetric_antisymmetric",
+            "mixed_sym_anti",
+            "sym_anti",
+        }
+        self.d = int(d)
+
+        if self.mixed_parity:
+            if temporal_filters <= 0:
+                raise ValueError("mixed_parity requires temporal_filters > 0")
+            if d % 2 != 0:
+                raise ValueError(f"mixed_parity requires an even embedding dimension, got d={d}")
+            n_planes = d // 2
+            antisymmetric_planes = int(antisymmetric_planes)
+            if antisymmetric_planes < 0:
+                antisymmetric_planes = max(1, n_planes // 2)
+            if antisymmetric_planes < 0 or antisymmetric_planes > n_planes:
+                raise ValueError(
+                    f"antisymmetric_planes must be between 0 and {n_planes}, "
+                    f"got {antisymmetric_planes}"
+                )
+            self.antisymmetric_planes = antisymmetric_planes
+            self.symmetric_planes = n_planes - antisymmetric_planes
+            self.sym_out_dim = 2 * self.symmetric_planes
+            self.anti_out_dim = 2 * self.antisymmetric_planes
+            self.temporal_conv = MixedParityTemporalConv1d(
+                in_channels,
+                temporal_filters,
+                kernels=residual_kernels,
+                conv_layers=multiscale_symmetric_conv_layers,
+            )
+            conv_out_channels = self.temporal_conv.sym_conv.out_channels
+            self.sym_net = (
+                _make_pointwise_mlp(conv_out_channels, self.sym_out_dim, hidden_dim, depth, dropout)
+                if self.sym_out_dim > 0
+                else None
+            )
+            self.anti_net = (
+                _make_pointwise_mlp(conv_out_channels, self.anti_out_dim, hidden_dim, depth, dropout)
+                if self.anti_out_dim > 0
+                else None
+            )
+            self.net = None
+            self._init_weights()
+            return
+
         if temporal_filters > 0:
             if temporal_frontend in {"symmetric"}:
                 # per-channel filter bank: each input channel -> temporal_filters filters
@@ -416,23 +537,18 @@ class MLP(nn.Module):
                 )
             else:
                 raise ValueError(
-                    "temporal_frontend must be one of: symmetric, multiscale_symmetric, residual"
+                    "temporal_frontend must be one of: symmetric, multiscale_symmetric, "
+                    "multiscale_antisymmetric, mixed_parity, residual"
                 )
             in_channels = self.temporal_conv.out_channels   # use temporal features only (no raw concat)
         else:
             self.temporal_conv = None
 
-        layers = []
-        in_dim = in_channels
-        for _ in range(depth - 1):
-            layers += [nn.Linear(in_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.GELU()]
-            if dropout > 0.0:
-                layers.append(nn.Dropout(dropout))
-            in_dim = hidden_dim
-        layers.append(nn.Linear(in_dim, d))   # final projection, no activation
-
-        self.net = nn.Sequential(*layers)
-        self.d = d
+        self.net = _make_pointwise_mlp(in_channels, d, hidden_dim, depth, dropout)
+        self.antisymmetric_planes = 0
+        self.symmetric_planes = d // 2 if d % 2 == 0 else 0
+        self.sym_net = None
+        self.anti_net = None
         self._init_weights()
 
     def _init_weights(self):
@@ -444,11 +560,15 @@ class MLP(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, N, T = x.shape
+        if self.mixed_parity:
+            x_sym, x_anti = self.temporal_conv(x)
+            parts = []
+            if self.sym_net is not None:
+                parts.append(_apply_pointwise_net(x_sym, self.sym_net, self.sym_out_dim))
+            if self.anti_net is not None:
+                parts.append(_apply_pointwise_net(x_anti, self.anti_net, self.anti_out_dim))
+            return torch.cat(parts, dim=1)
         if self.temporal_conv is not None:
             # x = torch.cat([x, self.temporal_conv(x)], dim=1)   # (B, N + temporal_filters, T)
             x = self.temporal_conv(x)
-        C = x.shape[1]
-        x = x.permute(0, 2, 1).reshape(B * T, C)   # (B*T, C) -- each row is a single timepoint across all channels
-        x = self.net(x)                              # (B*T, d)
-        x = x.reshape(B, T, self.d).permute(0, 2, 1)  # (B, d, T)
-        return x
+        return _apply_pointwise_net(x, self.net, self.d)

@@ -80,6 +80,7 @@ def load_pretrained_embeddings(checkpoint_path: Path):
             saved["model_state_dict"],
             _cfg_get(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=_cfg_get(cfg, "antisymmetric_planes", 0),
     )
     model.load_state_dict(saved["model_state_dict"])
     model.eval()

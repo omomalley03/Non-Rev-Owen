@@ -231,6 +231,7 @@ def build_model_from_checkpoint(cfg: Config, state_dict, in_channels: int):
             state_dict,
             getattr(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
     )
     model.load_state_dict(state_dict)
     return model

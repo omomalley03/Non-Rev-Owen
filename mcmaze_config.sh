@@ -42,7 +42,8 @@ export D="16"
 export HIDDEN_DIM="256"
 export DEPTH="2" # depth=2 ==> one hidden layer. depth=1 ==> linear 
 export DROPOUT="0.2"
-export TEMPORAL_FRONTEND="antisymmetric_multiscale"
+export TEMPORAL_FRONTEND="mixed_parity"
+export ANTISYMMETRIC_PLANES=0
 export TEMPORAL_FILTERS="4" # setting this to 0 makes it an MLP embedder
 export MULTISCALE_SYMMETRIC_CONV_LAYERS="1"
 export RESIDUAL_KERNELS="7,15,31,61" # ignore name "residual" -- that is left over from CoCoT naming 

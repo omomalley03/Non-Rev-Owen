@@ -363,6 +363,7 @@ def run_one(attempt: int, candidate_json: str) -> dict[str, Any]:
             temporal_frontend=cfg.temporal_frontend,
             residual_kernels=cfg.residual_kernels,
             multiscale_symmetric_conv_layers=cfg.multiscale_symmetric_conv_layers,
+            antisymmetric_planes=cfg.antisymmetric_planes,
         )
         history = train(model, train_ds_embed, val_ds_embed, cfg)
         ckpt_path = Path(cfg.ckpt_dir) / "best.pt"

@@ -123,6 +123,7 @@ def build_embedder(cfg, state_dict: dict, in_channels: int) -> MLP:
             state_dict,
             _cfg_get(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=_cfg_get(cfg, "antisymmetric_planes", 0),
     )
     model.load_state_dict(state_dict)
     return model

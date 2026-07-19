@@ -31,10 +31,16 @@ from model import MLP, infer_multiscale_symmetric_conv_layers
 from paths import RUNS_BASE, RUNS_DIR
 
 
-KERNEL_MODES = ("auto", "raw", "symmetric", "antisymmetric")
+KERNEL_MODES = ("auto", "raw", "symmetric", "antisymmetric", "effective")
 SYMMETRIC_FRONTENDS = {"symmetric", "multiscale_symmetric", "symmetric_multiscale"}
 ANTISYMMETRIC_FRONTENDS = {"multiscale_antisymmetric", "antisymmetric_multiscale"}
-MULTISCALE_FRONTENDS = SYMMETRIC_FRONTENDS | ANTISYMMETRIC_FRONTENDS
+MIXED_PARITY_FRONTENDS = {
+    "mixed_parity",
+    "mixed_symmetric_antisymmetric",
+    "mixed_sym_anti",
+    "sym_anti",
+}
+MULTISCALE_FRONTENDS = SYMMETRIC_FRONTENDS | ANTISYMMETRIC_FRONTENDS | MIXED_PARITY_FRONTENDS
 
 
 def _unique_existing(paths: list[str]) -> list[str]:
@@ -154,7 +160,14 @@ def transform_kernel_weight(weight: torch.Tensor, kernel_mode: str) -> torch.Ten
 def first_linear_input_dim(state_dict: dict) -> int:
     candidates = []
     for key, value in state_dict.items():
-        if not (key.startswith("net.") and key.endswith(".weight")):
+        if not (
+            (
+                key.startswith("net.")
+                or key.startswith("sym_net.")
+                or key.startswith("anti_net.")
+            )
+            and key.endswith(".weight")
+        ):
             continue
         if getattr(value, "ndim", None) != 2:
             continue
@@ -202,6 +215,7 @@ def build_model_for_kernels(cfg, state_dict: dict) -> tuple[MLP, str]:
             state_dict,
             getattr(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
     )
 
     current = model.state_dict()
@@ -219,6 +233,16 @@ def build_model_for_kernels(cfg, state_dict: dict) -> tuple[MLP, str]:
 
 
 def _collect_kernels(temporal_conv, max_panels: int, kernel_mode: str) -> tuple[list[np.ndarray], list[str]]:
+    if hasattr(temporal_conv, "sym_conv") and hasattr(temporal_conv, "anti_conv"):
+        kernels = []
+        titles = []
+        per_branch_panels = max(1, max_panels // 2)
+        for label, branch_conv in (("sym", temporal_conv.sym_conv), ("anti", temporal_conv.anti_conv)):
+            branch_kernels, branch_titles = _collect_kernels(branch_conv, per_branch_panels, kernel_mode)
+            kernels.extend(branch_kernels)
+            titles.extend([f"{label}:{title}" for title in branch_titles])
+        return kernels[:max_panels], titles[:max_panels]
+
     if hasattr(temporal_conv, "temporal_branches"):
         kernels = []
         titles = []

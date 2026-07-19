@@ -226,6 +226,7 @@ def main():
         temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
         residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
         multiscale_symmetric_conv_layers=getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+        antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
     )
     if model.temporal_conv is not None:
         print(model.temporal_conv.weight.shape)

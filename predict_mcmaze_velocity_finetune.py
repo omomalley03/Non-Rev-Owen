@@ -117,6 +117,7 @@ def build_embedder(cfg: Config, state_dict, in_channels: int, init: str):
             state_dict,
             getattr(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
     )
     if init == "pretrained":
         model.load_state_dict(state_dict)

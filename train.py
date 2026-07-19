@@ -89,9 +89,7 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
 
     # active regularizers (lambda > 0) tracked individually for the loss curve
     reg_lambdas = {
-        "xp": cfg.lambda_xp,
         "bt": cfg.lambda_bt,
-        "plane_bt": getattr(cfg, "lambda_plane_bt", 0.0),
         "cca": getattr(cfg, "lambda_block_cca", 0.0),
     }
     active_regs = [k for k, v in reg_lambdas.items() if v > 0]

@@ -65,6 +65,7 @@ def load_finetuned_embeddings(model_path: Path):
             saved["embedder_state_dict"],
             _cfg_get(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=_cfg_get(cfg, "antisymmetric_planes", 0),
     )
     model.load_state_dict(saved["embedder_state_dict"])
     model.eval()
