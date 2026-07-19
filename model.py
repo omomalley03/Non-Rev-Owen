@@ -154,6 +154,86 @@ class SymmetricBranchConv1d(nn.Module):
             groups=self.groups,
         )
 
+class AntiSymmetricBranchConv1d(nn.Module):
+    """One zero-phase depthwise branch for a single temporal scale."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        filters_per_channel: int,
+        kernel_size: int,
+        conv_layers: int = 1,
+    ):
+        super().__init__()
+        if kernel_size < 1 or kernel_size % 2 == 0:
+            raise ValueError("symmetric branch kernels must be positive odd integers")
+        conv_layers = int(conv_layers)
+        if conv_layers not in {1, 2}:
+            raise ValueError("symmetric branch conv_layers must be 1 or 2")
+        out_channels = in_channels * filters_per_channel
+        self.conv = nn.Conv1d(
+            in_channels,
+            out_channels,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+            groups=in_channels,
+        )
+        nn.init.uniform_(self.conv.weight, -1.0 / kernel_size ** 0.5, 1.0 / kernel_size ** 0.5)
+        nn.init.zeros_(self.conv.bias)
+        self.conv2 = None
+        self.activation = None
+        if conv_layers == 2:
+            self.activation = nn.GELU()
+            self.conv2 = nn.Conv1d(
+                out_channels,
+                out_channels,
+                kernel_size=kernel_size,
+                padding=kernel_size // 2,
+                groups=in_channels,
+            )
+            scale = (kernel_size * filters_per_channel) ** 0.5
+            nn.init.uniform_(self.conv2.weight, -1.0 / scale, 1.0 / scale)
+            nn.init.zeros_(self.conv2.bias)
+        self.kernel = int(kernel_size)
+        self.groups = int(in_channels)
+        self.conv_layers = int(conv_layers)
+
+    @staticmethod
+    def _effective_weight(conv: nn.Conv1d) -> torch.Tensor:
+        return conv.weight - conv.weight.flip(-1)
+
+    def effective_weight(self, layer: int = 1) -> torch.Tensor:
+        if layer == 1:
+            return self._effective_weight(self.conv)
+        if layer == 2 and self.conv2 is not None:
+            return self._effective_weight(self.conv2)
+        raise ValueError(f"expected layer 1 or 2, got {layer}")
+
+    @property
+    def weight(self):
+        weights = [self.conv.weight.flatten()]
+        if self.conv2 is not None:
+            weights.append(self.conv2.weight.flatten())
+        return torch.cat(weights)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = F.conv1d(
+            x,
+            self.effective_weight(1),
+            self.conv.bias,
+            padding=self.kernel // 2,
+            groups=self.groups,
+        )
+        if self.conv2 is None:
+            return y
+        y = self.activation(y)
+        return F.conv1d(
+            y,
+            self.effective_weight(2),
+            self.conv2.bias,
+            padding=self.kernel // 2,
+            groups=self.groups,
+        )
 
 class MultiScaleSymmetricConv1d(nn.Module):
     """Per-channel zero-phase temporal filter bank with multiple kernel scales."""
@@ -199,57 +279,101 @@ class MultiScaleSymmetricConv1d(nn.Module):
         return torch.cat([branch(x) for branch in self.temporal_branches], dim=1)
 
 
-class ResidualBranch(nn.Module):
-    """Kernel-specific temporal branch from the CoCoT-style EEG embedder."""
+class MultiScaleAntiSymmetricConv1d(nn.Module):
+    """Per-channel zero-phase temporal filter bank with multiple kernel scales."""
 
-    def __init__(self, kernel: int, branch_dim: int):
-        super().__init__()
-        if kernel < 1 or kernel % 2 == 0:
-            raise ValueError("residual branch kernels must be positive odd integers")
-        padding = kernel // 2
-        groups = math.gcd(4, branch_dim)
-        self.conv = nn.Conv1d(1, branch_dim, kernel_size=kernel, padding=padding, bias=False)
-        self.norm = nn.GroupNorm(groups, branch_dim)
-        self.act = nn.GELU()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.act(self.norm(self.conv(x)))
-
-
-class MultiScaleResidualConv1d(nn.Module):
-    """Per-channel multi-kernel residual temporal front-end.
-
-    Each EEG channel is reshaped to its own 1D sequence, matching the reference
-    repo's `ResidualBranch` usage before channel/time token mixing. Branch
-    outputs are concatenated and returned as temporal features only.
-    """
-
-    def __init__(self, in_channels: int, filters_per_channel: int, kernels=(3, 7, 15, 31)):
+    def __init__(
+        self,
+        in_channels: int,
+        filters_per_channel: int,
+        kernels=(7, 15, 31, 61),
+        conv_layers: int = 1,
+    ):
         super().__init__()
         kernels = _parse_kernels(kernels)
+        conv_layers = int(conv_layers)
+        if conv_layers not in {1, 2}:
+            raise ValueError("multiscale anti-symmetric conv_layers must be 1 or 2")
         branch_dims = _split_dims(filters_per_channel, len(kernels))
         self.temporal_branches = nn.ModuleList(
             [
-                ResidualBranch(kernel, branch_dim)
+                AntiSymmetricBranchConv1d(
+                    in_channels,
+                    branch_dim,
+                    kernel,
+                    conv_layers=conv_layers,
+                )
                 for kernel, branch_dim in zip(kernels, branch_dims)
             ]
         )
         self.in_channels = int(in_channels)
         self.filters_per_channel = int(filters_per_channel)
         self.kernels = kernels
+        self.conv_layers = int(conv_layers)
         self.out_channels = self.in_channels * self.filters_per_channel
 
     @property
     def weight(self):
-        return torch.cat([branch.conv.weight.flatten() for branch in self.temporal_branches])
+        return torch.cat([branch.weight for branch in self.temporal_branches])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, N, T = x.shape
         if N != self.in_channels:
             raise ValueError(f"expected {self.in_channels} channels, got {N}")
-        sequence = x.reshape(B * N, 1, T)
-        y = torch.cat([branch(sequence) for branch in self.temporal_branches], dim=1)
-        return y.reshape(B, N * self.filters_per_channel, T)
+        return torch.cat([branch(x) for branch in self.temporal_branches], dim=1)
+
+
+# class ResidualBranch(nn.Module):
+#     """Kernel-specific temporal branch from the CoCoT-style EEG embedder."""
+
+#     def __init__(self, kernel: int, branch_dim: int):
+#         super().__init__()
+#         if kernel < 1 or kernel % 2 == 0:
+#             raise ValueError("residual branch kernels must be positive odd integers")
+#         padding = kernel // 2
+#         groups = math.gcd(4, branch_dim)
+#         self.conv = nn.Conv1d(1, branch_dim, kernel_size=kernel, padding=padding, bias=False)
+#         self.norm = nn.GroupNorm(groups, branch_dim)
+#         self.act = nn.GELU()
+
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         return self.act(self.norm(self.conv(x)))
+
+
+# class MultiScaleResidualConv1d(nn.Module):
+#     """Per-channel multi-kernel residual temporal front-end.
+
+#     Each EEG channel is reshaped to its own 1D sequence, matching the reference
+#     repo's `ResidualBranch` usage before channel/time token mixing. Branch
+#     outputs are concatenated and returned as temporal features only.
+#     """
+
+#     def __init__(self, in_channels: int, filters_per_channel: int, kernels=(3, 7, 15, 31)):
+#         super().__init__()
+#         kernels = _parse_kernels(kernels)
+#         branch_dims = _split_dims(filters_per_channel, len(kernels))
+#         self.temporal_branches = nn.ModuleList(
+#             [
+#                 ResidualBranch(kernel, branch_dim)
+#                 for kernel, branch_dim in zip(kernels, branch_dims)
+#             ]
+#         )
+#         self.in_channels = int(in_channels)
+#         self.filters_per_channel = int(filters_per_channel)
+#         self.kernels = kernels
+#         self.out_channels = self.in_channels * self.filters_per_channel
+
+#     @property
+#     def weight(self):
+#         return torch.cat([branch.conv.weight.flatten() for branch in self.temporal_branches])
+
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         B, N, T = x.shape
+#         if N != self.in_channels:
+#             raise ValueError(f"expected {self.in_channels} channels, got {N}")
+#         sequence = x.reshape(B * N, 1, T)
+#         y = torch.cat([branch(sequence) for branch in self.temporal_branches], dim=1)
+#         return y.reshape(B, N * self.filters_per_channel, T)
 
 
 class MLP(nn.Module):
@@ -274,6 +398,13 @@ class MLP(nn.Module):
                 self.temporal_conv = SymmetricConv1d(in_channels, temporal_filters, temporal_kernel_size)
             elif temporal_frontend in {"multiscale_symmetric", "symmetric_multiscale"}:
                 self.temporal_conv = MultiScaleSymmetricConv1d(
+                    in_channels,
+                    temporal_filters,
+                    kernels=residual_kernels,
+                    conv_layers=multiscale_symmetric_conv_layers,
+                )
+            elif temporal_frontend in {"multiscale_antisymmetric", "antisymmetric_multiscale"}:
+                self.temporal_conv = MultiScaleAntiSymmetricConv1d(
                     in_channels,
                     temporal_filters,
                     kernels=residual_kernels,
