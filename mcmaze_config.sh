@@ -38,9 +38,9 @@ export SPLIT="dataset"
 # export TEMPORAL_FILTERS="4"
 # export TEMPORAL_KERNEL_SIZE="31"
 
-export D="128"
+export D="16"
 export HIDDEN_DIM="256"
-export DEPTH="3" # depth=2 ==> one hidden layer. depth=1 ==> linear 
+export DEPTH="2" # depth=2 ==> one hidden layer. depth=1 ==> linear 
 export DROPOUT="0.2"
 export TEMPORAL_FRONTEND="symmetric_multiscale"
 export TEMPORAL_FILTERS="4" # setting this to 0 makes it an MLP embedder
