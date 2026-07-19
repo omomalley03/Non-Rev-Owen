@@ -768,7 +768,7 @@ def main():
     parser.add_argument("--decoder-split", choices=["checkpoint", "random", "subject_random"], default="checkpoint",
                         help="Split for the decoder. 'checkpoint' uses cfg.synth_split.")
     parser.add_argument("--embedder-init", choices=["pretrained", "random"], default="pretrained",
-                        help="Initialize the embedder from checkpoint weights or random weights with the same architecture.")
+                        help="Initialize the embedder from checkpoint weights, or skip the frozen baseline and train end-to-end from random weights.")
     parser.add_argument("--feature-layer", choices=["output", "hidden"], default="hidden",
                         help="Use normal embedder output or remove the final linear layer and decode from hidden features.")
     parser.add_argument("--decoder-type", choices=["mlp", "temporal_conv"], default="temporal_conv",
@@ -785,10 +785,10 @@ def main():
     parser.add_argument("--mlp-dropout", type=float, default=0.2)
     parser.add_argument("--conv-hidden-dim", type=int, default=128)
     parser.add_argument("--conv-depth", type=int, default=2)
-    parser.add_argument("--conv-kernel-size", type=int, default=15)
+    parser.add_argument("--conv-kernel-size", type=int, default=31)
     parser.add_argument("--conv-dropout", type=float, default=0.4,
                         help="Temporal-conv dropout. Defaults to --mlp-dropout when omitted.")
-    parser.add_argument("--decoder-lr", type=float, default=3e-4)
+    parser.add_argument("--decoder-lr", type=float, default=1e-3)
     parser.add_argument("--embedder-lr", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-3)
     parser.add_argument("--batch-size", type=int, default=128,
@@ -973,25 +973,13 @@ def main():
     out_dir = os.path.join(run_dir, "outputs", out_name)
     os.makedirs(out_dir, exist_ok=True)
 
+    run_frozen_baseline = args.embedder_init != "random"
+    pred_frozen = None
+    frozen_decoder = None
+    frozen_test_pred = None
+    frozen_row = None
+
     if args.decoder_type == "mlp":
-        print("Training frozen MLP condition decoder baseline...")
-        pred_frozen, frozen_decoder, frozen_info = train_mlp_classifier(
-            X_train,
-            y_train,
-            X_val,
-            y_val,
-            n_classes=len(classes),
-            hidden_dim=args.mlp_hidden_dim,
-            depth=args.mlp_depth,
-            dropout=args.mlp_dropout,
-            epochs=frozen_epochs,
-            batch_size=args.batch_size,
-            lr=args.decoder_lr,
-            weight_decay=args.weight_decay,
-            seed=args.seed,
-            device=device,
-        )
-        frozen_test_pred = predict_mlp_classifier(frozen_decoder, X_test, device) if X_test is not None else None
         decoder_feature_mean = feature_mean
         decoder_feature_std = feature_std
         fine_decoder = TrajectoryConditionMLP(
@@ -1001,30 +989,26 @@ def main():
             depth=args.mlp_depth,
             dropout=args.mlp_dropout,
         )
+        if run_frozen_baseline:
+            print("Training frozen MLP condition decoder baseline...")
+            pred_frozen, frozen_decoder, frozen_info = train_mlp_classifier(
+                X_train,
+                y_train,
+                X_val,
+                y_val,
+                n_classes=len(classes),
+                hidden_dim=args.mlp_hidden_dim,
+                depth=args.mlp_depth,
+                dropout=args.mlp_dropout,
+                epochs=frozen_epochs,
+                batch_size=args.batch_size,
+                lr=args.decoder_lr,
+                weight_decay=args.weight_decay,
+                seed=args.seed,
+                device=device,
+            )
+            frozen_test_pred = predict_mlp_classifier(frozen_decoder, X_test, device) if X_test is not None else None
     else:
-        print("Training frozen temporal-conv condition decoder baseline...")
-        pred_frozen, frozen_decoder, frozen_info = train_temporal_conv_classifier(
-            F_train_seq,
-            y_train,
-            F_val_seq,
-            y_val,
-            n_classes=len(classes),
-            hidden_dim=args.conv_hidden_dim,
-            depth=args.conv_depth,
-            kernel_size=args.conv_kernel_size,
-            dropout=conv_dropout,
-            epochs=frozen_epochs,
-            batch_size=args.batch_size,
-            lr=args.decoder_lr,
-            weight_decay=args.weight_decay,
-            seed=args.seed,
-            device=device,
-        )
-        frozen_test_pred = (
-            predict_temporal_conv_classifier(frozen_decoder, F_test_seq, device)
-            if F_test_seq is not None
-            else None
-        )
         decoder_feature_mean = seq_feature_mean
         decoder_feature_std = seq_feature_std
         fine_decoder = EmbeddingTemporalConvClassifier(
@@ -1035,18 +1019,47 @@ def main():
             kernel_size=args.conv_kernel_size,
             dropout=conv_dropout,
         )
+        if run_frozen_baseline:
+            print("Training frozen temporal-conv condition decoder baseline...")
+            pred_frozen, frozen_decoder, frozen_info = train_temporal_conv_classifier(
+                F_train_seq,
+                y_train,
+                F_val_seq,
+                y_val,
+                n_classes=len(classes),
+                hidden_dim=args.conv_hidden_dim,
+                depth=args.conv_depth,
+                kernel_size=args.conv_kernel_size,
+                dropout=conv_dropout,
+                epochs=frozen_epochs,
+                batch_size=args.batch_size,
+                lr=args.decoder_lr,
+                weight_decay=args.weight_decay,
+                seed=args.seed,
+                device=device,
+            )
+            frozen_test_pred = (
+                predict_temporal_conv_classifier(frozen_decoder, F_test_seq, device)
+                if F_test_seq is not None
+                else None
+            )
 
-    frozen_row = {
-        "model": f"frozen_{args.decoder_type}",
-        **feature_context,
-        **classification_metrics(y_val, pred_frozen),
-        "best_val_acc": float(frozen_info["best_val_acc"]),
-        "best_val_ce": float(frozen_info["best_val_ce"]),
-    }
-    if frozen_test_pred is not None and y_test is not None:
-        frozen_row.update(classification_metrics(y_test, frozen_test_pred, prefix="test_"))
+    if frozen_decoder is not None:
+        frozen_row = {
+            "model": f"frozen_{args.decoder_type}",
+            **feature_context,
+            **classification_metrics(y_val, pred_frozen),
+            "best_val_acc": float(frozen_info["best_val_acc"]),
+            "best_val_ce": float(frozen_info["best_val_ce"]),
+        }
+        if frozen_test_pred is not None and y_test is not None:
+            frozen_row.update(classification_metrics(y_test, frozen_test_pred, prefix="test_"))
+        fine_decoder.load_state_dict(clone_state_dict_cpu(frozen_decoder))
+        print("Initialized fine-tune decoder from the trained frozen decoder.")
+    else:
+        print("Skipping frozen decoder baseline for random embedder init.")
+        print("Training embedder and decoder end-to-end from random initialization.")
 
-    fine_decoder.load_state_dict(clone_state_dict_cpu(frozen_decoder))
     finetune_embedder = build_model_from_checkpoint(
         cfg,
         ckpt["model_state_dict"],
@@ -1054,7 +1067,6 @@ def main():
         init=args.embedder_init,
     )
     finetune_embedder.load_state_dict(initial_embedder_state)
-    print("Initialized fine-tune decoder from the trained frozen decoder.")
     finetune_embedder, fine_decoder, history, y_val_ft, pred_ft, finetune_info = train_finetuned_model(
         finetune_embedder,
         fine_decoder,
@@ -1091,13 +1103,16 @@ def main():
         )
         finetuned_row.update(classification_metrics(y_test_ft, pred_test_ft, prefix="test_"))
 
-    rows = [frozen_row, finetuned_row]
+    rows = ([frozen_row] if frozen_row is not None else []) + [finetuned_row]
     save_metrics(out_dir, rows)
     save_train_log(os.path.join(out_dir, "finetune_train_log.csv"), history)
+    val_predictions = {f"finetuned_{args.decoder_type}": pred_ft}
+    if pred_frozen is not None:
+        val_predictions = {f"frozen_{args.decoder_type}": pred_frozen, **val_predictions}
     plot_confusions(
         out_dir,
         y_val_ft,
-        {f"frozen_{args.decoder_type}": pred_frozen, f"finetuned_{args.decoder_type}": pred_ft},
+        val_predictions,
         labels=np.arange(len(classes)),
         label_names=label_names,
     )
@@ -1118,7 +1133,10 @@ def main():
         {
             "embedder_state_dict": finetune_embedder.cpu().state_dict(),
             "decoder_state_dict": fine_decoder.cpu().state_dict(),
-            "frozen_decoder_state_dict": frozen_decoder.cpu().state_dict(),
+            "frozen_decoder_state_dict": (
+                frozen_decoder.cpu().state_dict() if frozen_decoder is not None else None
+            ),
+            "ran_frozen_baseline": run_frozen_baseline,
             "args": vars(args),
             "resolved_conv_dropout": conv_dropout,
             "checkpoint_run_dir": run_dir,

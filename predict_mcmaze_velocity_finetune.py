@@ -4,8 +4,10 @@ from __future__ import annotations
 
 This is the end-to-end counterpart to ``predict_mcmaze_velocity.py``.  It
 starts from a trained embedding checkpoint, trains a frozen-embedding decoder
-baseline from that checkpoint, then fine-tunes the embedder and the same
-per-snapshot MLP decoder jointly on:
+baseline for pretrained embedders, then fine-tunes the embedder and the same
+per-snapshot MLP decoder jointly.  With ``--embedder-init random`` it skips the
+frozen baseline and trains the embedder plus decoder end to end from random
+initialization on:
 
     embedding(raw_neural_window)[t] -> hand_vel(t + horizon)
 """
@@ -316,7 +318,7 @@ def main():
     parser.add_argument("--checkpoint", default=None,
                         help="Checkpoint path/name. Defaults to checkpoints/best.pt under --run.")
     parser.add_argument("--embedder-init", choices=["pretrained", "random"], default="pretrained",
-                        help="Initialize the embedder from checkpoint weights or random weights with the same architecture.")
+                        help="Initialize the embedder from checkpoint weights, or skip the frozen baseline and train end-to-end from random weights.")
     parser.add_argument("--output-suffix", default=None,
                         help="Optional suffix for the output directory name.")
     parser.add_argument("--horizon-ms", type=int, default=100)
@@ -388,7 +390,7 @@ def main():
 
     print(
         f"Computing {args.embedder_init}-init frozen {args.feature_layer} features "
-        f"on {device} for feature statistics and baseline..."
+        f"on {device} for feature statistics..."
     )
     frozen_embedder = initial_embedder
     F_train = compute_features(
@@ -415,36 +417,46 @@ def main():
     out_dir = os.path.join(run_dir, "outputs", out_name)
     os.makedirs(out_dir, exist_ok=True)
 
-    print(f"Training {args.embedder_init}-init frozen-embedding MLP baseline...")
-    pred_frozen, frozen_decoder, frozen_info = train_mlp_decoder(
-        X_train_std,
-        y_train,
-        X_val_std,
-        y_val,
-        hidden_dim=args.mlp_hidden_dim,
-        depth=args.mlp_depth,
-        dropout=args.mlp_dropout,
-        epochs=args.epochs,
-        batch_size=4096,
-        lr=args.decoder_lr,
-        weight_decay=args.weight_decay,
-        seed=args.seed,
-        device=device,
-    )
-    frozen_metrics = {
-        "model": "frozen_mlp",
-        "embedder_init": args.embedder_init,
-        "feature_layer": args.feature_layer,
-        "feature_dim": decoder_in_dim,
-        **regression_metrics(y_val, pred_frozen),
-        "best_val_mse_z": float(frozen_info["best_val_mse_z"]),
-    }
-    save_decoder_loss_curve(
-        out_dir,
-        frozen_info["history"],
-        stem="frozen_mlp_loss_curve",
-        title=f"{args.embedder_init}-init frozen-embedding MLP decoder loss",
-    )
+    run_frozen_baseline = args.embedder_init != "random"
+    pred_frozen = None
+    frozen_decoder = None
+    frozen_info = None
+    frozen_metrics = None
+
+    if run_frozen_baseline:
+        print(f"Training {args.embedder_init}-init frozen-embedding MLP baseline...")
+        pred_frozen, frozen_decoder, frozen_info = train_mlp_decoder(
+            X_train_std,
+            y_train,
+            X_val_std,
+            y_val,
+            hidden_dim=args.mlp_hidden_dim,
+            depth=args.mlp_depth,
+            dropout=args.mlp_dropout,
+            epochs=args.epochs,
+            batch_size=4096,
+            lr=args.decoder_lr,
+            weight_decay=args.weight_decay,
+            seed=args.seed,
+            device=device,
+        )
+        frozen_metrics = {
+            "model": "frozen_mlp",
+            "embedder_init": args.embedder_init,
+            "feature_layer": args.feature_layer,
+            "feature_dim": decoder_in_dim,
+            **regression_metrics(y_val, pred_frozen),
+            "best_val_mse_z": float(frozen_info["best_val_mse_z"]),
+        }
+        save_decoder_loss_curve(
+            out_dir,
+            frozen_info["history"],
+            stem="frozen_mlp_loss_curve",
+            title=f"{args.embedder_init}-init frozen-embedding MLP decoder loss",
+        )
+    else:
+        print("Skipping frozen decoder baseline for random embedder init.")
+        print("Training embedder and decoder end-to-end from random initialization.")
 
     print(f"Fine-tuning {args.embedder_init}-init embedder + MLP decoder...")
     finetune_embedder = build_embedder(
@@ -460,10 +472,11 @@ def main():
         depth=args.mlp_depth,
         dropout=args.mlp_dropout,
     )
-    finetune_decoder.load_state_dict(
-        {k: v.detach().cpu().clone() for k, v in frozen_decoder.state_dict().items()}
-    )
-    print("Initialized fine-tune decoder from the trained frozen-embedding decoder.")
+    if frozen_decoder is not None:
+        finetune_decoder.load_state_dict(
+            {k: v.detach().cpu().clone() for k, v in frozen_decoder.state_dict().items()}
+        )
+        print("Initialized fine-tune decoder from the trained frozen-embedding decoder.")
     finetune_embedder, finetune_decoder, history, y_val_ft, pred_ft, finetune_info = train_finetuned_model(
         finetune_embedder,
         finetune_decoder,
@@ -491,13 +504,16 @@ def main():
         title=f"{args.embedder_init}-init fine-tuned MLP decoder loss",
     )
 
-    rows = [frozen_metrics, finetuned_metrics]
+    rows = ([frozen_metrics] if frozen_metrics is not None else []) + [finetuned_metrics]
     save_metrics(out_dir, rows)
     write_train_log(os.path.join(out_dir, "train_log.csv"), history)
+    val_predictions = {"finetuned_mlp": pred_ft}
+    if pred_frozen is not None:
+        val_predictions = {"frozen_mlp": pred_frozen, **val_predictions}
     plot_predictions(
         out_dir,
         y_val_ft,
-        {"frozen_mlp": pred_frozen, "finetuned_mlp": pred_ft},
+        val_predictions,
         max_points=args.max_plot_points,
         seed=args.seed,
     )
@@ -506,7 +522,10 @@ def main():
         {
             "embedder_state_dict": finetune_embedder.cpu().state_dict(),
             "decoder_state_dict": finetune_decoder.cpu().state_dict(),
-            "frozen_decoder_state_dict": frozen_decoder.cpu().state_dict(),
+            "frozen_decoder_state_dict": (
+                frozen_decoder.cpu().state_dict() if frozen_decoder is not None else None
+            ),
+            "ran_frozen_baseline": run_frozen_baseline,
             "args": vars(args),
             "checkpoint_run_dir": run_dir,
             "checkpoint_path": ckpt_path,
@@ -521,7 +540,7 @@ def main():
             "embedder_init": args.embedder_init,
             "config": asdict(cfg),
             "metrics": rows,
-            "frozen_decoder_history": frozen_info["history"],
+            "frozen_decoder_history": frozen_info["history"] if frozen_info is not None else None,
             "history": history,
         },
         os.path.join(out_dir, "finetuned_model.pt"),
