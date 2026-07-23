@@ -1,19 +1,17 @@
-"""Plot MC Maze embedding-plane spectral redundancy.
+"""Plot embedding-plane rotation frequencies for MC Maze or PhysioNet/synth runs.
 
 For each 2D embedding plane ``p = (x_p, y_p)``, this computes the average
 one-sided power spectrum
 
     P_p(f) = mean_trials((|FFT(x_p)|^2 + |FFT(y_p)|^2) / 2)
 
-then normalizes each plane's spectrum to unit sum. Plane redundancy is measured
-as cosine similarity between these normalized spectral fingerprints. This is a
-different diagnostic from the block-CCA regularizer: it asks whether different
-planes use the same temporal frequencies, not whether their raw trajectories are
-linearly dependent.
+then records the dominant frequency for each plane. The plot is intentionally
+simple: embedding plane vs dominant rotation frequency.
 
 Examples
 --------
     python plot_mcmaze_plane_spectral_redundancy.py --run mcmaze/runs/...
+    python plot_mcmaze_plane_spectral_redundancy.py --run physionetmi/synth_runs/...
     python plot_mcmaze_plane_spectral_redundancy.py --checkpoint mcmaze/runs/.../checkpoints/best.pt
     python plot_mcmaze_plane_spectral_redundancy.py --finetuned-model mcmaze/runs/.../outputs/.../finetuned_model.pt
 """
@@ -23,10 +21,15 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import sys
 from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib_nonrev")
 os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import matplotlib
 matplotlib.use("Agg")
@@ -38,9 +41,11 @@ from torch.utils.data import DataLoader
 from data import gaussian_smooth, load_mcmaze_cached, make_windows, soft_normalize, train_val_split
 from model import MLP, infer_multiscale_symmetric_conv_layers
 from paths import RUNS_BASE, RUNS_DIR
+from synth_data import load_synthetic_subjects, load_synthetic_windows
+from visualize_synth import train_val_split_synth
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = REPO_ROOT
 
 
 def _cfg_get(cfg, name: str, default=None):
@@ -123,6 +128,7 @@ def build_embedder(cfg, state_dict: dict, in_channels: int) -> MLP:
             state_dict,
             _cfg_get(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=_cfg_get(cfg, "antisymmetric_planes", 0),
     )
     model.load_state_dict(state_dict)
     return model
@@ -187,6 +193,43 @@ def load_mcmaze_windows(cfg):
         int(_cfg_get(cfg, "seed")),
     )
     return spikes_raw, train_ds, val_ds
+
+
+def _is_physionet_or_synth_run(cfg) -> bool:
+    dataset_name = str(_cfg_get(cfg, "dataset_name", "")).lower()
+    if dataset_name in {"physionetmi", "synth", "synthetic"}:
+        return True
+    return not bool(_cfg_get(cfg, "nwb_path", "")) and bool(_cfg_get(cfg, "synth_data_path", ""))
+
+
+def load_physionet_windows(cfg):
+    windows = load_synthetic_windows(cfg)
+    subjects = load_synthetic_subjects(cfg)
+    train_ds, val_ds, _holdout_ds, _trainval_subjects, _holdout_subjects = train_val_split_synth(
+        windows,
+        float(_cfg_get(cfg, "val_split")),
+        int(_cfg_get(cfg, "seed")),
+        _cfg_get(cfg, "synth_split", "random"),
+        subjects=subjects,
+        subject_count=int(_cfg_get(cfg, "synth_subject_count", 0)),
+        subject_ids=_cfg_get(cfg, "synth_subject_ids", ""),
+        holdout_subject_count=int(_cfg_get(cfg, "synth_holdout_subject_count", 0)),
+        holdout_subject_ids=_cfg_get(cfg, "synth_holdout_subject_ids", ""),
+        return_holdout=True,
+    )
+    return windows, train_ds, val_ds
+
+
+def load_windows_for_run(cfg):
+    if _is_physionet_or_synth_run(cfg):
+        windows, train_ds, val_ds = load_physionet_windows(cfg)
+        sample_rate_hz = float(_cfg_get(cfg, "eeg_fs", 250.0))
+        return "PhysioNet/synth", int(windows.shape[1]), train_ds, val_ds, sample_rate_hz
+
+    spikes_raw, train_ds, val_ds = load_mcmaze_windows(cfg)
+    bin_ms = float(_cfg_get(cfg, "bin_ms"))
+    sample_rate_hz = 1000.0 / bin_ms
+    return "MC Maze", int(spikes_raw.shape[0]), train_ds, val_ds, sample_rate_hz
 
 
 def _mean_axes(cfg) -> tuple[int, ...]:
@@ -327,55 +370,19 @@ def save_outputs(out_dir: Path, freqs, fingerprints, similarity, rows, title: st
         writer.writeheader()
         writer.writerows(rows)
 
-    metrics = {key: np.asarray([row[key] for row in rows]) for key in rows[0] if key != "plane"}
-    sim_plot, sim_idx = _limit_plot_items(similarity, max_plot_planes)
-    if sim_plot.shape[1] != len(sim_idx):
-        sim_plot = sim_plot[:, sim_idx]
-    fp_plot, fp_idx = _limit_plot_items(fingerprints, max_plot_planes)
-
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
-    ax = axes[0, 0]
-    im = ax.imshow(sim_plot, vmin=0, vmax=1, cmap="viridis", aspect="auto", origin="lower")
-    ax.set_title("Plane spectral redundancy")
-    ax.set_xlabel("plane")
-    ax.set_ylabel("plane")
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="cosine similarity")
-
-    ax = axes[0, 1]
-    extent = [float(freqs[0]), float(freqs[-1]), int(fp_idx[0]), int(fp_idx[-1])] if len(fp_idx) else None
-    im = ax.imshow(fp_plot, cmap="magma", aspect="auto", origin="lower", extent=extent)
-    ax.set_title("Normalized plane spectra")
-    ax.set_xlabel("frequency (Hz)")
-    ax.set_ylabel("plane")
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="fraction of plane power")
-
     plane = np.arange(len(rows))
-    axes[0, 2].plot(plane, metrics["mean_spectral_redundancy"], linewidth=1.2)
-    axes[0, 2].set_title("Mean redundancy to other planes")
-    axes[0, 2].set_xlabel("plane")
-    axes[0, 2].set_ylabel("mean cosine similarity")
+    dominant_frequency = np.asarray([row["dominant_frequency_hz"] for row in rows])
 
-    axes[1, 0].plot(plane, metrics["dominant_frequency_hz"], linewidth=1.2)
-    axes[1, 0].set_title("Dominant frequency")
-    axes[1, 0].set_xlabel("plane")
-    axes[1, 0].set_ylabel("Hz")
-
-    axes[1, 1].plot(plane, metrics["spectral_entropy"], linewidth=1.2)
-    axes[1, 1].set_title("Spectral entropy")
-    axes[1, 1].set_xlabel("plane")
-    axes[1, 1].set_ylabel("0=narrow, 1=broad")
-
-    axes[1, 2].plot(plane, metrics["total_power"], linewidth=1.2)
-    axes[1, 2].set_yscale("log")
-    axes[1, 2].set_title("Total spectral power")
-    axes[1, 2].set_xlabel("plane")
-    axes[1, 2].set_ylabel("FFT power")
-
-    for ax in axes.ravel():
-        ax.spines[["top", "right"]].set_visible(False)
-    fig.suptitle(title, fontsize=12)
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    ax.scatter(plane, dominant_frequency, s=10, alpha=0.85)
+    ax.plot(plane, dominant_frequency, linewidth=0.8, alpha=0.55)
+    ax.set_title(title, fontsize=11)
+    ax.set_xlabel("embedding plane")
+    ax.set_ylabel("dominant frequency (Hz)")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(True, axis="y", linewidth=0.4, alpha=0.35)
     fig.tight_layout()
-    png_path = out_dir / "plane_spectral_redundancy.png"
+    png_path = out_dir / "plane_dominant_frequencies.png"
     fig.savefig(png_path, dpi=170, bbox_inches="tight")
     plt.close(fig)
 
@@ -394,7 +401,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--include-dc", action="store_true", help="Include the DC frequency bin in fingerprints.")
     parser.add_argument("--max-plot-planes", type=int, default=512,
-                        help="Max planes shown in image panels; 0 means all. Metrics are always all planes.")
+                        help="Retained for compatibility; the simple frequency plot shows all planes.")
     parser.add_argument("--out-dir", type=Path, default=None)
     args = parser.parse_args()
 
@@ -408,19 +415,21 @@ def main() -> None:
     source = load_source(args)
     cfg = source["cfg"]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    spikes_raw, train_ds, val_ds = load_mcmaze_windows(cfg)
+    dataset_label, in_channels, train_ds, val_ds, sample_rate_hz = load_windows_for_run(cfg)
     dataset = train_ds if args.split == "train" else val_ds
-    model = build_embedder(cfg, source["state_dict"], spikes_raw.shape[0]).to(device)
+    model = build_embedder(cfg, source["state_dict"], in_channels).to(device)
 
-    print(f"Computing plane spectra on {args.split} split: trials={len(dataset)} device={device}")
+    print(
+        f"Computing plane spectra on {dataset_label} {args.split} split: "
+        f"trials={len(dataset)} fs={sample_rate_hz:g}Hz device={device}"
+    )
     avg_power, T, n_trials = compute_plane_psd(model, dataset, cfg, args.batch_size, device)
-    bin_ms = float(_cfg_get(cfg, "bin_ms"))
-    freqs = np.fft.rfftfreq(T, d=bin_ms * 1e-3)
+    freqs = np.fft.rfftfreq(T, d=1.0 / sample_rate_hz)
     selected_freqs, fingerprints, similarity, rows = spectral_metrics(avg_power, freqs, args.include_dc)
 
     out_dir = args.out_dir or source["default_out_dir"]
     title = (
-        f"MC Maze plane spectral redundancy ({args.split}, n={n_trials}, "
+        f"{dataset_label} plane dominant frequencies ({args.split}, n={n_trials}, "
         f"{'with' if args.include_dc else 'no'} DC)\n{source['label']}"
     )
     save_outputs(Path(out_dir), selected_freqs, fingerprints, similarity, rows, title, args.max_plot_planes)

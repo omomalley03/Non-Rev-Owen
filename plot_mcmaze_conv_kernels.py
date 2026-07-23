@@ -7,6 +7,9 @@ Examples
     python plot_mcmaze_conv_kernels.py --run 2
     python plot_mcmaze_conv_kernels.py --run mcmaze/runs/20260706_141117_...
     python plot_mcmaze_conv_kernels.py --checkpoint mcmaze/runs/.../checkpoints/best.pt
+    python plot_mcmaze_conv_kernels.py --kernel-mode raw
+    python plot_mcmaze_conv_kernels.py --kernel-mode symmetric
+    python plot_mcmaze_conv_kernels.py --kernel-mode antisymmetric
     python plot_mcmaze_conv_kernels.py --all
 """
 
@@ -26,6 +29,18 @@ import torch
 
 from model import MLP, infer_multiscale_symmetric_conv_layers
 from paths import RUNS_BASE, RUNS_DIR
+
+
+KERNEL_MODES = ("auto", "raw", "symmetric", "antisymmetric", "effective")
+SYMMETRIC_FRONTENDS = {"symmetric", "multiscale_symmetric", "symmetric_multiscale"}
+ANTISYMMETRIC_FRONTENDS = {"multiscale_antisymmetric", "antisymmetric_multiscale"}
+MIXED_PARITY_FRONTENDS = {
+    "mixed_parity",
+    "mixed_symmetric_antisymmetric",
+    "mixed_sym_anti",
+    "sym_anti",
+}
+MULTISCALE_FRONTENDS = SYMMETRIC_FRONTENDS | ANTISYMMETRIC_FRONTENDS | MIXED_PARITY_FRONTENDS
 
 
 def _unique_existing(paths: list[str]) -> list[str]:
@@ -103,20 +118,56 @@ def resolve_checkpoint(run: str | None, checkpoint: str | None) -> tuple[str, st
     return ckpt_path, run_dir
 
 
+def configured_temporal_frontend(cfg) -> str | None:
+    frontend = getattr(cfg, "temporal_frontend", None)
+    if not isinstance(frontend, str):
+        return None
+    frontend = frontend.lower()
+    if frontend in MULTISCALE_FRONTENDS or frontend == "residual":
+        return frontend
+    return None
+
+
 def infer_temporal_frontend(state_dict: dict, cfg) -> str:
+    cfg_frontend = configured_temporal_frontend(cfg)
     if "temporal_conv.weight" in state_dict:
         return "symmetric"
     if any(k.startswith("temporal_conv.temporal_branches.0.norm.") for k in state_dict):
         return "residual"
     if any(k.startswith("temporal_conv.temporal_branches.0.conv.") for k in state_dict):
-        return "multiscale_symmetric"
-    return getattr(cfg, "temporal_frontend", "symmetric")
+        return cfg_frontend or "multiscale_symmetric"
+    return cfg_frontend or "symmetric"
+
+
+def resolve_kernel_mode(requested_mode: str, temporal_frontend: str) -> str:
+    requested_mode = requested_mode.lower()
+    if requested_mode != "auto":
+        return requested_mode
+
+    return "effective"
+
+
+def transform_kernel_weight(weight: torch.Tensor, kernel_mode: str) -> torch.Tensor:
+    if kernel_mode == "raw":
+        return weight
+    if kernel_mode == "symmetric":
+        return weight + weight.flip(-1)
+    if kernel_mode == "antisymmetric":
+        return weight - weight.flip(-1)
+    raise ValueError(f"Unknown kernel mode: {kernel_mode!r}")
 
 
 def first_linear_input_dim(state_dict: dict) -> int:
     candidates = []
     for key, value in state_dict.items():
-        if not (key.startswith("net.") and key.endswith(".weight")):
+        if not (
+            (
+                key.startswith("net.")
+                or key.startswith("sym_net.")
+                or key.startswith("anti_net.")
+            )
+            and key.endswith(".weight")
+        ):
             continue
         if getattr(value, "ndim", None) != 2:
             continue
@@ -144,11 +195,12 @@ def infer_input_channels(cfg, state_dict: dict) -> int:
     )
 
 
-def build_model_for_kernels(cfg, state_dict: dict) -> MLP:
+def build_model_for_kernels(cfg, state_dict: dict) -> tuple[MLP, str]:
     temporal_filters = int(getattr(cfg, "temporal_filters", 0))
     if temporal_filters <= 0:
         raise ValueError("This checkpoint has TEMPORAL_FILTERS=0, so there are no conv kernels to plot.")
 
+    temporal_frontend = infer_temporal_frontend(state_dict, cfg)
     model = MLP(
         in_channels=infer_input_channels(cfg, state_dict),
         d=int(getattr(cfg, "d")),
@@ -157,12 +209,13 @@ def build_model_for_kernels(cfg, state_dict: dict) -> MLP:
         dropout=float(getattr(cfg, "dropout", 0.0)),
         temporal_filters=temporal_filters,
         temporal_kernel_size=int(getattr(cfg, "temporal_kernel_size", 31)),
-        temporal_frontend=infer_temporal_frontend(state_dict, cfg),
+        temporal_frontend=temporal_frontend,
         residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
         multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
             state_dict,
             getattr(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
     )
 
     current = model.state_dict()
@@ -176,22 +229,38 @@ def build_model_for_kernels(cfg, state_dict: dict) -> MLP:
     if not loaded:
         raise ValueError("No temporal_conv weights in the checkpoint matched the rebuilt model.")
     model.load_state_dict(current)
-    return model
+    return model, temporal_frontend
 
 
-def _collect_kernels(temporal_conv, max_panels: int) -> tuple[list[np.ndarray], list[str]]:
+def _collect_kernels(temporal_conv, max_panels: int, kernel_mode: str) -> tuple[list[np.ndarray], list[str]]:
+    if hasattr(temporal_conv, "sym_conv") and hasattr(temporal_conv, "anti_conv"):
+        kernels = []
+        titles = []
+        per_branch_panels = max(1, max_panels // 2)
+        for label, branch_conv in (("sym", temporal_conv.sym_conv), ("anti", temporal_conv.anti_conv)):
+            branch_kernels, branch_titles = _collect_kernels(branch_conv, per_branch_panels, kernel_mode)
+            kernels.extend(branch_kernels)
+            titles.extend([f"{label}:{title}" for title in branch_titles])
+        return kernels[:max_panels], titles[:max_panels]
+
     if hasattr(temporal_conv, "temporal_branches"):
         kernels = []
         titles = []
         branches = list(temporal_conv.temporal_branches)
         n_per_branch = max(1, max_panels // max(len(branches), 1))
         for branch_idx, branch in enumerate(branches):
-            if hasattr(branch, "effective_weight"):
+            if kernel_mode == "effective" and hasattr(branch, "effective_weight"):
                 layer_weights = [(branch.effective_weight(), f"k{branch.kernel}:l1")]
                 if getattr(branch, "conv_layers", 1) == 2:
                     layer_weights.append((branch.effective_weight(2), f"k{branch.kernel}:l2"))
+            elif hasattr(branch, "conv"):
+                layer_weights = [(transform_kernel_weight(branch.conv.weight, kernel_mode), f"k{branch.kernel}:l1")]
+                if getattr(branch, "conv_layers", 1) == 2:
+                    layer_weights.append(
+                        (transform_kernel_weight(branch.conv2.weight, kernel_mode), f"k{branch.kernel}:l2")
+                    )
             else:
-                layer_weights = [(branch.conv.weight, f"b{branch_idx}")]
+                layer_weights = [(transform_kernel_weight(branch.conv.weight, kernel_mode), f"b{branch_idx}")]
             for weights_tensor, branch_label in layer_weights:
                 weights = weights_tensor.detach().cpu().numpy().mean(axis=1)
                 for dim_idx, weight in enumerate(weights[:n_per_branch]):
@@ -200,7 +269,12 @@ def _collect_kernels(temporal_conv, max_panels: int) -> tuple[list[np.ndarray], 
         return kernels[:max_panels], titles[:max_panels]
 
     weights = temporal_conv.weight.detach().cpu().numpy()[:, 0, :]
-    weights = weights + np.flip(weights, axis=-1)
+    if kernel_mode in {"effective", "symmetric"}:
+        weights = weights + np.flip(weights, axis=-1)
+    elif kernel_mode == "antisymmetric":
+        weights = weights - np.flip(weights, axis=-1)
+    elif kernel_mode != "raw":
+        raise ValueError(f"Unknown kernel mode: {kernel_mode!r}")
     n_show = min(len(weights), max_panels)
     return [weights[i] for i in range(n_show)], [str(i) for i in range(n_show)]
 
@@ -211,13 +285,19 @@ def plot_conv_kernels(
     max_panels: int = 64,
     dpi: int = 150,
     ylim: tuple[float, float] | None = None,
+    kernel_mode: str = "symmetric",
+    bin_ms: float = 10.0,
 ) -> None:
     if model.temporal_conv is None:
         raise ValueError("Model has no temporal convolution frontend.")
 
-    kernels, titles = _collect_kernels(model.temporal_conv, max_panels=max_panels)
+    kernels, titles = _collect_kernels(model.temporal_conv, max_panels=max_panels, kernel_mode=kernel_mode)
     if not kernels:
         raise ValueError("No temporal convolution kernels were found.")
+
+    max_kernel_len = max(len(kernel) for kernel in kernels)
+    half_span_ms = 0.5 * (max_kernel_len - 1) * float(bin_ms)
+    xlim = (-half_span_ms, half_span_ms)
 
     n_show = len(kernels)
     cols = int(np.ceil(np.sqrt(n_show)))
@@ -228,16 +308,24 @@ def plot_conv_kernels(
             idx = i * cols + j
             ax = axes[i, j]
             if idx < n_show:
-                ax.plot(kernels[idx])
+                kernel = kernels[idx]
+                t_ms = (np.arange(len(kernel)) - (len(kernel) - 1) / 2.0) * float(bin_ms)
+                ax.plot(t_ms, kernel)
                 # ax.set_title(titles[idx], fontsize=6)
                 ax.axhline(0, color="0.8", linewidth=0.5)
+                ax.set_xlim(*xlim)
                 if ylim is not None:
                     ax.set_ylim(*ylim)
                 ax.locator_params(axis="y", nbins=3)
                 ax.tick_params(axis="y", labelsize=6, length=2)
+                ax.tick_params(axis="x", labelsize=6, length=2)
             else:
                 ax.set_visible(False)
-            ax.set_xticks([])
+            if i < rows - 1:
+                ax.set_xticklabels([])
+            else:
+                ax.locator_params(axis="x", nbins=3)
+    fig.supxlabel("time from kernel centre (ms)", fontsize=9)
     fig.tight_layout()
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
@@ -251,19 +339,50 @@ def fixed_ylim_path(out_path: str, ylim: tuple[float, float]) -> str:
     return f"{root}_ylim_{lo:g}_to_{hi:g}{ext or '.png'}"
 
 
-def plot_checkpoint(ckpt_path: str, run_dir: str | None, out_path: str | None, max_panels: int, dpi: int) -> None:
+def default_out_path(ckpt_path: str, run_dir: str | None, kernel_mode: str, explicit_mode: str) -> str:
+    if run_dir is not None:
+        out_dir = os.path.join(run_dir, "outputs")
+        base = "11_conv_kernels.png" if explicit_mode == "auto" else f"11_conv_kernels_{kernel_mode}.png"
+        return os.path.join(out_dir, base)
+    base = "conv_kernels.png" if explicit_mode == "auto" else f"conv_kernels_{kernel_mode}.png"
+    return os.path.join(os.path.dirname(ckpt_path), base)
+
+
+def plot_checkpoint(
+    ckpt_path: str,
+    run_dir: str | None,
+    out_path: str | None,
+    max_panels: int,
+    dpi: int,
+    requested_kernel_mode: str,
+) -> None:
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     cfg = ckpt["config"]
     state_dict = ckpt["model_state_dict"]
-    model = build_model_for_kernels(cfg, state_dict)
+    model, temporal_frontend = build_model_for_kernels(cfg, state_dict)
+    kernel_mode = resolve_kernel_mode(requested_kernel_mode, temporal_frontend)
 
     if out_path is None:
-        if run_dir is not None:
-            out_path = os.path.join(run_dir, "outputs", "11_conv_kernels.png")
-        else:
-            out_path = os.path.join(os.path.dirname(ckpt_path), "conv_kernels.png")
-    plot_conv_kernels(model, out_path, max_panels=max_panels, dpi=dpi)
-    plot_conv_kernels(model, fixed_ylim_path(out_path, (-1.0, 1.0)), max_panels=max_panels, dpi=dpi, ylim=(-1.0, 1.0))
+        out_path = default_out_path(ckpt_path, run_dir, kernel_mode, requested_kernel_mode)
+    print(f"Kernel mode: {requested_kernel_mode} -> {kernel_mode} ({temporal_frontend})")
+    bin_ms = float(getattr(cfg, "bin_ms", 10.0))
+    plot_conv_kernels(
+        model,
+        out_path,
+        max_panels=max_panels,
+        dpi=dpi,
+        kernel_mode=kernel_mode,
+        bin_ms=bin_ms,
+    )
+    plot_conv_kernels(
+        model,
+        fixed_ylim_path(out_path, (-1.0, 1.0)),
+        max_panels=max_panels,
+        dpi=dpi,
+        ylim=(-1.0, 1.0),
+        kernel_mode=kernel_mode,
+        bin_ms=bin_ms,
+    )
 
 
 def main() -> None:
@@ -274,6 +393,15 @@ def main() -> None:
     parser.add_argument("--all", action="store_true", help="Plot kernels for every completed MC Maze run.")
     parser.add_argument("--max-panels", type=int, default=64, help="Maximum number of kernels to show.")
     parser.add_argument("--dpi", type=int, default=150)
+    parser.add_argument(
+        "--kernel-mode",
+        choices=KERNEL_MODES,
+        default="auto",
+        help=(
+            "Which kernel weights to plot. auto rebuilds the configured frontend and plots "
+            "the effective kernel used by the current model code."
+        ),
+    )
     parser.add_argument("--skip-no-conv", action="store_true", help="With --all, skip runs without temporal filters.")
     args = parser.parse_args()
 
@@ -289,7 +417,7 @@ def main() -> None:
         for run_dir in runs:
             ckpt_path = os.path.join(run_dir, "checkpoints", "best.pt")
             try:
-                plot_checkpoint(ckpt_path, run_dir, None, args.max_panels, args.dpi)
+                plot_checkpoint(ckpt_path, run_dir, None, args.max_panels, args.dpi, args.kernel_mode)
             except ValueError as exc:
                 if args.skip_no_conv and "TEMPORAL_FILTERS=0" in str(exc):
                     print(f"Skipped no-conv run: {run_dir}")
@@ -298,7 +426,7 @@ def main() -> None:
         return
 
     ckpt_path, run_dir = resolve_checkpoint(args.run, args.checkpoint)
-    plot_checkpoint(ckpt_path, run_dir, args.out, args.max_panels, args.dpi)
+    plot_checkpoint(ckpt_path, run_dir, args.out, args.max_panels, args.dpi, args.kernel_mode)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,55 @@ _TIME_COLS = [
 ]
 
 
+def _time_index_seconds(index) -> np.ndarray:
+    """Convert pandas/numpy time indices to float seconds."""
+    values = index.values if hasattr(index, "values") else np.asarray(index)
+    if np.issubdtype(values.dtype, np.timedelta64):
+        return values.astype("float64") / 1e9
+    return values.astype("float64")
+
+
+# MC Maze resampling can produce a non-monotonic time index when the NWB has
+# gaps. This is a problem for np.searchsorted() when aligning trial times to
+# resampled bins. Detect the first non-monotonic index (if any) and drop
+# the trailing rows, which are NaNs.
+
+def _first_nonmonotonic_time(time_index_s: np.ndarray):
+    diffs = np.diff(time_index_s)
+    bad = np.flatnonzero((diffs <= 0) | ~np.isfinite(diffs))
+    if len(bad) == 0:
+        return None
+    return int(bad[0] + 1)
+
+
+def _drop_empty_reset_tail(ds) -> int:
+    """Remove nlb_tools' empty appended block when resample index resets."""
+    time_index_s = _time_index_seconds(ds.data.index)
+    reset_idx = _first_nonmonotonic_time(time_index_s)
+    if reset_idx is None:
+        return 0
+
+    reset_tail = ds.data.iloc[reset_idx:]
+    if not reset_tail.isna().all(axis=None):
+        raise ValueError(
+            "MC Maze resampling produced a non-monotonic time index with "
+            "non-empty samples after the reset; refusing to align trials with "
+            "np.searchsorted."
+        )
+
+    ds.data = ds.data.iloc[:reset_idx].copy()
+    try:
+        ds.data.index.freq = None
+    except AttributeError:
+        pass
+    return len(reset_tail)
+
+
+def _is_pandas_frequency_error(exc: ValueError) -> bool:
+    msg = str(exc)
+    return "Inferred frequency" in msg and "does not conform" in msg
+
+
 def load_mcmaze(nwb_path: str, bin_ms: int = 5):
     """Load NLB MC_Maze NWB, resample to bin_ms, return spikes + behaviour + trial info.
 
@@ -39,13 +88,29 @@ def load_mcmaze(nwb_path: str, bin_ms: int = 5):
     """
     ds = NWBDataset(nwb_path)
 
-    # nlb_tools' resample() succeeds at downsampling but raises a pandas
-    # freq-set error on data with inter-trial gaps. Suppress and finish the
-    # bookkeeping it skipped.
+    # nlb_tools' resample() replaces ds.data before setting index.freq. MC Maze
+    # data with gaps can raise only at that pandas bookkeeping step; keep the
+    # resampled data, but do not suppress unrelated ValueErrors.
     try:
         ds.resample(bin_ms)
-    except ValueError:
-        pass
+    except ValueError as exc:
+        if not _is_pandas_frequency_error(exc): # if nlb_tools raises a ValueError, inspect error message,
+                                                #  if it is not the expected pandas frequency error, re-raise the exception
+            raise
+        warnings.warn(
+            "nlb_tools completed numerical resampling but failed to set "
+            "pandas index.freq; continuing with validated time indices.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    dropped_rows = _drop_empty_reset_tail(ds)
+    if dropped_rows:
+        warnings.warn(
+            f"Dropped {dropped_rows} empty MC Maze samples appended after a "
+            "resampled time-index reset.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     ds.bin_width = bin_ms
 
     spikes_df = ds.data["spikes"]                          # (T_total, N)
@@ -63,11 +128,12 @@ def load_mcmaze(nwb_path: str, bin_ms: int = 5):
             elif np.issubdtype(delta.dtype, np.timedelta64):
                 trial_info[col] = delta.values.astype("float64") / 1e9
 
-    time_index_s = spikes_df.index.values
-    if np.issubdtype(time_index_s.dtype, np.timedelta64):
-        time_index_s = time_index_s.astype("float64") / 1e9
-    else:
-        time_index_s = time_index_s.astype("float64")
+    time_index_s = _time_index_seconds(spikes_df.index)
+    if _first_nonmonotonic_time(time_index_s) is not None:
+        raise ValueError(
+            "MC Maze time index is not strictly increasing; cannot safely "
+            "align trial times with np.searchsorted."
+        )
 
     # Reach angle for visualisation. Two layouts in the wild:
     #   NLB MC_Maze (Jenkins): `target_pos` is a per-row (n_targets, 2) array
@@ -110,6 +176,15 @@ def load_mcmaze_cached(nwb_path: str, bin_ms: int = 5):
     if os.path.exists(cache_file):
         with open(cache_file, "rb") as f:
             d = pickle.load(f)
+        cached_time = np.asarray(d["time_index_s"], dtype=np.float64)
+        if _first_nonmonotonic_time(cached_time) is not None:
+            warnings.warn(
+                "Ignoring stale MC Maze cache with non-monotonic time index: "
+                f"{cache_file}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return load_mcmaze(nwb_path, bin_ms)
         return (d["spikes_raw"], d["bin_width_s"], d["trial_info"],
                 d["time_index_s"], d["hand_pos_raw"])
 

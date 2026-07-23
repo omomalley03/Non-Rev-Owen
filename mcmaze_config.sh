@@ -27,8 +27,9 @@ export PRE_MS="200"
 export POST_MS="140" # THIS IS OBSOLETE
 export WINDOW_SIZE="90"
 export WINDOW_STRATEGY="trial_aligned"
-export VAL_SPLIT="0.1"
-export SPLIT="dataset"
+export VAL_SPLIT="0.25"
+export SPLIT="random"
+export SEED="0"
 
 # Model settings.
 # export D="2"
@@ -40,9 +41,10 @@ export SPLIT="dataset"
 
 export D="128"
 export HIDDEN_DIM="256"
-export DEPTH="3" # depth=2 ==> one hidden layer. depth=1 ==> linear 
+export DEPTH="2" # depth=2 ==> one hidden layer. depth=1 ==> linear 
 export DROPOUT="0.2"
-export TEMPORAL_FRONTEND="symmetric_multiscale"
+export TEMPORAL_FRONTEND="mixed_parity"
+export ANTISYMMETRIC_PLANES=-1
 export TEMPORAL_FILTERS="4" # setting this to 0 makes it an MLP embedder
 export MULTISCALE_SYMMETRIC_CONV_LAYERS="1"
 export RESIDUAL_KERNELS="7,15,31,61" # ignore name "residual" -- that is left over from CoCoT naming 
@@ -50,7 +52,7 @@ export TEMPORAL_KERNEL_SIZE="61" # THIS IS OBSOLOTE / OLD TEMPORAL KERNEL FILTER
 
 # Training settings.
 export BATCH_SIZE="64"
-export EPOCHS="200"
+export EPOCHS="100"
 export LR="1e-3"
 export WEIGHT_DECAY="1e-4"
 export LAMBDA_XP="0.0" # PENALISE NONREV IN CROSS-PLANES (e.g., dim 0 and dim 3 are cross-plane)

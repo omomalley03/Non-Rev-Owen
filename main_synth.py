@@ -172,6 +172,7 @@ def main():
     cfg.save_about(run_dir)
     print(f"Run directory: {run_dir}")
     set_seed(cfg.seed)
+    print("Random seed set to:", cfg.seed)
 
     print(f"Loading synthetic data from {cfg.synth_data_path} …")
     windows = load_synthetic_windows(cfg)
@@ -226,6 +227,7 @@ def main():
         temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
         residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
         multiscale_symmetric_conv_layers=getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+        antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
     )
     if model.temporal_conv is not None:
         print(model.temporal_conv.weight.shape)
@@ -241,26 +243,30 @@ def main():
     
     print_summary(history, cfg)
 
-    print("\nGenerating synthetic diagnostic plots …")
-    best_ckpt_path = os.path.join(cfg.ckpt_dir, "best.pt")
-    if os.path.isfile(best_ckpt_path):
-        ckpt = torch.load(best_ckpt_path, map_location="cpu", weights_only=False)
-        model.load_state_dict(ckpt["model_state_dict"])
-        print(
-            "Loaded best checkpoint for diagnostics: "
-            f"epoch={ckpt.get('epoch')} "
-            f"selection={ckpt.get('checkpoint_selection', 'unknown')} "
-            f"val_zeta={ckpt.get('val_zeta', float('nan')):.4f}"
+    skip_diagnostic_plots = os.environ.get("SYNTH_SKIP_DIAGNOSTIC_PLOTS", "").strip().lower()
+    if True: #skip_diagnostic_plots in {"1", "true", "yes", "y"}:
+        print("\nSkipping synthetic diagnostic plots (SYNTH_SKIP_DIAGNOSTIC_PLOTS=1).")
+    else:
+        print("\nGenerating synthetic diagnostic plots …")
+        best_ckpt_path = os.path.join(cfg.ckpt_dir, "best.pt")
+        if os.path.isfile(best_ckpt_path):
+            ckpt = torch.load(best_ckpt_path, map_location="cpu", weights_only=False)
+            model.load_state_dict(ckpt["model_state_dict"])
+            print(
+                "Loaded best checkpoint for diagnostics: "
+                f"epoch={ckpt.get('epoch')} "
+                f"selection={ckpt.get('checkpoint_selection', 'unknown')} "
+                f"val_zeta={ckpt.get('val_zeta', float('nan')):.4f}"
+            )
+        make_diagnostic_plots_synth(
+            model=model,
+            val_ds=val_ds,
+            cfg=cfg,
+            run_dir=run_dir,
+            train_ds=train_ds,
+            subjects=subjects,
+            labels=labels,
         )
-    make_diagnostic_plots_synth(
-        model=model,
-        val_ds=val_ds,
-        cfg=cfg,
-        run_dir=run_dir,
-        train_ds=train_ds,
-        subjects=subjects,
-        labels=labels,
-    )
 
     append_best_model_metrics(run_dir, val_ds, cfg)
 

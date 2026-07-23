@@ -85,9 +85,10 @@ class Config:
     dropout: float = _env_float("DROPOUT", 0.2)            # dropout probability applied after each hidden activation
     temporal_filters: int = _env_int("TEMPORAL_FILTERS", 0)        # per-channel temporal filters; 0 disables the front-end
     temporal_kernel_size: int = _env_int("TEMPORAL_KERNEL_SIZE", 61)     # odd; zero-phase 'same' conv (tunable; sweep e.g. 15/31/51)
-    temporal_frontend: str = _env_str("TEMPORAL_FRONTEND", "symmetric")  # symmetric, multiscale_symmetric, or residual
+    temporal_frontend: str = _env_str("TEMPORAL_FRONTEND", "symmetric")  # symmetric, multiscale_symmetric, mixed_parity, or residual
     residual_kernels: str = _env_str("RESIDUAL_KERNELS", "3,7,15,31")    # comma-separated odd kernels for multi-scale front-ends
     multiscale_symmetric_conv_layers: int = _env_int("MULTISCALE_SYMMETRIC_CONV_LAYERS", 1)  # 1 or 2; only for multiscale_symmetric
+    antisymmetric_planes: int = _env_int("ANTISYMMETRIC_PLANES", -1)      # mixed_parity only; -1 auto-selects half the planes
 
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
@@ -130,6 +131,18 @@ class Config:
     ckpt_dir: str = "checkpoints"
     out_dir: str = "outputs"
 
+    def __post_init__(self) -> None:
+        frontend = (self.temporal_frontend or "").lower()
+        if frontend in {
+            "mixed_parity",
+            "mixed_symmetric_antisymmetric",
+            "mixed_sym_anti",
+            "sym_anti",
+        } and self.antisymmetric_planes < 0:
+            if self.d % 2 != 0:
+                raise ValueError(f"mixed_parity requires an even embedding dimension, got d={self.d}")
+            self.antisymmetric_planes = max(1, (self.d // 2) // 2)
+
     def run_name(self) -> str:
         """Short descriptive tag encoding the key hyperparameters."""
         return (
@@ -158,7 +171,8 @@ class Config:
             "model":    ["d", "hidden_dim", "depth", "dropout",
                          "temporal_filters", "temporal_kernel_size",
                          "temporal_frontend", "residual_kernels",
-                         "multiscale_symmetric_conv_layers"],
+                         "multiscale_symmetric_conv_layers",
+                         "antisymmetric_planes"],
             "training": ["batch_size", "epochs", "lr", "weight_decay",
                          "lambda_xp", "lambda_bt", "lambda_plane_bt",
                          "lambda_block_cca", "lambda_start_frac",

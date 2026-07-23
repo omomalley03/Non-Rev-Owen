@@ -45,6 +45,7 @@ def main():
     cfg.save_about(run_dir)
     print(f"Run directory: {run_dir}")
     set_seed(cfg.seed)
+    print("Seed set to:", cfg.seed)
 
     print("Loading MC_Maze data …")
     spikes_raw, bin_width_s, trial_info, time_index_s, hand_pos_raw = load_mcmaze_cached(
@@ -88,6 +89,7 @@ def main():
         temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
         residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
         multiscale_symmetric_conv_layers=getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+        antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
     )
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
@@ -97,7 +99,7 @@ def main():
 
     print_summary(history, cfg)
 
-    if os.environ.get("SKIP_DIAGNOSTICS", "").lower() in {"1", "true", "yes"}:
+    if True: #os.environ.get("SKIP_DIAGNOSTICS", "").lower() in {"1", "true", "yes"}:
         print("\nSkipping diagnostic plots because SKIP_DIAGNOSTICS=1.")
     else:
         best_ckpt_path = os.path.join(cfg.ckpt_dir, "best.pt")
@@ -121,7 +123,7 @@ def main():
             hand_windows=hand_windows,
         )
 
-        append_best_model_metrics(run_dir, val_ds, cfg)
+    append_best_model_metrics(run_dir, val_ds, cfg)
 
     # from evaluate import run_linear_probe, plot_confusion_matrix
 

@@ -117,6 +117,7 @@ def build_embedder(cfg: Config, state_dict, in_channels: int, init: str):
             state_dict,
             getattr(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
     )
     if init == "pretrained":
         model.load_state_dict(state_dict)
@@ -141,17 +142,31 @@ def flatten_batch(F, targets, valid, feature_mean, feature_std, target_mean, tar
 
 def embedder_hidden_features(embedder, windows):
     """Differentiable penultimate-layer features with the final projection removed."""
-    if len(embedder.net) <= 1 or not isinstance(embedder.net[-1], nn.Linear):
-        raise ValueError("Cannot remove final linear layer: embedder.net does not end with nn.Linear")
+    def hidden_net_without_projection(net, name):
+        if net is None or len(net) <= 1 or not isinstance(net[-1], nn.Linear):
+            raise ValueError(f"Cannot remove final linear layer: {name} does not end with nn.Linear")
+        return net[:-1]
+
+    def apply_pointwise_hidden(x, hidden_net):
+        B, C, T = x.shape
+        x = x.permute(0, 2, 1).reshape(B * T, C)
+        H = hidden_net(x)
+        hidden_dim = H.shape[1]
+        return H.reshape(B, T, hidden_dim).permute(0, 2, 1)
 
     x = windows
+    if getattr(embedder, "mixed_parity", False):
+        x_sym, x_anti = embedder.temporal_conv(x)
+        parts = []
+        if embedder.sym_net is not None:
+            parts.append(apply_pointwise_hidden(x_sym, hidden_net_without_projection(embedder.sym_net, "embedder.sym_net")))
+        if embedder.anti_net is not None:
+            parts.append(apply_pointwise_hidden(x_anti, hidden_net_without_projection(embedder.anti_net, "embedder.anti_net")))
+        return torch.cat(parts, dim=1)
+
     if embedder.temporal_conv is not None:
         x = embedder.temporal_conv(x)
-    B, C, T = x.shape
-    x = x.permute(0, 2, 1).reshape(B * T, C)
-    H = embedder.net[:-1](x)
-    hidden_dim = H.shape[1]
-    return H.reshape(B, T, hidden_dim).permute(0, 2, 1)
+    return apply_pointwise_hidden(x, hidden_net_without_projection(embedder.net, "embedder.net"))
 
 
 def embedder_features(embedder, windows, feature_layer: str):

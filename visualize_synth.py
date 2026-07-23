@@ -23,6 +23,7 @@ Usage
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 
 import numpy as np
@@ -37,8 +38,16 @@ from torch.utils.data import DataLoader, TensorDataset, random_split, Subset
 from config import Config
 from paths import SYNTH_RUNS_DIR
 from model import MLP, infer_multiscale_symmetric_conv_layers
-from loss import S_ratio as compute_S_ratio, _batch_rms_normalize, _whiten_2d, _plane_samples
+from loss import (
+    S_ratio as compute_S_ratio,
+    _batch_rms_normalize,
+    _whiten_2d,
+    _plane_samples,
+    loss_fn,
+    non_reversibility_components,
+)
 from synth_data import load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
+from visualize_loss import plot_loss_curve
 
 
 def _fit_pca2(X):
@@ -289,6 +298,129 @@ def train_val_split_synth(
     return train_ds, val_ds
 
 
+def _metric_rows_for_split(model, ds, split_name: str, cfg: Config, device: torch.device) -> dict[str, float | str | int]:
+    """Compute batch-weighted zeta and regularizer metrics for one dataset split."""
+    row: dict[str, float | str | int] = {
+        "split": split_name,
+        "n_trials": len(ds),
+        "zeta": float("nan"),
+        "reg_scaled_total": float("nan"),
+        "reg_raw_total": float("nan"),
+        "loss": float("nan"),
+    }
+    if len(ds) == 0:
+        return row
+
+    batch_size = max(2, min(int(getattr(cfg, "batch_size", 256)), len(ds)))
+    loader = DataLoader(ds, batch_size=batch_size, shuffle=False, drop_last=False)
+    weighted: dict[str, float] = {}
+    total = 0
+    model.eval()
+    with torch.no_grad():
+        for (batch,) in loader:
+            if batch.shape[0] < 2:
+                continue
+            batch = batch.to(device)
+            F = model(batch)
+            F = F - F.mean(dim=cfg.F_mean_axis, keepdim=True)
+            F_hat = _batch_rms_normalize(F)
+            _, _, zeta = non_reversibility_components(F_hat, "mean")
+            loss, info = loss_fn(
+                F,
+                cfg=cfg,
+                training=False,
+                lambda_scale=1.0,
+                return_components=True,
+            )
+            weight = int(batch.shape[0])
+            total += weight
+            weighted["zeta"] = weighted.get("zeta", 0.0) + zeta.item() * weight
+            weighted["loss"] = weighted.get("loss", 0.0) + loss.item() * weight
+            raw_total = sum(info["reg_raw"].values())
+            scaled_total = sum(info["reg_scaled"].values())
+            weighted["reg_raw_total"] = weighted.get("reg_raw_total", 0.0) + raw_total * weight
+            weighted["reg_scaled_total"] = weighted.get("reg_scaled_total", 0.0) + scaled_total * weight
+            for name, value in info["reg_raw"].items():
+                key = f"reg_raw_{name}"
+                weighted[key] = weighted.get(key, 0.0) + value * weight
+            for name, value in info["reg_scaled"].items():
+                key = f"reg_scaled_{name}"
+                weighted[key] = weighted.get(key, 0.0) + value * weight
+
+    if total:
+        for key, value in weighted.items():
+            row[key] = value / total
+    return row
+
+
+def save_synth_split_metrics(
+    model,
+    train_ds,
+    val_ds,
+    test_ds,
+    cfg: Config,
+    run_dir: str,
+    holdout_subjects: np.ndarray,
+) -> None:
+    """Save train/val/test zeta and regularizer metrics before diagnostics."""
+    out_dir = os.path.join(run_dir, "outputs")
+    os.makedirs(out_dir, exist_ok=True)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device).eval()
+
+    holdout_list = [int(x) for x in np.asarray(holdout_subjects, dtype=int).tolist()]
+    if holdout_list:
+        print(f"Held-out participant ids: {holdout_list}")
+    else:
+        print("Held-out participant ids: []")
+
+    rows = [
+        _metric_rows_for_split(model, train_ds, "train", cfg, device),
+        _metric_rows_for_split(model, val_ds, "validation", cfg, device),
+    ]
+    if test_ds is not None:
+        rows.append(_metric_rows_for_split(model, test_ds, "test", cfg, device))
+    else:
+        rows.append(
+            {
+                "split": "test",
+                "n_trials": 0,
+                "zeta": float("nan"),
+                "reg_scaled_total": float("nan"),
+                "reg_raw_total": float("nan"),
+                "loss": float("nan"),
+            }
+        )
+
+    for row in rows:
+        row["heldout_participant_ids"] = " ".join(str(x) for x in holdout_list)
+
+    fieldnames = [
+        "split",
+        "n_trials",
+        "zeta",
+        "reg_scaled_total",
+        "reg_raw_total",
+        "loss",
+        "reg_scaled_bt",
+        "reg_raw_bt",
+        "reg_scaled_cca",
+        "reg_raw_cca",
+        "heldout_participant_ids",
+    ]
+    for row in rows:
+        for key in row:
+            if key not in fieldnames:
+                fieldnames.insert(-1, key)
+
+    out_path = os.path.join(out_dir, "split_metrics.csv")
+    with open(out_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"Saved split metrics -> {out_path}")
+
+
 # ── plot helpers ──────────────────────────────────────────────────────────────
 
 def _pairwise_zeta(F_hat: np.ndarray) -> np.ndarray:
@@ -380,6 +512,10 @@ def _plot_planes_time_coded(F_hat, s_ratio, out_path,
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {out_path}")
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 4 * nrows),
+                             squeeze=False)
+    
 
 
 def _plot_dim_grid(F_hat, s_ratio, out_path,
@@ -1058,18 +1194,18 @@ def make_diagnostic_plots_synth(
     #     xlabel="PC 1", ylabel="PC 2",
     #     out_path=os.path.join(out_dir, "01_raw_time_coded.png"),
     # )
-    # _plot_planes_time_coded(
-    #     F_hat_plot, s_ratio_val,
-    #     out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
-    # )
+    _plot_planes_time_coded(
+        F_hat_plot, s_ratio_val,
+        out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
+    )
     # _plot_dim_grid(
     #     F_hat_plot, s_ratio_val,
     #     out_path=os.path.join(out_dir, "03_dim_grid_time_coded.png"),
     # )
-    # _plot_planes_participant_hsv(
-    #     F_hat_plot, val_participant_ids, s_ratio_val,
-    #     out_path=os.path.join(out_dir, "04_embed_planes_participant_hsv.png"),
-    # )
+    _plot_planes_participant_hsv(
+        F_hat_plot, val_participant_ids, s_ratio_val,
+        out_path=os.path.join(out_dir, "04_embed_planes_participant_hsv.png"),
+    )
     if val_labels_plot is not None:
         plot_condition_means_all_trials(
             F_hat_plot,
@@ -1077,9 +1213,9 @@ def make_diagnostic_plots_synth(
             s_ratio_val,
             out_path=os.path.join(out_dir, "18_val_condition_means_all_trials.png"),
         )
-    # plot_covariance_heatmap(
-    #     F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
-    # )
+    plot_covariance_heatmap(
+        F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
+    )
     # plot_between_within_variance(
     #     F_hat, out_path=os.path.join(out_dir, "08_between_within_variance.png"),
     # )
@@ -1087,7 +1223,7 @@ def make_diagnostic_plots_synth(
     #     F_hat, out_path=os.path.join(out_dir, "09_embedding_norm_distribution.png"),
     # )
 
-    plot_conv_kernels(model=model, out_path=os.path.join(out_dir, "11_conv_kernels.png"))
+    # plot_conv_kernels(model=model, out_path=os.path.join(out_dir, "11_conv_kernels.png"))
     if train_ds is not None and subjects is not None:
         plot_participant_split_embedding(
             model=model,
@@ -1100,7 +1236,10 @@ def make_diagnostic_plots_synth(
         )
     
 
-    from visualize_pairwise_s import plot_pairwise_s
+    try:
+        from visualize_pairwise_s import plot_pairwise_s
+    except ModuleNotFoundError:
+        from obsolete.visualize_pairwise_s import plot_pairwise_s
     F_hat_rms = _batch_rms_normalize(F_hat_t)
     plot_pairwise_s(
         run_dir,
@@ -1109,26 +1248,31 @@ def make_diagnostic_plots_synth(
         cfg=cfg,
     )
 
-    plot_cca_grid(
-        F_hat_t, out_path = os.path.join(out_dir,"10_cca_grid.png")
-    )
+    # plot_cca_grid(
+    #     F_hat_t, out_path = os.path.join(out_dir,"10_cca_grid.png")
+    # )
 
     print(f"\nS_ratio (all val pairs): {s_ratio_val:.4f}  (max ≈ 1.0 for perfect rotation)")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
-def _resolve_run_dir(arg_run):
+def _resolve_run_dir(arg_run, require_checkpoint: bool = True):
+    if arg_run is not None and not arg_run.isdigit():
+        return arg_run
+
     runs_root = SYNTH_RUNS_DIR
     if not os.path.isdir(runs_root):
         raise FileNotFoundError(f"No synth_runs directory at {runs_root!r}.")
+    marker = os.path.join("checkpoints", "best.pt") if require_checkpoint else os.path.join("outputs", "log.csv")
     completed = sorted(
         [os.path.join(runs_root, d) for d in os.listdir(runs_root)
-         if os.path.isfile(os.path.join(runs_root, d, "checkpoints", "best.pt"))],
+         if os.path.isfile(os.path.join(runs_root, d, marker))],
         key=os.path.getmtime, reverse=True,
     )
     if not completed:
-        raise FileNotFoundError("No completed runs found in 'runs/'.")
+        requirement = "completed runs" if require_checkpoint else "runs with outputs/log.csv"
+        raise FileNotFoundError(f"No {requirement} found in {runs_root!r}.")
 
     print("Available runs (newest first):")
     for i, r in enumerate(completed, 1):
@@ -1161,10 +1305,16 @@ def main():
     parser.add_argument("--max-timepoints", type=int, default=None,
                         help="Override SYNTH_VIZ_MAX_TIMEPOINTS saved in the checkpoint; 0 uses all time bins.")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--only-loss", action="store_true",
+                        help="Only regenerate outputs/loss_curve.png from outputs/log.csv.")
     args = parser.parse_args()
 
-    run_dir = _resolve_run_dir(args.run)
+    run_dir = _resolve_run_dir(args.run, require_checkpoint=not args.only_loss)
     print(f"Using run: {os.path.basename(run_dir)}")
+
+    if args.only_loss:
+        plot_loss_curve(run_dir)
+        return
 
     ckpt_path = os.path.join(run_dir, "checkpoints", "best.pt")
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
@@ -1217,7 +1367,7 @@ def main():
     N_in = windows.shape[1]
     print(f"  Windows shape: {windows.shape}  (K, N, T)")
 
-    train_ds, val_ds = train_val_split_synth(
+    train_ds, val_ds, test_ds, trainval_subjects, holdout_subjects = train_val_split_synth(
         windows,
         cfg.val_split,
         cfg.seed,
@@ -1227,6 +1377,7 @@ def main():
         subject_ids=getattr(cfg, "synth_subject_ids", ""),
         holdout_subject_count=getattr(cfg, "synth_holdout_subject_count", 0),
         holdout_subject_ids=getattr(cfg, "synth_holdout_subject_ids", ""),
+        return_holdout=True,
     )
 
     model = MLP(
@@ -1239,8 +1390,19 @@ def main():
             ckpt["model_state_dict"],
             getattr(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
     )
     model.load_state_dict(ckpt["model_state_dict"])
+
+    save_synth_split_metrics(
+        model=model,
+        train_ds=train_ds,
+        val_ds=val_ds,
+        test_ds=test_ds,
+        cfg=cfg,
+        run_dir=run_dir,
+        holdout_subjects=holdout_subjects,
+    )
 
     make_diagnostic_plots_synth(
         model=model,

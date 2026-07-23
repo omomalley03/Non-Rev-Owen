@@ -17,28 +17,18 @@ from model import MLP, infer_multiscale_symmetric_conv_layers
 from visualize import _get_condition_groups, _plot_planes_time_coded
 
 
-ROOT = Path(__file__).resolve().parent
-DEFAULT_CHECKPOINT = (
-    ROOT
-    / "mcmaze/runs/20260706_084343_d256_h64_dep1_bs64_ep200_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1/checkpoints/best.pt"
-)
-DEFAULT_OUT = ROOT / "mcmaze/pretrained_first8_planes_condition_hsv.png"
+def _cfg_get(cfg: dict, name: str, default=None):
+    return cfg[name] if name in cfg else default
 
 
-def _cfg_get(cfg, name: str, default=None):
-    if isinstance(cfg, dict):
-        return cfg.get(name, default)
-    return getattr(cfg, name, default)
-
-
-def load_pretrained_embeddings(checkpoint_path: Path):
-    saved = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+def load_finetuned_embeddings(model_path: Path):
+    saved = torch.load(model_path, map_location="cpu", weights_only=False)
     cfg = saved["config"]
 
     spikes_raw, bin_width_s, trial_info, time_index_s, _ = load_mcmaze_cached(
-        _cfg_get(cfg, "nwb_path"), _cfg_get(cfg, "bin_ms")
+        cfg["nwb_path"], cfg["bin_ms"]
     )
-    sigma_samples = round((_cfg_get(cfg, "sigma_ms") * 1e-3) / bin_width_s)
+    sigma_samples = round((cfg["sigma_ms"] * 1e-3) / bin_width_s)
     X_smooth = gaussian_smooth(spikes_raw, sigma_samples)
     softnorm = _cfg_get(cfg, "softnorm_method", "none")
     if softnorm and softnorm != "none":
@@ -50,46 +40,41 @@ def load_pretrained_embeddings(checkpoint_path: Path):
         time_index_s,
         bin_width_s,
         strategy=_cfg_get(cfg, "window_strategy", "trial_aligned"),
-        window_size=int(_cfg_get(cfg, "window_size")),
+        window_size=int(cfg["window_size"]),
         align_field=_cfg_get(cfg, "align_field", "move_onset_time"),
         pre_ms=_cfg_get(cfg, "pre_ms", 100),
     )
     if _cfg_get(cfg, "split", "dataset") == "random":
         trial_info = trial_info.drop(columns=["split"], errors="ignore")
 
-    _, val_ds = train_val_split(
-        windows,
-        trial_info,
-        _cfg_get(cfg, "val_split"),
-        _cfg_get(cfg, "seed"),
-    )
+    _, val_ds = train_val_split(windows, trial_info, cfg["val_split"], cfg["seed"])
     val_info = trial_info.iloc[list(val_ds.indices)].reset_index(drop=True)
     groups, colors = _get_condition_groups(val_info)
 
     model = MLP(
         in_channels=spikes_raw.shape[0],
-        d=_cfg_get(cfg, "d"),
-        hidden_dim=_cfg_get(cfg, "hidden_dim"),
-        depth=_cfg_get(cfg, "depth"),
-        dropout=_cfg_get(cfg, "dropout"),
+        d=cfg["d"],
+        hidden_dim=cfg["hidden_dim"],
+        depth=cfg["depth"],
+        dropout=cfg["dropout"],
         temporal_filters=_cfg_get(cfg, "temporal_filters", 0),
         temporal_kernel_size=_cfg_get(cfg, "temporal_kernel_size", 31),
         temporal_frontend=_cfg_get(cfg, "temporal_frontend", "symmetric"),
         residual_kernels=_cfg_get(cfg, "residual_kernels", "3,7,15,31"),
         multiscale_symmetric_conv_layers=infer_multiscale_symmetric_conv_layers(
-            saved["model_state_dict"],
+            saved["embedder_state_dict"],
             _cfg_get(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=_cfg_get(cfg, "antisymmetric_planes", 0),
     )
-    model.load_state_dict(saved["model_state_dict"])
+    model.load_state_dict(saved["embedder_state_dict"])
     model.eval()
 
     (val_tensor,) = next(iter(DataLoader(val_ds, batch_size=len(val_ds), shuffle=False)))
     with torch.no_grad():
         F = model(val_tensor)
         mean_axis = _cfg_get(cfg, "F_mean_axis", (0, 2))
-        if mean_axis:
-            F = F - F.mean(dim=mean_axis, keepdim=True)
+        F = F - F.mean(dim=mean_axis, keepdim=True)
         zeta = compute_S_ratio(_batch_rms_normalize(F)).item()
 
     return F.cpu().numpy(), groups, colors, zeta
@@ -135,51 +120,24 @@ def first_n_planes_embedding(F_hat: np.ndarray, n_planes: int) -> np.ndarray:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "checkpoint_arg",
-        type=Path,
-        nargs="?",
-        help="Optional checkpoint path. Equivalent to --checkpoint.",
-    )
-    parser.add_argument(
-        "--checkpoint",
-        "--model",
-        dest="checkpoint_flag",
-        type=Path,
-        default=None,
-        help="Embedding checkpoint path. Defaults to the built-in pretrained checkpoint.",
-    )
-    parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
         "--time-coded-out",
         type=Path,
         default=None,
-        help="Optional output path for the first-N-plane 02-style time-coded embedding plot.",
+        help="Optional output path for the full 02-style time-coded embedding plot.",
     )
     parser.add_argument("--n-planes", type=int, default=8)
     args = parser.parse_args()
 
-    if args.checkpoint_arg is not None and args.checkpoint_flag is not None:
-        parser.error("pass the checkpoint either positionally or with --checkpoint/--model, not both")
-
-    checkpoint = args.checkpoint_flag or args.checkpoint_arg or DEFAULT_CHECKPOINT
-    if not checkpoint.is_absolute():
-        checkpoint = ROOT / checkpoint
-    if not checkpoint.is_file():
-        raise FileNotFoundError(f"No checkpoint found at {checkpoint}")
-
-    F_hat, groups, colors, zeta = load_pretrained_embeddings(checkpoint)
+    F_hat, groups, colors, zeta = load_finetuned_embeddings(args.model)
     plot_first_planes(F_hat, groups, colors, args.out, args.n_planes)
     time_coded_out = args.time_coded_out
     if time_coded_out is None:
         time_coded_out = args.out.with_name(f"{args.out.stem}_02_time_coded{args.out.suffix}")
     time_coded_out.parent.mkdir(parents=True, exist_ok=True)
-    _plot_planes_time_coded(
-        first_n_planes_embedding(F_hat, args.n_planes),
-        groups,
-        zeta,
-        out_path=str(time_coded_out),
-    )
+    _plot_planes_time_coded(first_n_planes_embedding(F_hat, args.n_planes), groups, zeta, out_path=str(time_coded_out))
     print(args.out)
     print(time_coded_out)
     print(f"zeta={zeta:.6f}")
