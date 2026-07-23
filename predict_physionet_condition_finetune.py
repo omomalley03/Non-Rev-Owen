@@ -824,7 +824,7 @@ def main():
     parser.add_argument("--mlp-hidden-dim", type=int, default=256)
     parser.add_argument("--mlp-depth", type=int, default=2)
     parser.add_argument("--mlp-dropout", type=float, default=0.2)
-    parser.add_argument("--conv-hidden-dim", type=int, default=128)
+    parser.add_argument("--conv-hidden-dim", type=int, default=64)
     parser.add_argument("--conv-depth", type=int, default=2)
     parser.add_argument("--conv-kernel-size", type=int, default=31)
     parser.add_argument("--conv-dropout", type=float, default=0.4,

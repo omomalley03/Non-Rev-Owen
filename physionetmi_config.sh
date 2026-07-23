@@ -50,11 +50,11 @@ export SYNTH_VIZ_PARTICIPANT_COUNT="8"
 export VAL_SPLIT="0.2"
 
 # Model settings.
-export D="16"
+export D="256"
 export HIDDEN_DIM="256"
 export DEPTH="2"
 export DROPOUT="0.2"
-export TEMPORAL_FRONTEND="multiscale_symmetric"
+export TEMPORAL_FRONTEND="mixed_parity"
 export ANTISYMMETRIC_PLANES=-1
 export TEMPORAL_FILTERS="4"
 export MULTISCALE_SYMMETRIC_CONV_LAYERS="1"

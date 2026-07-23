@@ -56,6 +56,32 @@ def _make_pointwise_mlp(
     return nn.Sequential(*layers)
 
 
+def _make_odd_pointwise_mlp(
+    in_dim: int,
+    out_dim: int,
+    hidden_dim: int,
+    depth: int,
+) -> nn.Sequential:
+    """Pointwise network satisfying g(-x) = -g(x)."""
+    layers: list[nn.Module] = []
+    current_dim = in_dim
+
+    for _ in range(depth - 1):
+        layers.extend([
+            nn.Linear(current_dim, hidden_dim, bias=False),
+
+            # LayerNorm without beta or gamma.
+            # This satisfies LN(-x) = -LN(x).
+            nn.LayerNorm(hidden_dim, elementwise_affine=False),
+
+            # Odd activation
+            nn.Tanh(),
+        ])
+        current_dim = hidden_dim
+
+    layers.append(nn.Linear(current_dim, out_dim, bias=False))
+    return nn.Sequential(*layers)
+
 def _apply_pointwise_net(x: torch.Tensor, net: nn.Module, out_dim: int) -> torch.Tensor:
     B, C, T = x.shape
     y = x.permute(0, 2, 1).reshape(B * T, C)
@@ -190,7 +216,7 @@ class AntiSymmetricBranchConv1d(nn.Module):
         filters_per_channel: int,
         kernel_size: int,
         conv_layers: int = 1,
-        bias: bool = True,
+        bias: bool = False,
     ):
         super().__init__()
         if kernel_size < 1 or kernel_size % 2 == 0:
@@ -320,7 +346,7 @@ class MultiScaleAntiSymmetricConv1d(nn.Module):
         filters_per_channel: int,
         kernels=(7, 15, 31, 61),
         conv_layers: int = 1,
-        bias: bool = True,
+        bias: bool = False,
     ):
         super().__init__()
         kernels = _parse_kernels(kernels)
@@ -504,10 +530,13 @@ class MLP(nn.Module):
                 if self.sym_out_dim > 0
                 else None
             )
-            self.anti_net = (
-                _make_pointwise_mlp(conv_out_channels, self.anti_out_dim, hidden_dim, depth, dropout)
-                if self.anti_out_dim > 0
-                else None
+
+
+            self.anti_net = _make_odd_pointwise_mlp(
+                conv_out_channels,
+                self.anti_out_dim,
+                hidden_dim,
+                depth,
             )
             self.net = None
             self._init_weights()
