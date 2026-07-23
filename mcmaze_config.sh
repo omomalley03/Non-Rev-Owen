@@ -27,8 +27,9 @@ export PRE_MS="200"
 export POST_MS="140" # THIS IS OBSOLETE
 export WINDOW_SIZE="90"
 export WINDOW_STRATEGY="trial_aligned"
-export VAL_SPLIT="0.1"
-export SPLIT="dataset"
+export VAL_SPLIT="0.25"
+export SPLIT="random"
+export SEED="0"
 
 # Model settings.
 # export D="2"
@@ -38,7 +39,7 @@ export SPLIT="dataset"
 # export TEMPORAL_FILTERS="4"
 # export TEMPORAL_KERNEL_SIZE="31"
 
-export D="128"
+export D="16"
 export HIDDEN_DIM="256"
 export DEPTH="2" # depth=2 ==> one hidden layer. depth=1 ==> linear 
 export DROPOUT="0.2"
@@ -51,7 +52,7 @@ export TEMPORAL_KERNEL_SIZE="61" # THIS IS OBSOLOTE / OLD TEMPORAL KERNEL FILTER
 
 # Training settings.
 export BATCH_SIZE="64"
-export EPOCHS="200"
+export EPOCHS="100"
 export LR="1e-3"
 export WEIGHT_DECAY="1e-4"
 export LAMBDA_XP="0.0" # PENALISE NONREV IN CROSS-PLANES (e.g., dim 0 and dim 3 are cross-plane)

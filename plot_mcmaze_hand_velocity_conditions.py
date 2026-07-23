@@ -4,16 +4,84 @@ import argparse
 import os
 from pathlib import Path
 
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib_nonrev")
+os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
+
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 
 from config import Config
 from data import load_mcmaze_cached, make_windows
 from predict_mcmaze_velocity import load_hand_velocity_resampled
 from visualize import _get_condition_groups, _hand_windows_from_raw
+
+
+def _condition_label(cond_key) -> str:
+    if isinstance(cond_key, tuple) and len(cond_key) == 2:
+        return f"trial_type={cond_key[0]}, version={cond_key[1]}"
+    return f"condition={cond_key}"
+
+
+def _add_condition_legend(ax, groups, colors, condition_numbers=None):
+    condition_numbers = condition_numbers or {}
+    handles = [
+        Line2D(
+            [0],
+            [0],
+            color=colors[cond_key],
+            lw=1.8,
+            marker="o",
+            markersize=3.5,
+            label=f"Condition {condition_numbers.get(cond_key, i)}",#: {_condition_label(cond_key)}",
+        )
+        for i, cond_key in enumerate(groups)
+    ]
+    if not handles:
+        return None
+
+    n_conditions = len(handles)
+    ncols = max(1, int(np.ceil(n_conditions / 32)))
+    return ax.legend(
+        handles=handles,
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        ncol=ncols,
+        fontsize=6,
+        frameon=False,
+        title="Condition colours",
+        title_fontsize=7,
+    )
+
+
+def _parse_condition_indices(spec: str) -> list[int]:
+    spec = str(spec or "").strip()
+    if not spec:
+        return []
+    indices = []
+    for item in spec.split(","):
+        item = item.strip()
+        if item:
+            indices.append(int(item))
+    return indices
+
+
+def _filter_conditions(groups, colors, indices: list[int]):
+    if not indices:
+        return groups, colors
+
+    keys = list(groups.keys())
+    bad = [idx for idx in indices if idx < 0 or idx >= len(keys)]
+    if bad:
+        raise ValueError(
+            f"Condition indices out of range: {bad}. Valid range is 0-{len(keys) - 1}."
+        )
+
+    keep = [keys[idx] for idx in indices]
+    return {k: groups[k] for k in keep}, {k: colors[k] for k in keep}
 
 
 def _plot_condition_mean_xy(ax, windows, groups, colors, xlabel, ylabel, title):
@@ -60,6 +128,20 @@ def main() -> None:
         default="stored",
         help="'stored' gives mm/s for this NWB; 'si' applies the NWB conversion to m/s.",
     )
+    parser.add_argument(
+        "--conditions",
+        default="",
+        help=(
+            "Comma-separated condition indices to plot, using the sorted condition order "
+            "shown in the legend. Default: plot all conditions."
+        ),
+    )
+    parser.add_argument(
+        "--legend",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Show the condition-color legend. Use --no-legend to hide it.",
+    )
     args = parser.parse_args()
 
     cfg = Config()
@@ -76,6 +158,11 @@ def main() -> None:
         raise RuntimeError("This NWB/cache does not contain hand_pos data.")
 
     groups, colors = _get_condition_groups(trial_info)
+    condition_numbers = {cond_key: i for i, cond_key in enumerate(groups)}
+    condition_indices = _parse_condition_indices(args.conditions)
+    if condition_indices:
+        groups, colors = _filter_conditions(groups, colors, condition_indices)
+        print(f"Plotting condition indices: {condition_indices}")
     cond_sizes = [len(v) for v in groups.values()]
 
     if args.include_velocity:
@@ -128,11 +215,13 @@ def main() -> None:
     #     f"max={max(cond_sizes)}",
     #     fontsize=11,
     # )
+    legend = _add_condition_legend(ax_pos, groups, colors, condition_numbers) if args.legend else None
     fig.tight_layout()
 
     out_path = Path(args.out)
     os.makedirs(out_path.parent, exist_ok=True)
-    fig.savefig(out_path, dpi=180, bbox_inches="tight")
+    extra_artists = (legend,) if legend is not None else None
+    fig.savefig(out_path, dpi=180, bbox_inches="tight", bbox_extra_artists=extra_artists)
     plt.close(fig)
     print(f"Saved -> {out_path}")
 

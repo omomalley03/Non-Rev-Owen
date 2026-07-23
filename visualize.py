@@ -26,6 +26,10 @@ import os
 
 import numpy as np
 import torch
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib_nonrev")
+os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -37,6 +41,7 @@ from paths import RUNS_DIR
 from data import load_mcmaze_cached, gaussian_smooth, make_windows, train_val_split
 from model import MLP, infer_multiscale_symmetric_conv_layers
 from loss import S_ratio as compute_S_ratio, _batch_rms_normalize
+from visualize_loss import plot_loss_curve
 
 
 # ── geometry helpers ──────────────────────────────────────────────────────────
@@ -177,6 +182,43 @@ def _get_condition_groups(trial_info_val, n_bins: int = 8):
     return groups, colors
 
 
+def _parse_index_list(spec: str | None) -> list[int]:
+    spec = str(spec or "").strip()
+    if not spec:
+        return []
+    out = []
+    for item in spec.split(","):
+        item = item.strip()
+        if item:
+            out.append(int(item))
+    return out
+
+
+def _select_groups_by_indices(groups: dict, indices: list[int]) -> dict:
+    if not indices:
+        return groups
+    keys = list(groups.keys())
+    bad = [idx for idx in indices if idx < 0 or idx >= len(keys)]
+    if bad:
+        raise ValueError(
+            f"Condition indices out of range: {bad}. Valid range is 0-{len(keys) - 1}."
+        )
+    return {keys[idx]: groups[keys[idx]] for idx in indices}
+
+
+def _sample_trials_per_condition(groups: dict, n_trials: int, seed: int) -> dict:
+    if n_trials <= 0:
+        return groups
+    rng = np.random.default_rng(seed)
+    sampled = {}
+    for cond_key, idx_list in groups.items():
+        idx = np.asarray(idx_list, dtype=int)
+        if len(idx) > n_trials:
+            idx = np.sort(rng.choice(idx, size=n_trials, replace=False))
+        sampled[cond_key] = idx.tolist()
+    return sampled
+
+
 # ── plot 1 / 2: condition-averaged, time-coded ───────────────────────────────
 
 def _plot_time_coded(phasors, groups, title, xlabel, ylabel, out_path,
@@ -263,8 +305,16 @@ def _plot_planes_time_coded(F_hat, groups, s_ratio, out_path, cmap_name="coolwar
     print(f"Saved → {out_path}")
 
 
-def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
-                               hand_windows_val=None):
+def _plot_planes_condition_hsv(
+    F_hat,
+    groups,
+    colors,
+    s_ratio,
+    out_path,
+    hand_windows_val=None,
+    individual_trials_per_condition: int = 0,
+    trial_sample_seed: int = 0,
+):
     """Subplot grid: hand trajectories (if available) + one panel per 2D rotation plane.
 
     When hand_windows_val is provided the first panel shows val-set hand
@@ -274,6 +324,12 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
     K, d, T = F_hat.shape
     D = d // 2
     planes = F_hat.reshape(K, D, 2, T)
+    plot_groups = _sample_trials_per_condition(
+        groups,
+        individual_trials_per_condition,
+        trial_sample_seed,
+    )
+    plot_individual_trials = individual_trials_per_condition > 0
 
     has_hand = False # hand_windows_val is not None
     n_panels = (1 if has_hand else 0) + D
@@ -286,14 +342,18 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
 
     if has_hand:
         ax = axes[0, 0]
-        for cond_key in groups:
-            idx_list = groups[cond_key]
-            mean_hand = hand_windows_val[idx_list].mean(axis=0)
+        for cond_key in plot_groups:
+            idx_list = plot_groups[cond_key]
             color = colors[cond_key]
-            ax.plot(mean_hand[0], mean_hand[1], lw=1.4, color=color, alpha=0.9)
-            # ax.xlim(-6,6)
-            # ax.ylim(-6,6)
-            ax.scatter(mean_hand[0, 0], mean_hand[1, 0], color=color, s=25, zorder=5)
+            if plot_individual_trials:
+                for trial_idx in idx_list:
+                    hand = hand_windows_val[trial_idx]
+                    ax.plot(hand[0], hand[1], lw=0.75, color=color, alpha=0.35)
+                    ax.scatter(hand[0, 0], hand[1, 0], color=color, s=8, zorder=5, alpha=0.55)
+            else:
+                mean_hand = hand_windows_val[idx_list].mean(axis=0)
+                ax.plot(mean_hand[0], mean_hand[1], lw=1.4, color=color, alpha=0.9)
+                ax.scatter(mean_hand[0, 0], mean_hand[1, 0], color=color, s=25, zorder=5)
         ax.spines[["top", "right"]].set_visible(False)
         ax.set_title("Hand trajectory (val)", fontsize=9)
         ax.set_xlabel("hand_x", fontsize=8)
@@ -305,12 +365,18 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
     for p in range(D):
         idx = panel + p
         ax = axes[idx // ncols, idx % ncols]
-        for cond_key in groups:
-            idx_list = groups[cond_key]
-            mean_traj = planes[idx_list, p].mean(axis=0)  # (2, T)
+        for cond_key in plot_groups:
+            idx_list = plot_groups[cond_key]
             color = colors[cond_key]
-            ax.plot(mean_traj[0], mean_traj[1], lw=1.4, color=color, alpha=0.9)
-            ax.scatter(mean_traj[0, 0], mean_traj[1, 0], color=color, s=25, zorder=5)
+            if plot_individual_trials:
+                for trial_idx in idx_list:
+                    traj = planes[trial_idx, p]
+                    ax.plot(traj[0], traj[1], lw=0.75, color=color, alpha=0.35)
+                    ax.scatter(traj[0, 0], traj[1, 0], color=color, s=8, zorder=5, alpha=0.55)
+            else:
+                mean_traj = planes[idx_list, p].mean(axis=0)  # (2, T)
+                ax.plot(mean_traj[0], mean_traj[1], lw=1.4, color=color, alpha=0.9)
+                ax.scatter(mean_traj[0, 0], mean_traj[1, 0], color=color, s=25, zorder=5)
         # ax.set_xlim(-6,6)
         # ax.set_ylim(-6,6)
         ax.spines[["top", "right"]].set_visible(False)
@@ -323,10 +389,17 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
     for i in range(n_panels, nrows * ncols):
         axes[i // ncols, i % ncols].set_visible(False)
 
-    n_conds = len(groups)
-    n_per = float(np.mean([len(v) for v in groups.values()]))
-    # fig.suptitle(f"Embeddings coded by trial (ζ = {s_ratio:.2f},  "
-                #  f"{n_conds} conditions, {n_per:.1f} trials/cond)", fontsize=14)
+    n_conds = len(plot_groups)
+    n_per = float(np.mean([len(v) for v in plot_groups.values()]))
+    # if plot_individual_trials:
+    #     fig.suptitle(
+    #         f"Embeddings coded by trial (ζ = {s_ratio:.2f}, "
+    #         f"{n_conds} conditions, up to {individual_trials_per_condition} trials/cond)",
+    #         fontsize=12,
+    #     )
+    # else:
+    #     fig.suptitle(f"Embeddings coded by condition (ζ = {s_ratio:.2f},  "
+    #                  f"{n_conds} conditions, {n_per:.1f} trials/cond avg)", fontsize=14)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -756,163 +829,24 @@ def plot_conditions_diagnostic(hand_windows, trial_info, val_indices, out_path):
     print(f"Saved → {out_path}")
 
 
-# ── loss curve ───────────────────────────────────────────────────────────────
-
-def plot_loss_curve(run_dir: str, cfg: Config) -> None:
-    """Regenerate the training loss curve from saved CSVs.
-
-    Reads  outputs/log.csv         — epoch-level S and loss
-           outputs/reg_history.csv — per-reg raw and λ·reg magnitudes (written
-                                     by train.py when at least one regularizer
-                                     is active; absent for unregularised runs)
-
-    Produces the same single-panel training-dynamics figure as train.py.
-    """
-    import csv as _csv
-
-    out_dir = os.path.join(run_dir, "outputs")
-    log_path = os.path.join(out_dir, "log.csv")
-    if not os.path.isfile(log_path):
-        print(f"  [loss curve] no log.csv found at {log_path!r} — skipping.")
-        return
-
-    # read log.csv
-    epochs, val_s, val_c_plus, val_zeta, val_losses = [], [], [], [], []
-    with open(log_path, newline="") as f:
-        for row in _csv.DictReader(f):
-            epochs.append(int(row["epoch"]))
-            val_s.append(float(row["val_s"]))
-            if row.get("val_c_plus") not in (None, ""):
-                val_c_plus.append(float(row["val_c_plus"]))
-            if row.get("val_zeta") not in (None, ""):
-                val_zeta.append(float(row["val_zeta"]))
-            val_losses.append(float(row["val_loss"]))
-    has_c_plus = len(val_c_plus) == len(epochs)
-    has_zeta = len(val_zeta) == len(epochs)
-
-    reg_lambdas = {
-        "xp": cfg.lambda_xp,
-        "bt": cfg.lambda_bt,
-        "plane_bt": getattr(cfg, "lambda_plane_bt", 0.0),
-        "cca": getattr(cfg, "lambda_block_cca", 0.0),
-    }
-    active_regs = [k for k, v in reg_lambdas.items() if v > 0]
-
-    # try to load per-epoch reg data (written by train.py; absent for old runs)
-    reg_scaled: dict[str, list[float]] = {}
-    reg_path = os.path.join(out_dir, "reg_history.csv")
-    if os.path.isfile(reg_path):
-        with open(reg_path, newline="") as f:
-            reader = _csv.DictReader(f)
-            csv_regs = [c[4:] for c in (reader.fieldnames or [])
-                        if c.startswith("raw_")]
-            for k in csv_regs:
-                reg_scaled[k] = []
-            for row in reader:
-                for k in csv_regs:
-                    reg_scaled[k].append(float(row[f"scaled_{k}"]))
-
-    fig, ax = plt.subplots(figsize=(5.6, 4))
-    ax.plot(epochs, val_s, label="S mean/plane (↑)", color="steelblue")
-    if has_c_plus:
-        ax.plot(
-            epochs,
-            val_c_plus,
-            label=r"$\|C^{(+)}\|_F^2$",
-            color="mediumpurple",
-            alpha=0.35,
-        )
-    if reg_scaled:
-        total_scaled = [
-            sum(
-                reg_scaled[k][i]
-                for k in active_regs
-                if k in reg_scaled and i < len(reg_scaled[k])
-            )
-            for i in range(len(epochs))
-        ]
-        ax.plot(epochs, total_scaled, label="total λ·reg (↓)", color="tomato")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Embedding validation loss components")
-    ax.spines[["top", "right"]].set_visible(False)
-
-    ax_zeta = None
-    if has_zeta:
-        ax_zeta = ax.twinx()
-        ax_zeta.plot(epochs, val_zeta, label="ζ", color="seagreen", alpha=0.6)
-        ax_zeta.set_ylabel("Validation ζ")
-        ax_zeta.spines["top"].set_visible(False)
-
-    best_epoch = None
-    best_label = "best val loss"
-    best_ckpt_path = os.path.join(run_dir, "checkpoints", "best.pt")
-    if os.path.isfile(best_ckpt_path):
-        try:
-            ckpt = torch.load(best_ckpt_path, map_location="cpu", weights_only=False)
-            best_epoch = int(ckpt["epoch"])
-            if ckpt.get("checkpoint_selection") == "best_val_zeta":
-                best_label = "best val ζ"
-        except Exception as exc:
-            print(f"  [loss curve] could not read best.pt ({exc}); falling back to log.csv.")
-    if has_zeta and best_label != "best val ζ":
-        best_epoch = max(range(1, len(val_zeta) + 1), key=lambda i: val_zeta[i - 1])
-        best_label = "best val ζ"
-    if best_epoch is None and val_losses:
-        best_epoch = min(range(1, len(val_losses) + 1), key=lambda i: val_losses[i - 1])
-
-    if best_epoch is not None:
-        idx = best_epoch - 1
-        best_on_zeta = best_label == "best val ζ" and ax_zeta is not None and 0 <= idx < len(val_zeta)
-        if 0 <= idx < len(val_s):
-            target_ax = ax_zeta if best_on_zeta else ax
-            series = val_zeta if best_on_zeta else val_s
-            y = series[idx]
-            target_ax.scatter(
-                [best_epoch],
-                [y],
-                s=52,
-                color="goldenrod",
-                edgecolors="black",
-                linewidths=0.7,
-                zorder=6,
-            )
-            target_ax.annotate(
-                best_label,
-                xy=(best_epoch, y),
-                xytext=(5, -10),
-                textcoords="offset points",
-                va="top",
-                ha="left",
-                fontsize=8,
-                color="black",
-            )
-
-    handles, labels = ax.get_legend_handles_labels()
-    if ax_zeta is not None:
-        z_handles, z_labels = ax_zeta.get_legend_handles_labels()
-        handles += z_handles
-        labels += z_labels
-    ax.legend(handles, labels, loc="lower right")
-    fig.tight_layout()
-    out_path = os.path.join(out_dir, "loss_curve.png")
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
-    print(f"Saved → {out_path}")
-
-
 # ── main ─────────────────────────────────────────────────────────────────────
 
-def _resolve_run_dir(arg_run):
+def _resolve_run_dir(arg_run, require_checkpoint: bool = True):
+    if arg_run is not None and not arg_run.isdigit():
+        return arg_run
+
     runs_root = RUNS_DIR
     if not os.path.isdir(runs_root):
         raise FileNotFoundError(f"No runs directory at {runs_root!r}. Run `python main.py` first.")
+    marker = os.path.join("checkpoints", "best.pt") if require_checkpoint else os.path.join("outputs", "log.csv")
     completed = sorted(
         [os.path.join(runs_root, d) for d in os.listdir(runs_root)
-         if os.path.isfile(os.path.join(runs_root, d, "checkpoints", "best.pt"))],
+         if os.path.isfile(os.path.join(runs_root, d, marker))],
         key=os.path.getmtime, reverse=True,
     )
     if not completed:
-        raise FileNotFoundError("No completed runs found in 'runs/'.")
+        requirement = "completed runs" if require_checkpoint else "runs with outputs/log.csv"
+        raise FileNotFoundError(f"No {requirement} found in {runs_root!r}.")
 
     print("Available runs (newest first):")
     for i, r in enumerate(completed, 1):
@@ -939,6 +873,10 @@ def make_diagnostic_plots(
     cond_start: int | None = None,
     cond_stop: int | None = None,
     cond_skip: int | None = None,
+    hsv04_trials_per_condition: int = 0,
+    hsv04_condition_indices: str = "",
+    hsv04_condition_count: int = 0,
+    hsv04_trial_seed: int = 0,
 ):
     """Compute embeddings on val_ds and write all diagnostic PNGs to run_dir/outputs/.
 
@@ -963,7 +901,9 @@ def make_diagnostic_plots(
 
     val_indices = list(val_ds.indices)
     trial_info_val = trial_info.iloc[val_indices].reset_index(drop=True)
-    cond_groups, cond_colors = _get_condition_groups(trial_info_val)
+    all_cond_groups, all_cond_colors = _get_condition_groups(trial_info_val)
+    cond_groups = all_cond_groups
+    cond_colors = all_cond_colors
 
     if cond_start is not None or cond_stop is not None or cond_skip is not None:
         all_keys = list(cond_groups.keys())
@@ -972,6 +912,28 @@ def make_diagnostic_plots(
               f"plotting {len(keep)} of {len(all_keys)} conditions")
         cond_groups = {k: cond_groups[k] for k in keep}
         cond_colors = {k: cond_colors[k] for k in keep}
+
+    hsv04_groups = cond_groups
+    hsv04_colors = cond_colors
+    hsv04_indices = _parse_index_list(hsv04_condition_indices)
+    if hsv04_indices:
+        hsv04_groups = _select_groups_by_indices(all_cond_groups, hsv04_indices)
+        hsv04_colors = {k: all_cond_colors[k] for k in hsv04_groups}
+        print(
+            "Plot 04 condition indices: "
+            f"{hsv04_indices} from full sorted condition order"
+        )
+    if hsv04_condition_count and hsv04_condition_count > 0:
+        keys = list(hsv04_groups.keys())[:hsv04_condition_count]
+        hsv04_groups = {k: hsv04_groups[k] for k in keys}
+        hsv04_colors = {k: hsv04_colors[k] for k in keys}
+        print(f"Plot 04 condition count cap: plotting {len(keys)} conditions")
+    if hsv04_trials_per_condition > 0:
+        print(
+            "Plot 04 individual trials: "
+            f"up to {hsv04_trials_per_condition} per condition, "
+            f"{len(hsv04_groups)} conditions"
+        )
 
     hand_windows_val = hand_windows[val_indices] if hand_windows is not None else None
 
@@ -1019,9 +981,11 @@ def make_diagnostic_plots(
         out_path=os.path.join(out_dir, "03_raw_condition_hsv.png"),
     )
     _plot_planes_condition_hsv(
-        F_hat, cond_groups, cond_colors, s_ratio_val,
+        F_hat, hsv04_groups, hsv04_colors, s_ratio_val,
         out_path=os.path.join(out_dir, "04_embed_planes_condition_hsv.png"),
         hand_windows_val=hand_windows_val,
+        individual_trials_per_condition=hsv04_trials_per_condition,
+        trial_sample_seed=hsv04_trial_seed,
     )
     _plot_planes_condition_time(
         F_hat, cond_groups, cond_colors, s_ratio_val,
@@ -1059,10 +1023,26 @@ def main():
                         help="One-past-last condition index to plot (sorted order). Default: all.")
     parser.add_argument("--skip", type=int, default=None,
                         help="Step size for condition selection (e.g. --start 0 --stop 100 --skip 10).")
+    parser.add_argument("--hsv04-trials-per-condition", type=int, default=0,
+                        help="Plot this many individual trials per selected condition in plot 04. Default: condition means.")
+    parser.add_argument("--hsv04-condition-indices", default="",
+                        help="Comma-separated condition indices for plot 04, using the full sorted condition order.")
+    parser.add_argument("--hsv04-condition-count", type=int, default=0,
+                        help="Limit plot 04 to the first K selected conditions. Default: no separate cap.")
+    parser.add_argument("--only-loss", action="store_true",
+                        help="Only regenerate outputs/loss_curve.png from outputs/log.csv.")
     args = parser.parse_args()
+    if args.hsv04_trials_per_condition < 0:
+        parser.error("--hsv04-trials-per-condition must be non-negative")
+    if args.hsv04_condition_count < 0:
+        parser.error("--hsv04-condition-count must be non-negative")
 
-    run_dir = _resolve_run_dir(args.run)
+    run_dir = _resolve_run_dir(args.run, require_checkpoint=not args.only_loss)
     print(f"Using run: {os.path.basename(run_dir)}")
+
+    if args.only_loss:
+        plot_loss_curve(run_dir)
+        return
 
     ckpt_path = os.path.join(run_dir, "checkpoints", "best.pt")
     if not os.path.exists(ckpt_path):
@@ -1125,7 +1105,7 @@ def main():
 
     make_diagnostic_plots(
         model=model,
-        val_ds=train_ds,
+        val_ds=val_ds,
         trial_info=trial_info,
         cfg=cfg,
         run_dir=run_dir,
@@ -1133,6 +1113,10 @@ def main():
         cond_start=args.start,
         cond_stop=args.stop,
         cond_skip=args.skip,
+        hsv04_trials_per_condition=args.hsv04_trials_per_condition,
+        hsv04_condition_indices=args.hsv04_condition_indices,
+        hsv04_condition_count=args.hsv04_condition_count,
+        hsv04_trial_seed=args.seed,
     )
     plot_loss_curve(run_dir, cfg)
 

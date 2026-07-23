@@ -286,6 +286,7 @@ def plot_conv_kernels(
     dpi: int = 150,
     ylim: tuple[float, float] | None = None,
     kernel_mode: str = "symmetric",
+    bin_ms: float = 10.0,
 ) -> None:
     if model.temporal_conv is None:
         raise ValueError("Model has no temporal convolution frontend.")
@@ -293,6 +294,10 @@ def plot_conv_kernels(
     kernels, titles = _collect_kernels(model.temporal_conv, max_panels=max_panels, kernel_mode=kernel_mode)
     if not kernels:
         raise ValueError("No temporal convolution kernels were found.")
+
+    max_kernel_len = max(len(kernel) for kernel in kernels)
+    half_span_ms = 0.5 * (max_kernel_len - 1) * float(bin_ms)
+    xlim = (-half_span_ms, half_span_ms)
 
     n_show = len(kernels)
     cols = int(np.ceil(np.sqrt(n_show)))
@@ -303,16 +308,24 @@ def plot_conv_kernels(
             idx = i * cols + j
             ax = axes[i, j]
             if idx < n_show:
-                ax.plot(kernels[idx])
+                kernel = kernels[idx]
+                t_ms = (np.arange(len(kernel)) - (len(kernel) - 1) / 2.0) * float(bin_ms)
+                ax.plot(t_ms, kernel)
                 # ax.set_title(titles[idx], fontsize=6)
                 ax.axhline(0, color="0.8", linewidth=0.5)
+                ax.set_xlim(*xlim)
                 if ylim is not None:
                     ax.set_ylim(*ylim)
                 ax.locator_params(axis="y", nbins=3)
                 ax.tick_params(axis="y", labelsize=6, length=2)
+                ax.tick_params(axis="x", labelsize=6, length=2)
             else:
                 ax.set_visible(False)
-            ax.set_xticks([])
+            if i < rows - 1:
+                ax.set_xticklabels([])
+            else:
+                ax.locator_params(axis="x", nbins=3)
+    fig.supxlabel("time from kernel centre (ms)", fontsize=9)
     fig.tight_layout()
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
@@ -352,7 +365,15 @@ def plot_checkpoint(
     if out_path is None:
         out_path = default_out_path(ckpt_path, run_dir, kernel_mode, requested_kernel_mode)
     print(f"Kernel mode: {requested_kernel_mode} -> {kernel_mode} ({temporal_frontend})")
-    plot_conv_kernels(model, out_path, max_panels=max_panels, dpi=dpi, kernel_mode=kernel_mode)
+    bin_ms = float(getattr(cfg, "bin_ms", 10.0))
+    plot_conv_kernels(
+        model,
+        out_path,
+        max_panels=max_panels,
+        dpi=dpi,
+        kernel_mode=kernel_mode,
+        bin_ms=bin_ms,
+    )
     plot_conv_kernels(
         model,
         fixed_ylim_path(out_path, (-1.0, 1.0)),
@@ -360,6 +381,7 @@ def plot_checkpoint(
         dpi=dpi,
         ylim=(-1.0, 1.0),
         kernel_mode=kernel_mode,
+        bin_ms=bin_ms,
     )
 
 
