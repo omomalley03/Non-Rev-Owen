@@ -232,6 +232,7 @@ def build_model_from_checkpoint(cfg: Config, state_dict, in_channels: int):
             getattr(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
         antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
+        temporal_context_bins=getattr(cfg, "temporal_context_bins", 0),
     )
     model.load_state_dict(state_dict)
     return model
@@ -584,6 +585,11 @@ def main():
         window_size=cfg.window_size,
         align_field=getattr(cfg, "align_field", "move_onset_time"),
         pre_ms=getattr(cfg, "pre_ms", 100),
+        context_bins=(
+            getattr(cfg, "temporal_context_bins", 0)
+            if getattr(cfg, "temporal_filters", 0) > 0
+            else 0
+        ),
     )
     if getattr(cfg, "split", "dataset") == "random":
         trial_info = trial_info.drop(columns=["split"], errors="ignore")

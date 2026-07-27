@@ -89,6 +89,7 @@ class Config:
     residual_kernels: str = _env_str("RESIDUAL_KERNELS", "3,7,15,31")    # comma-separated odd kernels for multi-scale front-ends
     multiscale_symmetric_conv_layers: int = _env_int("MULTISCALE_SYMMETRIC_CONV_LAYERS", 1)  # 1 or 2; only for multiscale_symmetric
     antisymmetric_planes: int = _env_int("ANTISYMMETRIC_PLANES", -1)      # mixed_parity only; -1 auto-selects half the planes
+    temporal_context_bins: int = _env_int("TEMPORAL_CONTEXT_BINS", 30)     # real/precomputed context bins per side for conv front-ends
 
     F_mean_axis: tuple = (0,2) # (0,2) to zero-mean per dim across batch and time, (0,) to zero-mean per dim across batch only, None or () for no internal mean-centering before Barlow Twins term
     # --- training ---
@@ -172,7 +173,7 @@ class Config:
                          "temporal_filters", "temporal_kernel_size",
                          "temporal_frontend", "residual_kernels",
                          "multiscale_symmetric_conv_layers",
-                         "antisymmetric_planes"],
+                         "antisymmetric_planes", "temporal_context_bins"],
             "training": ["batch_size", "epochs", "lr", "weight_decay",
                          "lambda_xp", "lambda_bt", "lambda_plane_bt",
                          "lambda_block_cca", "lambda_start_frac",

@@ -129,6 +129,7 @@ def build_embedder(cfg, state_dict: dict, in_channels: int) -> MLP:
             _cfg_get(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
         antisymmetric_planes=_cfg_get(cfg, "antisymmetric_planes", 0),
+        temporal_context_bins=_cfg_get(cfg, "temporal_context_bins", 0),
     )
     model.load_state_dict(state_dict)
     return model
@@ -183,6 +184,11 @@ def load_mcmaze_windows(cfg):
         window_size=int(_cfg_get(cfg, "window_size")),
         align_field=_cfg_get(cfg, "align_field", "move_onset_time"),
         pre_ms=int(_cfg_get(cfg, "pre_ms", 100)),
+        context_bins=(
+            _cfg_get(cfg, "temporal_context_bins", 0)
+            if _cfg_get(cfg, "temporal_filters", 0) > 0
+            else 0
+        ),
     )
     if _cfg_get(cfg, "split", "dataset") == "random":
         trial_info = trial_info.drop(columns=["split"], errors="ignore")
@@ -203,7 +209,14 @@ def _is_physionet_or_synth_run(cfg) -> bool:
 
 
 def load_physionet_windows(cfg):
-    windows = load_synthetic_windows(cfg)
+    windows = load_synthetic_windows(
+        cfg,
+        context_bins=(
+            _cfg_get(cfg, "temporal_context_bins", 0)
+            if _cfg_get(cfg, "temporal_filters", 0) > 0
+            else 0
+        ),
+    )
     subjects = load_synthetic_subjects(cfg)
     train_ds, val_ds, _holdout_ds, _trainval_subjects, _holdout_subjects = train_val_split_synth(
         windows,

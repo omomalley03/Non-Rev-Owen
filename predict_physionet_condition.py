@@ -199,6 +199,7 @@ def build_model_from_checkpoint(cfg: Config, state_dict, in_channels: int, init:
             getattr(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
         antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
+        temporal_context_bins=getattr(cfg, "temporal_context_bins", 0),
     )
     if init == "pretrained":
         model.load_state_dict(state_dict)
@@ -642,7 +643,15 @@ def main():
 
     data_path = args.data or getattr(cfg, "synth_data_path", "")
     print(f"Loading data from {data_path}...")
-    windows = load_synthetic_windows(cfg, data_path=data_path)
+    windows = load_synthetic_windows(
+        cfg,
+        data_path=data_path,
+        context_bins=(
+            getattr(cfg, "temporal_context_bins", 0)
+            if getattr(cfg, "temporal_filters", 0) > 0
+            else 0
+        ),
+    )
     labels = load_synthetic_labels(cfg, data_path=data_path)
     subjects = load_synthetic_subjects(cfg)
     if labels is None:

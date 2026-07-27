@@ -174,8 +174,13 @@ def main():
     set_seed(cfg.seed)
     print("Random seed set to:", cfg.seed)
 
+    temporal_context_bins = (
+        int(getattr(cfg, "temporal_context_bins", 0))
+        if getattr(cfg, "temporal_filters", 0) > 0
+        else 0
+    )
     print(f"Loading synthetic data from {cfg.synth_data_path} …")
-    windows = load_synthetic_windows(cfg)
+    windows = load_synthetic_windows(cfg, context_bins=temporal_context_bins)
     labels = load_synthetic_labels(cfg)
     subjects = load_synthetic_subjects(cfg)
     print(f"  Data layout: {cfg.synth_data_layout}  |  normalize: {cfg.synth_normalize}")
@@ -184,7 +189,7 @@ def main():
     if cfg.synth_noise_std > 0:
         print(f"  Added deterministic Gaussian noise: std={cfg.synth_noise_std}")
 
-    print(f"  Windows shape: {windows.shape}  (K, N, T)")
+    print(f"  Windows shape: {windows.shape}  (K, N, T including context)")
     if subjects is not None:
         unique_subjects, subject_counts = np.unique(subjects, return_counts=True)
         print(
@@ -228,6 +233,7 @@ def main():
         residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
         multiscale_symmetric_conv_layers=getattr(cfg, "multiscale_symmetric_conv_layers", 1),
         antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
+        temporal_context_bins=temporal_context_bins,
     )
     if model.temporal_conv is not None:
         print(model.temporal_conv.weight.shape)

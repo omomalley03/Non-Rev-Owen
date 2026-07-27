@@ -308,6 +308,7 @@ def run_one(attempt: int, candidate_json: str) -> dict[str, Any]:
     candidate = json.loads(candidate_json)
     set_seed(int(os.environ.get("SEED", "1")))
     source_run_dir = str(candidate.get("source_run_dir") or "").strip()
+    temporal_context_bins = 0
 
     if source_run_dir:
         source_dir = Path(source_run_dir)
@@ -316,6 +317,11 @@ def run_one(attempt: int, candidate_json: str) -> dict[str, Any]:
             raise FileNotFoundError(f"missing source checkpoint: {ckpt_path}")
         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         cfg = ckpt["config"]
+        temporal_context_bins = (
+            int(getattr(cfg, "temporal_context_bins", 0))
+            if getattr(cfg, "temporal_filters", 0) > 0
+            else 0
+        )
         run_tag = _run_tag(attempt, cfg, candidate)
         run_dir = SWEEP_DIR / "runs" / run_tag
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -323,7 +329,7 @@ def run_one(attempt: int, candidate_json: str) -> dict[str, Any]:
         model = build_model_from_checkpoint(
             cfg,
             ckpt["model_state_dict"],
-            load_synthetic_windows(cfg).shape[1],
+            load_synthetic_windows(cfg, context_bins=temporal_context_bins).shape[1],
             init="pretrained",
         )
         history = None
@@ -337,8 +343,13 @@ def run_one(attempt: int, candidate_json: str) -> dict[str, Any]:
         cfg.out_dir = str(run_dir / "outputs")
         run_dir.mkdir(parents=True, exist_ok=True)
         cfg.save_about(str(run_dir))
+        temporal_context_bins = (
+            int(getattr(cfg, "temporal_context_bins", 0))
+            if getattr(cfg, "temporal_filters", 0) > 0
+            else 0
+        )
 
-        windows_for_shape = load_synthetic_windows(cfg)
+        windows_for_shape = load_synthetic_windows(cfg, context_bins=temporal_context_bins)
         subjects_for_split = load_synthetic_subjects(cfg)
         train_ds_embed, val_ds_embed, _, _, _ = train_val_split_synth(
             windows_for_shape,
@@ -364,6 +375,7 @@ def run_one(attempt: int, candidate_json: str) -> dict[str, Any]:
             residual_kernels=cfg.residual_kernels,
             multiscale_symmetric_conv_layers=cfg.multiscale_symmetric_conv_layers,
             antisymmetric_planes=cfg.antisymmetric_planes,
+            temporal_context_bins=temporal_context_bins,
         )
         history = train(model, train_ds_embed, val_ds_embed, cfg)
         ckpt_path = Path(cfg.ckpt_dir) / "best.pt"
@@ -377,7 +389,7 @@ def run_one(attempt: int, candidate_json: str) -> dict[str, Any]:
         best_embed_val_zeta = _safe_float(history.get("best_val_zeta") if history else ckpt.get("val_zeta"))
         best_embed_val_epoch = int(history.get("best_val_epoch") if history else ckpt.get("epoch") or 0)
 
-    windows = load_synthetic_windows(cfg)
+    windows = load_synthetic_windows(cfg, context_bins=temporal_context_bins)
     labels = load_synthetic_labels(cfg)
     subjects = load_synthetic_subjects(cfg)
     if labels is None:

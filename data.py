@@ -223,6 +223,16 @@ def soft_normalize(X: np.ndarray, method: str = "churchland") -> np.ndarray:
     raise ValueError(f"unknown softnorm method: {method!r}")
 
 
+def _pad_temporal_reflect(X: np.ndarray, left: int, right: int, out_len: int) -> np.ndarray:
+    if left == 0 and right == 0:
+        return X
+    if X.shape[1] == 0:
+        return np.zeros((X.shape[0], out_len), dtype=np.float32)
+    if X.shape[1] == 1:
+        return np.pad(X, ((0, 0), (left, right)), mode="edge")
+    return np.pad(X, ((0, 0), (left, right)), mode="reflect")
+
+
 def make_windows(
     X_smooth: np.ndarray,
     trial_info,
@@ -232,14 +242,20 @@ def make_windows(
     window_size: int = 120,
     align_field: str = "move_onset_time",
     pre_ms: int = 100,
+    context_bins: int = 0,
 ) -> np.ndarray:
     """Segment smoothed spikes into windows of shape (K, N, T) aligned to a per-trial event.
 
     For each trial, the window starts pre_ms before align_field and is
-    window_size bins long. If align_field is missing the trial's start_time
-    is used and the entire window is taken from there.
+    window_size bins long. If context_bins > 0, that many samples immediately
+    before and after the window are included, so the returned time dimension is
+    window_size + 2 * context_bins. If align_field is missing the trial's
+    start_time is used and the entire window is taken from there.
     """
     N = X_smooth.shape[0]
+    context_bins = int(context_bins)
+    if context_bins < 0:
+        raise ValueError("context_bins must be non-negative")
     pre_bins = int(round(pre_ms * 1e-3 / bin_width_s))
 
     if align_field in trial_info.columns:
@@ -249,23 +265,29 @@ def make_windows(
         pre_bins = 0
 
     T_total = X_smooth.shape[1]
+    out_len = window_size + 2 * context_bins
     windows = []
     for t_align in align_times:
         idx_align = int(np.searchsorted(time_index_s, t_align))
         idx_start = max(0, idx_align - pre_bins)
-        idx_end = idx_start + window_size
-        chunk = X_smooth[:, idx_start:min(idx_end, T_total)]
-        actual_len = chunk.shape[1]
+        idx_context_start = idx_start - context_bins
+        idx_context_end = idx_start + window_size + context_bins
+        src_start = max(0, idx_context_start)
+        src_end = min(idx_context_end, T_total)
+        chunk = X_smooth[:, src_start:src_end]
 
-        if actual_len == window_size:
-            windows.append(chunk)
-        elif actual_len < window_size:
-            pad = np.zeros((N, window_size - actual_len), dtype=np.float32)
-            windows.append(np.concatenate([chunk, pad], axis=1))
-        else:
-            windows.append(chunk[:, :window_size])
+        left_pad = src_start - idx_context_start
+        right_pad = idx_context_end - src_end
+        if left_pad or right_pad:
+            chunk = _pad_temporal_reflect(chunk, left_pad, right_pad, out_len)
 
-    return np.stack(windows, axis=0).astype(np.float32)   # (K, N, T)
+        if chunk.shape[1] != out_len:
+            raise RuntimeError(
+                f"internal windowing error: got length {chunk.shape[1]}, expected {out_len}"
+            )
+        windows.append(chunk)
+
+    return np.stack(windows, axis=0).astype(np.float32)   # (K, N, window_size + 2*context_bins)
 
 
 def train_val_split(

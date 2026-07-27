@@ -216,6 +216,7 @@ def build_model_for_kernels(cfg, state_dict: dict) -> tuple[MLP, str]:
             getattr(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
         antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
+        temporal_context_bins=getattr(cfg, "temporal_context_bins", 0),
     )
 
     current = model.state_dict()

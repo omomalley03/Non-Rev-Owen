@@ -44,6 +44,18 @@ def _normalize_channels(windows: np.ndarray, method: str) -> np.ndarray:
     # 
 
 
+def _add_temporal_reflect_context(windows: np.ndarray, context_bins: int) -> np.ndarray:
+    """Reflect each window when no raw pre/post context is available."""
+    context_bins = int(context_bins)
+    if context_bins < 0:
+        raise ValueError("context_bins must be non-negative")
+    if context_bins == 0:
+        return windows
+    if windows.shape[-1] <= 1:
+        return np.pad(windows, ((0, 0), (0, 0), (context_bins, context_bins)), mode="edge")
+    return np.pad(windows, ((0, 0), (0, 0), (context_bins, context_bins)), mode="reflect")
+
+
 def _parse_steps(spec: str) -> list[str]:
     if spec is None:
         return []
@@ -111,7 +123,11 @@ def _apply_eeg_preprocess(windows: np.ndarray, cfg: Config) -> np.ndarray:
     return X
 
 
-def load_synthetic_windows(cfg: Config, data_path: str | None = None) -> np.ndarray:
+def load_synthetic_windows(
+    cfg: Config,
+    data_path: str | None = None,
+    context_bins: int | None = None,
+) -> np.ndarray:
     """Load an ``.npy`` dataset as float32 windows with shape (K, N, T)."""
     path = data_path or cfg.synth_data_path
     windows = np.load(path)
@@ -130,6 +146,10 @@ def load_synthetic_windows(cfg: Config, data_path: str | None = None) -> np.ndar
         rng = np.random.default_rng(cfg.seed)
         noise = rng.normal(0.0, noise_std, size=windows.shape).astype(np.float32)
         windows = windows + noise
+
+    if context_bins is None:
+        context_bins = 0
+    windows = _add_temporal_reflect_context(windows, context_bins)
 
     return np.ascontiguousarray(windows, dtype=np.float32)
 

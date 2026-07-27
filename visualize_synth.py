@@ -1359,7 +1359,15 @@ def main():
     # data_path = args.data or getattr(cfg, "synth_data_path", "rotations.npy")
     data_path = args.data or getattr(cfg, "synth_data_path", "rotations.npy")
     print(f"Loading synthetic data from {data_path} …")
-    windows = load_synthetic_windows(cfg, data_path=data_path)
+    windows = load_synthetic_windows(
+        cfg,
+        data_path=data_path,
+        context_bins=(
+            getattr(cfg, "temporal_context_bins", 0)
+            if getattr(cfg, "temporal_filters", 0) > 0
+            else 0
+        ),
+    )
     labels = load_synthetic_labels(cfg, data_path=data_path)
     subjects = load_synthetic_subjects(cfg)
     if getattr(cfg, "synth_noise_std", 0.0) > 0:
@@ -1391,6 +1399,7 @@ def main():
             getattr(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
         antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
+        temporal_context_bins=getattr(cfg, "temporal_context_bins", 0),
     )
     model.load_state_dict(ckpt["model_state_dict"])
 
