@@ -43,18 +43,18 @@ export D="16"
 export HIDDEN_DIM="256"
 export DEPTH="2" # depth=2 ==> one hidden layer. depth=1 ==> linear 
 export DROPOUT="0.2"
-export TEMPORAL_FRONTEND="symmetric_conv"
+export TEMPORAL_FRONTEND="mixed_parity"
 export ANTISYMMETRIC_PLANES=-1
-export TEMPORAL_FILTERS="0" # setting this to 0 makes it an MLP embedder
+export TEMPORAL_FILTERS="4" # setting this to 0 makes it an MLP embedder
 export MULTISCALE_SYMMETRIC_CONV_LAYERS="1"
 export RESIDUAL_KERNELS="7,15,31,61" # ignore name "residual" -- that is left over from CoCoT naming 
 export TEMPORAL_KERNEL_SIZE="61" # THIS IS OBSOLOTE / OLD TEMPORAL KERNEL FILTERING
-export TEMPORAL_CONTEXT_BINS=0 # 0 padding
+export TEMPORAL_CONTEXT_BINS=30 # 0 padding
 
 # Training settings.
 export BATCH_SIZE="64"
 export EPOCHS="100"
-export LR="1e-3"
+export LR="1e-4"
 export WEIGHT_DECAY="1e-4"
 export LAMBDA_XP="0.0" # PENALISE NONREV IN CROSS-PLANES (e.g., dim 0 and dim 3 are cross-plane)
 export LAMBDA_BT="0.0" 

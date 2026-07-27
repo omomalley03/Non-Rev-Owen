@@ -1,4 +1,5 @@
 import math
+from collections import OrderedDict
 from typing import Optional
 
 import torch
@@ -46,6 +47,8 @@ def _make_pointwise_mlp(
     depth: int,
     dropout: float,
 ) -> nn.Sequential:
+    if dropout < 0.0 or dropout > 1.0:
+        raise ValueError(f"dropout must be in [0, 1], got {dropout}")
     layers = []
     current_dim = in_dim
     for _ in range(depth - 1):
@@ -88,6 +91,172 @@ def _apply_pointwise_net(x: torch.Tensor, net: nn.Module, out_dim: int) -> torch
     y = x.permute(0, 2, 1).reshape(B * T, C)
     y = net(y)
     return y.reshape(B, T, out_dim).permute(0, 2, 1)
+
+
+def _apply_paired_sequential(
+    a: torch.Tensor,
+    b: torch.Tensor,
+    net: nn.Module,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Evaluate a pointwise network twice, sharing dropout masks per layer."""
+    modules = net if isinstance(net, nn.Sequential) else nn.Sequential(net)
+    for module in modules:
+        if isinstance(module, nn.Dropout):
+            p = float(module.p)
+            if not module.training or p == 0.0:
+                continue
+            if p == 1.0:
+                mask = torch.zeros_like(a)
+            else:
+                keep_probability = 1.0 - p
+                mask = torch.empty_like(a).bernoulli_(keep_probability).div_(keep_probability)
+            a = a * mask
+            b = b * mask
+            continue
+        a = module(a)
+        b = module(b)
+    return a, b
+
+
+def _apply_pointwise_net_paired(
+    x: torch.Tensor,
+    qx: torch.Tensor,
+    net: nn.Module,
+    out_dim: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    B, C, T = x.shape
+    y = x.permute(0, 2, 1).reshape(B * T, C)
+    qy = qx.permute(0, 2, 1).reshape(B * T, C)
+    y, qy = _apply_paired_sequential(y, qy, net)
+    y = y.reshape(B, T, out_dim).permute(0, 2, 1)
+    qy = qy.reshape(B, T, out_dim).permute(0, 2, 1)
+    return y, qy
+
+
+class ParityProjectedPointwiseHead(nn.Module):
+    """Parity-projected pointwise MLP head for mixed temporal features.
+
+    ``even_features`` are symmetric/even temporal features and ``odd_features``
+    are antisymmetric/odd temporal features. The head concatenates
+    ``u = (e, o)`` and applies the input parity transform
+
+        Q(e, o) = (e, -o)
+
+    to enforce output parity around otherwise arbitrary pointwise MLPs:
+
+        f_+(u) = [g_+(u) + g_+(Qu)] / 2
+        f_-(u) = [g_-(u) - g_-(Qu)] / 2
+
+        f_+(Qu) =  f_+(u)
+        f_-(Qu) = -f_-(u)
+
+    Biases, affine LayerNorm, GELU, and dropout are allowed inside ``g_+`` and
+    ``g_-`` because parity is imposed by the final projection. Dropout masks are
+    coupled between the ``u`` and ``Qu`` evaluations of each network.
+    """
+
+    def __init__(
+        self,
+        even_in_dim: int,
+        odd_in_dim: int,
+        even_out_dim: int,
+        odd_out_dim: int,
+        hidden_dim: int,
+        depth: int,
+        dropout: float,
+    ):
+        super().__init__()
+        even_in_dim = int(even_in_dim)
+        odd_in_dim = int(odd_in_dim)
+        even_out_dim = int(even_out_dim)
+        odd_out_dim = int(odd_out_dim)
+        if even_in_dim < 0 or odd_in_dim < 0:
+            raise ValueError("input dimensions must be nonnegative")
+        if even_out_dim < 0 or odd_out_dim < 0:
+            raise ValueError("output dimensions must be nonnegative")
+        if even_out_dim == 0 and odd_out_dim == 0:
+            raise ValueError("at least one projected output group must be nonempty")
+
+        full_in_dim = even_in_dim + odd_in_dim
+        if full_in_dim <= 0:
+            raise ValueError("at least one input feature group must be nonempty")
+
+        self.even_in_dim = even_in_dim
+        self.odd_in_dim = odd_in_dim
+        self.even_out_dim = even_out_dim
+        self.odd_out_dim = odd_out_dim
+        self.in_dim = full_in_dim
+
+        self.even_net = (
+            _make_pointwise_mlp(full_in_dim, even_out_dim, hidden_dim, depth, dropout)
+            if even_out_dim > 0
+            else None
+        )
+        self.odd_net = (
+            _make_pointwise_mlp(full_in_dim, odd_out_dim, hidden_dim, depth, dropout)
+            if odd_out_dim > 0
+            else None
+        )
+        parity_sign = torch.cat([
+            torch.ones(even_in_dim),
+            -torch.ones(odd_in_dim),
+        ])
+        self.register_buffer("input_parity_sign", parity_sign.view(1, -1, 1))
+
+    def _inputs(self, even_features: torch.Tensor, odd_features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if even_features.shape[0] != odd_features.shape[0] or even_features.shape[-1] != odd_features.shape[-1]:
+            raise ValueError("even and odd features must have matching batch and time dimensions")
+        if even_features.shape[1] != self.even_in_dim:
+            raise ValueError(f"expected {self.even_in_dim} even input features, got {even_features.shape[1]}")
+        if odd_features.shape[1] != self.odd_in_dim:
+            raise ValueError(f"expected {self.odd_in_dim} odd input features, got {odd_features.shape[1]}")
+        u = torch.cat([even_features, odd_features], dim=1)
+        return u, u * self.input_parity_sign
+
+    def forward_parts(
+        self,
+        even_features: torch.Tensor,
+        odd_features: torch.Tensor,
+    ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """Return projected even and odd outputs before final concatenation."""
+        u, qu = self._inputs(even_features, odd_features)
+        even_output = None
+        odd_output = None
+        if self.even_net is not None:
+            y, qy = _apply_pointwise_net_paired(u, qu, self.even_net, self.even_out_dim)
+            even_output = 0.5 * (y + qy)
+        if self.odd_net is not None:
+            y, qy = _apply_pointwise_net_paired(u, qu, self.odd_net, self.odd_out_dim)
+            odd_output = 0.5 * (y - qy)
+        return even_output, odd_output
+
+    def forward_parts_with_parity_flip(
+        self,
+        even_features: torch.Tensor,
+        odd_features: torch.Tensor,
+    ) -> tuple[
+        tuple[Optional[torch.Tensor], Optional[torch.Tensor]],
+        tuple[Optional[torch.Tensor], Optional[torch.Tensor]],
+    ]:
+        """Return projected outputs for ``(e, o)`` and ``Q(e, o)`` using one dropout draw."""
+        u, qu = self._inputs(even_features, odd_features)
+        even_output = None
+        even_flipped_output = None
+        odd_output = None
+        odd_flipped_output = None
+        if self.even_net is not None:
+            y, qy = _apply_pointwise_net_paired(u, qu, self.even_net, self.even_out_dim)
+            even_output = 0.5 * (y + qy)
+            even_flipped_output = 0.5 * (qy + y)
+        if self.odd_net is not None:
+            y, qy = _apply_pointwise_net_paired(u, qu, self.odd_net, self.odd_out_dim)
+            odd_output = 0.5 * (y - qy)
+            odd_flipped_output = 0.5 * (qy - y)
+        return (even_output, odd_output), (even_flipped_output, odd_flipped_output)
+
+    def forward(self, even_features: torch.Tensor, odd_features: torch.Tensor) -> torch.Tensor:
+        parts = [part for part in self.forward_parts(even_features, odd_features) if part is not None]
+        return torch.cat(parts, dim=1)
 
 
 def _conv1d_with_trial_context(
@@ -429,7 +598,11 @@ class MultiScaleAntiSymmetricConv1d(nn.Module):
 
 
 class MixedParityTemporalConv1d(nn.Module):
-    """Independent symmetric and anti-symmetric temporal filter banks."""
+    """Symmetric/even and antisymmetric/odd temporal filter banks.
+
+    The returned pair ``(e, o)`` satisfies exact time-reversal parity:
+    ``e(Rx) = R e(x)`` and ``o(Rx) = -R o(x)``.
+    """
 
     def __init__(
         self,
@@ -451,7 +624,11 @@ class MixedParityTemporalConv1d(nn.Module):
             in_channels,
             filters_per_channel,
             kernels=kernels,
-            conv_layers=conv_layers,
+            # The mixed-parity head relies on known odd frontend parity before
+            # projection. A stack OddConv -> GELU -> OddConv does not preserve
+            # that known parity because GELU is not an odd pointwise function.
+            # Keep exactly one unbiased temporally antisymmetric convolution.
+            conv_layers=1,
             bias=False,
             context_bins=context_bins,
         )
@@ -459,6 +636,7 @@ class MixedParityTemporalConv1d(nn.Module):
         self.filters_per_channel = int(filters_per_channel)
         self.kernels = _parse_kernels(kernels)
         self.conv_layers = int(conv_layers)
+        self.anti_conv_layers = 1
         self.context_bins = int(context_bins)
         self.out_channels = self.sym_conv.out_channels + self.anti_conv.out_channels
 
@@ -564,6 +742,8 @@ class MLP(nn.Module):
                     f"antisymmetric_planes must be between 0 and {n_planes}, "
                     f"got {antisymmetric_planes}"
                 )
+            # These names are retained for configuration/checkpoint familiarity.
+            # They now denote odd-output and even-output 2D planes respectively.
             self.antisymmetric_planes = antisymmetric_planes
             self.symmetric_planes = n_planes - antisymmetric_planes
             self.sym_out_dim = 2 * self.symmetric_planes
@@ -575,19 +755,14 @@ class MLP(nn.Module):
                 conv_layers=multiscale_symmetric_conv_layers,
                 context_bins=self.temporal_context_bins,
             )
-            conv_out_channels = self.temporal_conv.sym_conv.out_channels
-            self.sym_net = (
-                _make_pointwise_mlp(conv_out_channels, self.sym_out_dim, hidden_dim, depth, dropout)
-                if self.sym_out_dim > 0
-                else None
-            )
-
-
-            self.anti_net = _make_odd_pointwise_mlp(
-                conv_out_channels,
+            self.parity_head = ParityProjectedPointwiseHead(
+                self.temporal_conv.sym_conv.out_channels,
+                self.temporal_conv.anti_conv.out_channels,
+                self.sym_out_dim,
                 self.anti_out_dim,
                 hidden_dim,
                 depth,
+                dropout,
             )
             self.net = None
             self._init_weights()
@@ -632,9 +807,47 @@ class MLP(nn.Module):
         self.net = _make_pointwise_mlp(in_channels, d, hidden_dim, depth, dropout)
         self.antisymmetric_planes = 0
         self.symmetric_planes = d // 2 if d % 2 == 0 else 0
-        self.sym_net = None
-        self.anti_net = None
+        self.parity_head = None
         self._init_weights()
+
+    @property
+    def sym_net(self) -> Optional[nn.Module]:
+        """Projected even-output MLP for mixed parity models, otherwise ``None``."""
+        if self.parity_head is None:
+            return None
+        return self.parity_head.even_net
+
+    @property
+    def anti_net(self) -> Optional[nn.Module]:
+        """Projected odd-output MLP for mixed parity models, otherwise ``None``."""
+        if self.parity_head is None:
+            return None
+        return self.parity_head.odd_net
+
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        if self.mixed_parity and self.parity_head is not None:
+            state_dict = OrderedDict(state_dict)
+            own_state = self.state_dict()
+            translations = (
+                ("sym_net.", "parity_head.even_net."),
+                ("anti_net.", "parity_head.odd_net."),
+            )
+            for old_prefix, new_prefix in translations:
+                for key, value in list(state_dict.items()):
+                    if not key.startswith(old_prefix):
+                        continue
+                    new_key = new_prefix + key[len(old_prefix):]
+                    if (
+                        new_key in own_state
+                        and new_key not in state_dict
+                        and tuple(own_state[new_key].shape) == tuple(value.shape)
+                    ):
+                        state_dict[new_key] = value
+                        del state_dict[key]
+        try:
+            return super().load_state_dict(state_dict, strict=strict, assign=assign)
+        except TypeError:
+            return super().load_state_dict(state_dict, strict=strict)
 
     def _init_weights(self):
         for m in self.modules():
@@ -647,13 +860,38 @@ class MLP(nn.Module):
         B, N, T = x.shape
         if self.mixed_parity:
             x_sym, x_anti = self.temporal_conv(x)
-            parts = []
-            if self.sym_net is not None:
-                parts.append(_apply_pointwise_net(x_sym, self.sym_net, self.sym_out_dim))
-            if self.anti_net is not None:
-                parts.append(_apply_pointwise_net(x_anti, self.anti_net, self.anti_out_dim))
-            return torch.cat(parts, dim=1)
+            return self.parity_head(x_sym, x_anti)
         if self.temporal_conv is not None:
             # x = torch.cat([x, self.temporal_conv(x)], dim=1)   # (B, N + temporal_filters, T)
             x = self.temporal_conv(x)
         return _apply_pointwise_net(x, self.net, self.d)
+
+    def check_time_reversal_parity(self, x: torch.Tensor) -> dict[str, float]:
+        """Return max absolute time-reversal parity errors for mixed-parity models."""
+        if not self.mixed_parity:
+            raise ValueError("time-reversal parity diagnostics are only defined for mixed_parity models")
+
+        was_training = self.training
+        self.eval()
+        with torch.no_grad():
+            e, o = self.temporal_conv(x)
+            e_rev, o_rev = self.temporal_conv(x.flip(-1))
+            y = self(x)
+            y_rev = self(x.flip(-1))
+            y_even = y[:, : self.sym_out_dim]
+            y_odd = y[:, self.sym_out_dim :]
+            y_rev_even = y_rev[:, : self.sym_out_dim]
+            y_rev_odd = y_rev[:, self.sym_out_dim :]
+
+            def max_abs(t: torch.Tensor) -> float:
+                return float(t.abs().max().item()) if t.numel() > 0 else 0.0
+
+            errors = {
+                "symmetric_frontend_error": max_abs(e_rev - e.flip(-1)),
+                "antisymmetric_frontend_error": max_abs(o_rev + o.flip(-1)),
+                "even_output_error": max_abs(y_rev_even - y_even.flip(-1)),
+                "odd_output_error": max_abs(y_rev_odd + y_odd.flip(-1)),
+            }
+        if was_training:
+            self.train()
+        return errors
