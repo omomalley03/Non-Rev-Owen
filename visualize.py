@@ -8,7 +8,11 @@ Each diagnostic plot is saved as its own PNG in the run's `outputs/` dir:
   03_raw_condition_hsv.png              — raw, condition-avg, HSV by reach angle
   04_embed_planes_condition_hsv.png     — hand traj + embedding planes, same HSV colours
   05_embed_planes_condition_time.png    — per plane, both dims vs time, condition HSV colours
+  06_plane_validation_zeta_ranking.csv  — all planes ranked by validation ζ
+  06_plane_validation_zeta_bars.png     — bar chart of ranked plane validation ζ
   07_covariance_heatmap.png             — embedding correlation matrix
+  07_zeta_sorted_correlation_heatmap.png — correlation matrix sorted by branch and plane ζ
+  07_block_cca_plane_heatmap.png        — ‖C_pq‖_F² cross-plane CCA matrix
   08_between_within_variance.png        — trial-discriminability over time
   09_embedding_norm_distribution.png    — ‖F_k‖_F histogram
 
@@ -22,10 +26,15 @@ Usage
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 
 import numpy as np
 import torch
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib_nonrev")
+os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -36,7 +45,14 @@ from config import Config
 from paths import RUNS_DIR
 from data import load_mcmaze_cached, gaussian_smooth, make_windows, train_val_split
 from model import MLP, infer_multiscale_symmetric_conv_layers
-from loss import S_ratio as compute_S_ratio, _batch_rms_normalize
+from loss import (
+    S_ratio as compute_S_ratio,
+    _batch_rms_normalize,
+    _pair_terms_per_plane,
+    _plane_samples,
+    _whiten_2d,
+)
+from visualize_loss import plot_loss_curve
 
 
 # ── geometry helpers ──────────────────────────────────────────────────────────
@@ -177,6 +193,243 @@ def _get_condition_groups(trial_info_val, n_bins: int = 8):
     return groups, colors
 
 
+def _parse_index_list(spec: str | None) -> list[int]:
+    spec = str(spec or "").strip()
+    if not spec:
+        return []
+    out = []
+    for item in spec.split(","):
+        item = item.strip()
+        if item:
+            out.append(int(item))
+    return out
+
+
+def _select_groups_by_indices(groups: dict, indices: list[int]) -> dict:
+    if not indices:
+        return groups
+    keys = list(groups.keys())
+    bad = [idx for idx in indices if idx < 0 or idx >= len(keys)]
+    if bad:
+        raise ValueError(
+            f"Condition indices out of range: {bad}. Valid range is 0-{len(keys) - 1}."
+        )
+    return {keys[idx]: groups[keys[idx]] for idx in indices}
+
+
+def _select_available_groups_by_indices(groups: dict, indices: list[int]) -> tuple[dict, list[int]]:
+    """Select valid group indices and return any requested indices that were absent."""
+    keys = list(groups.keys())
+    keep = [idx for idx in indices if 0 <= idx < len(keys)]
+    missing = [idx for idx in indices if idx < 0 or idx >= len(keys)]
+    return {keys[idx]: groups[keys[idx]] for idx in keep}, missing
+
+
+def _sample_trials_per_condition(groups: dict, n_trials: int, seed: int) -> dict:
+    if n_trials <= 0:
+        return groups
+    rng = np.random.default_rng(seed)
+    sampled = {}
+    for cond_key, idx_list in groups.items():
+        idx = np.asarray(idx_list, dtype=int)
+        if len(idx) > n_trials:
+            idx = np.sort(rng.choice(idx, size=n_trials, replace=False))
+        sampled[cond_key] = idx.tolist()
+    return sampled
+
+
+def _plane_indices_for_plot(d: int) -> list[int]:
+    """Return plane indices to plot, limiting large embeddings for readability."""
+    D = d // 2
+    if d > 32:
+        return list(range(8)) + list(range(D - 8, D))
+    return list(range(D))
+
+
+def _plane_zeta_values(planes: np.ndarray, plane_indices: list[int]) -> dict[int, float]:
+    """Compute ζ for each selected native 2D plane."""
+    if not plane_indices:
+        return {}
+    selected = torch.from_numpy(planes[:, plane_indices])
+    K, P, _, T = selected.shape
+    selected = selected.reshape(K, 2 * P, T)
+    minus_per_plane, plus_per_plane = _pair_terms_per_plane(_batch_rms_normalize(selected))
+    zeta = minus_per_plane / (plus_per_plane + 1e-8)
+    return {p: zeta[i].item() for i, p in enumerate(plane_indices)}
+
+
+def _mixed_parity_plane_split(d: int, cfg: Config | None) -> tuple[int, int] | None:
+    """Return (even/symmetric planes, odd/anti-symmetric planes) for mixed parity."""
+    if cfg is None:
+        return None
+    frontend = str(getattr(cfg, "temporal_frontend", "") or "").lower()
+    mixed_frontends = {
+        "mixed_parity",
+        "mixed_symmetric_antisymmetric",
+        "mixed_sym_anti",
+        "sym_anti",
+    }
+    if frontend not in mixed_frontends:
+        return None
+
+    D = d // 2
+    odd_planes = int(getattr(cfg, "antisymmetric_planes", 0))
+    if odd_planes < 0:
+        odd_planes = max(1, D // 2)
+    odd_planes = min(max(odd_planes, 0), D)
+    even_planes = D - odd_planes
+    return even_planes, odd_planes
+
+
+def _plane_indices_for_ranked_branch_plot(
+    planes: np.ndarray,
+    d: int,
+    cfg: Config | None,
+    per_branch: int = 8,
+) -> tuple[list[int], dict[int, float], dict[int, str]]:
+    """Select top-ζ planes from each mixed-parity branch for plots 02 and 04."""
+    D = d // 2
+    split = _mixed_parity_plane_split(d, cfg)
+    if split is None:
+        plane_indices = _plane_indices_for_plot(d)
+        plane_zeta = _plane_zeta_values(planes, plane_indices)
+        return plane_indices, plane_zeta, {p: "plane" for p in plane_indices}
+
+    even_planes, odd_planes = split
+    all_plane_indices = list(range(D))
+    plane_zeta = _plane_zeta_values(planes, all_plane_indices)
+    even_indices = list(range(even_planes))
+    odd_indices = list(range(even_planes, even_planes + odd_planes))
+
+    top_even = sorted(even_indices, key=lambda p: plane_zeta[p], reverse=True)[:per_branch]
+    top_odd = sorted(odd_indices, key=lambda p: plane_zeta[p], reverse=True)[:per_branch]
+    plane_branch = {p: "even" for p in top_even}
+    plane_branch.update({p: "odd" for p in top_odd})
+    return top_even + top_odd, plane_zeta, plane_branch
+
+
+def _plane_title(p: int, zeta: float, branch: str | None = None) -> str:
+    branch_label = f" [{branch}]" if branch and branch != "plane" else ""
+    return f"Plane {p}{branch_label}  (dims {2*p}, {2*p+1})  ζ={zeta:.2f}"
+
+
+def _plane_zeta_ranking_rows(F_hat: np.ndarray, cfg: Config | None = None) -> list[dict]:
+    """Return all native planes ranked by validation ζ."""
+    K, d, T = F_hat.shape
+    D = d // 2
+    planes = F_hat.reshape(K, D, 2, T)
+    all_plane_indices = list(range(D))
+    ranked_branch_plotted_planes, _, _ = _plane_indices_for_ranked_branch_plot(
+        planes,
+        d,
+        cfg,
+    )
+    ranked_branch_plotted_planes = set(ranked_branch_plotted_planes)
+    split = _mixed_parity_plane_split(d, cfg)
+    if split is None:
+        branch_labels = {p: "" for p in all_plane_indices}
+    else:
+        even_planes, odd_planes = split
+        branch_labels = {p: "even" for p in range(even_planes)}
+        branch_labels.update({
+            p: "odd"
+            for p in range(even_planes, even_planes + odd_planes)
+        })
+    plane_zeta = _plane_zeta_values(planes, all_plane_indices)
+    rows = sorted(
+        (
+            {
+                "rank": 0,
+                "plane": p,
+                "branch": branch_labels[p],
+                "dim_even": 2 * p,
+                "dim_odd": 2 * p + 1,
+                "validation_zeta": plane_zeta[p],
+                "is_ranked_branch_plotted_02_04_05": p in ranked_branch_plotted_planes,
+            }
+            for p in all_plane_indices
+        ),
+        key=lambda row: row["validation_zeta"],
+        reverse=True,
+    )
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+    return rows
+
+
+def _branch_zeta_sorted_plane_rows(F_hat: np.ndarray, cfg: Config | None = None) -> list[dict]:
+    """Return planes ordered as even branch by ζ, then odd branch by ζ."""
+    rows = _plane_zeta_ranking_rows(F_hat, cfg)
+    if not any(row["branch"] for row in rows):
+        return rows
+    even_rows = [row for row in rows if row["branch"] == "even"]
+    odd_rows = [row for row in rows if row["branch"] == "odd"]
+    other_rows = [row for row in rows if row["branch"] not in {"even", "odd"}]
+    return even_rows + odd_rows + other_rows
+
+
+def write_plane_zeta_ranking(F_hat: np.ndarray, out_path: str, cfg: Config | None = None):
+    """Write all native planes ranked by validation ζ."""
+    rows = _plane_zeta_ranking_rows(F_hat, cfg)
+    with open(out_path, "w", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "rank",
+                "plane",
+                "branch",
+                "dim_even",
+                "dim_odd",
+                "validation_zeta",
+                "is_ranked_branch_plotted_02_04_05",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"Saved → {out_path}")
+
+
+def plot_plane_zeta_bars(F_hat: np.ndarray, out_path: str, cfg: Config | None = None):
+    """Bar chart of validation ζ for all planes, coloured by mixed-parity branch."""
+    rows = _plane_zeta_ranking_rows(F_hat, cfg)
+    planes = [row["plane"] for row in rows]
+    zeta = [row["validation_zeta"] for row in rows]
+    colors = [
+        "tab:blue" if row["branch"] == "even"
+        else "tab:red" if row["branch"] == "odd"
+        else "0.45"
+        for row in rows
+    ]
+
+    fig_width = min(max(len(rows) * 0.18, 8), 18)
+    fig, ax = plt.subplots(figsize=(fig_width, 5))
+    x = np.arange(len(rows))
+    ax.bar(x, zeta, color=colors, width=0.85)
+    ax.set_title("Validation ζ by plane, ranked", fontsize=11)
+    ax.set_xlabel("Plane rank", fontsize=9)
+    ax.set_ylabel("Validation ζ", fontsize=9)
+    ax.set_ylim(0, max(1.0, max(zeta) * 1.05 if zeta else 1.0))
+    tick_step = max(1, len(rows) // 16)
+    ticks = x[::tick_step]
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([str(planes[i]) for i in ticks], rotation=45, ha="right")
+    ax.tick_params(labelsize=8)
+    ax.spines[["top", "right"]].set_visible(False)
+
+    handles = [
+        Line2D([0], [0], color="tab:blue", lw=6, label="even planes"),
+        Line2D([0], [0], color="tab:red", lw=6, label="odd planes"),
+    ]
+    if any(row["branch"] == "" for row in rows):
+        handles.append(Line2D([0], [0], color="0.45", lw=6, label="planes"))
+    ax.legend(handles=handles, fontsize=8, frameon=False, loc="best")
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
 # ── plot 1 / 2: condition-averaged, time-coded ───────────────────────────────
 
 def _plot_time_coded(phasors, groups, title, xlabel, ylabel, out_path,
@@ -221,20 +474,32 @@ def _plot_time_coded(phasors, groups, title, xlabel, ylabel, out_path,
 
 # ── plot 2 / 4: per-plane condition-averaged ────────────────────────────────
 
-def _plot_planes_time_coded(F_hat, groups, s_ratio, out_path, cmap_name="coolwarm"):
+def _plot_planes_time_coded(
+    F_hat,
+    groups,
+    s_ratio,
+    out_path,
+    cmap_name="coolwarm",
+    cfg: Config | None = None,
+):
     """Subplot grid: one panel per 2D rotation plane, condition-avg, time-coded."""
     K, d, T = F_hat.shape
     D = d // 2
     planes = F_hat.reshape(K, D, 2, T)
+    plane_indices, plane_zeta, plane_branch = _plane_indices_for_ranked_branch_plot(
+        planes,
+        d,
+        cfg,
+    )
     cmap = plt.get_cmap(cmap_name)
 
-    ncols = min(D, 4)
-    nrows = (D + ncols - 1) // ncols
+    ncols = min(len(plane_indices), 4)
+    nrows = (len(plane_indices) + ncols - 1) // ncols
     fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 4 * nrows),
                              squeeze=False)
 
-    for p in range(D):
-        ax = axes[p // ncols, p % ncols]
+    for panel_idx, p in enumerate(plane_indices):
+        ax = axes[panel_idx // ncols, panel_idx % ncols]
         for cond_key in groups:
             idx_list = groups[cond_key]
             mean_traj = planes[idx_list, p].mean(axis=0)  # (2, T)
@@ -246,14 +511,14 @@ def _plot_planes_time_coded(F_hat, groups, s_ratio, out_path, cmap_name="coolwar
         ax.axhline(0, color="k", lw=0.4, alpha=0.25)
         ax.axvline(0, color="k", lw=0.4, alpha=0.25)
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})", fontsize=9)
+        ax.set_title(_plane_title(p, plane_zeta[p], plane_branch[p]), fontsize=9)
         ax.set_xlabel(f"dim {2*p}", fontsize=8)
         ax.set_ylabel(f"dim {2*p+1}", fontsize=8)
         ax.tick_params(labelsize=7)
         ax.set_aspect("equal", adjustable="datalim")
 
-    for p in range(D, nrows * ncols):
-        axes[p // ncols, p % ncols].set_visible(False)
+    for panel_idx in range(len(plane_indices), nrows * ncols):
+        axes[panel_idx // ncols, panel_idx % ncols].set_visible(False)
 
     fig.suptitle(f"Embedding — condition-avg, time-coded  (ζ = {s_ratio:.2f})",
                  fontsize=11)
@@ -263,8 +528,17 @@ def _plot_planes_time_coded(F_hat, groups, s_ratio, out_path, cmap_name="coolwar
     print(f"Saved → {out_path}")
 
 
-def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
-                               hand_windows_val=None):
+def _plot_planes_condition_hsv(
+    F_hat,
+    groups,
+    colors,
+    s_ratio,
+    out_path,
+    hand_windows_val=None,
+    individual_trials_per_condition: int = 0,
+    trial_sample_seed: int = 0,
+    cfg: Config | None = None,
+):
     """Subplot grid: hand trajectories (if available) + one panel per 2D rotation plane.
 
     When hand_windows_val is provided the first panel shows val-set hand
@@ -274,9 +548,20 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
     K, d, T = F_hat.shape
     D = d // 2
     planes = F_hat.reshape(K, D, 2, T)
+    plane_indices, plane_zeta, plane_branch = _plane_indices_for_ranked_branch_plot(
+        planes,
+        d,
+        cfg,
+    )
+    plot_groups = _sample_trials_per_condition(
+        groups,
+        individual_trials_per_condition,
+        trial_sample_seed,
+    )
+    plot_individual_trials = individual_trials_per_condition > 0
 
     has_hand = False # hand_windows_val is not None
-    n_panels = (1 if has_hand else 0) + D
+    n_panels = (1 if has_hand else 0) + len(plane_indices)
     ncols = min(n_panels, 4)
     nrows = (n_panels + ncols - 1) // ncols
     fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 4 * nrows),
@@ -286,14 +571,18 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
 
     if has_hand:
         ax = axes[0, 0]
-        for cond_key in groups:
-            idx_list = groups[cond_key]
-            mean_hand = hand_windows_val[idx_list].mean(axis=0)
+        for cond_key in plot_groups:
+            idx_list = plot_groups[cond_key]
             color = colors[cond_key]
-            ax.plot(mean_hand[0], mean_hand[1], lw=1.4, color=color, alpha=0.9)
-            # ax.xlim(-6,6)
-            # ax.ylim(-6,6)
-            ax.scatter(mean_hand[0, 0], mean_hand[1, 0], color=color, s=25, zorder=5)
+            if plot_individual_trials:
+                for trial_idx in idx_list:
+                    hand = hand_windows_val[trial_idx]
+                    ax.plot(hand[0], hand[1], lw=0.75, color=color, alpha=0.35)
+                    ax.scatter(hand[0, 0], hand[1, 0], color=color, s=8, zorder=5, alpha=0.55)
+            else:
+                mean_hand = hand_windows_val[idx_list].mean(axis=0)
+                ax.plot(mean_hand[0], mean_hand[1], lw=1.4, color=color, alpha=0.9)
+                ax.scatter(mean_hand[0, 0], mean_hand[1, 0], color=color, s=25, zorder=5)
         ax.spines[["top", "right"]].set_visible(False)
         ax.set_title("Hand trajectory (val)", fontsize=9)
         ax.set_xlabel("hand_x", fontsize=8)
@@ -302,19 +591,25 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
         ax.set_aspect("equal", adjustable="datalim")
         panel = 1
 
-    for p in range(D):
-        idx = panel + p
+    for plane_panel_idx, p in enumerate(plane_indices):
+        idx = panel + plane_panel_idx
         ax = axes[idx // ncols, idx % ncols]
-        for cond_key in groups:
-            idx_list = groups[cond_key]
-            mean_traj = planes[idx_list, p].mean(axis=0)  # (2, T)
+        for cond_key in plot_groups:
+            idx_list = plot_groups[cond_key]
             color = colors[cond_key]
-            ax.plot(mean_traj[0], mean_traj[1], lw=1.4, color=color, alpha=0.9)
-            ax.scatter(mean_traj[0, 0], mean_traj[1, 0], color=color, s=25, zorder=5)
+            if plot_individual_trials:
+                for trial_idx in idx_list:
+                    traj = planes[trial_idx, p]
+                    ax.plot(traj[0], traj[1], lw=0.75, color=color, alpha=0.35)
+                    ax.scatter(traj[0, 0], traj[1, 0], color=color, s=8, zorder=5, alpha=0.55)
+            else:
+                mean_traj = planes[idx_list, p].mean(axis=0)  # (2, T)
+                ax.plot(mean_traj[0], mean_traj[1], lw=1.4, color=color, alpha=0.9)
+                ax.scatter(mean_traj[0, 0], mean_traj[1, 0], color=color, s=25, zorder=5)
         # ax.set_xlim(-6,6)
         # ax.set_ylim(-6,6)
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})", fontsize=12)
+        ax.set_title(_plane_title(p, plane_zeta[p], plane_branch[p]), fontsize=12)
         ax.set_xlabel(f"dim {2*p}", fontsize=12)
         ax.set_ylabel(f"dim {2*p+1}", fontsize=12)
         ax.tick_params(labelsize=7)
@@ -323,10 +618,17 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
     for i in range(n_panels, nrows * ncols):
         axes[i // ncols, i % ncols].set_visible(False)
 
-    n_conds = len(groups)
-    n_per = float(np.mean([len(v) for v in groups.values()]))
-    # fig.suptitle(f"Embeddings coded by trial (ζ = {s_ratio:.2f},  "
-                #  f"{n_conds} conditions, {n_per:.1f} trials/cond)", fontsize=14)
+    n_conds = len(plot_groups)
+    n_per = float(np.mean([len(v) for v in plot_groups.values()]))
+    # if plot_individual_trials:
+    #     fig.suptitle(
+    #         f"Embeddings coded by trial (ζ = {s_ratio:.2f}, "
+    #         f"{n_conds} conditions, up to {individual_trials_per_condition} trials/cond)",
+    #         fontsize=12,
+    #     )
+    # else:
+    #     fig.suptitle(f"Embeddings coded by condition (ζ = {s_ratio:.2f},  "
+    #                  f"{n_conds} conditions, {n_per:.1f} trials/cond avg)", fontsize=14)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -335,7 +637,15 @@ def _plot_planes_condition_hsv(F_hat, groups, colors, s_ratio, out_path,
 
 # ── plot 5: per-plane condition-averaged, dims vs time ───────────────────────
 
-def _plot_planes_condition_time(F_hat, groups, colors, s_ratio, out_path):
+def _plot_planes_condition_time(
+    F_hat,
+    groups,
+    colors,
+    s_ratio,
+    out_path,
+    cfg: Config | None = None,
+    condition_labels: dict | None = None,
+):
     """Subplot grid: one panel per 2D rotation plane, condition-avg, dims vs time.
 
     Like plot 4 but instead of plotting the two plane dims against each other,
@@ -346,15 +656,20 @@ def _plot_planes_condition_time(F_hat, groups, colors, s_ratio, out_path):
     K, d, T = F_hat.shape
     D = d // 2
     planes = F_hat.reshape(K, D, 2, T)
+    plane_indices, plane_zeta, plane_branch = _plane_indices_for_ranked_branch_plot(
+        planes,
+        d,
+        cfg,
+    )
     t_axis = np.arange(T)
 
-    ncols = min(D, 4)
-    nrows = (D + ncols - 1) // ncols
+    ncols = min(len(plane_indices), 4)
+    nrows = (len(plane_indices) + ncols - 1) // ncols
     fig, axes = plt.subplots(nrows, ncols, figsize=(4.5 * ncols, 4 * nrows),
                              squeeze=False)
 
-    for p in range(D):
-        ax = axes[p // ncols, p % ncols]
+    for panel_idx, p in enumerate(plane_indices):
+        ax = axes[panel_idx // ncols, panel_idx % ncols]
         for cond_key in groups:
             idx_list = groups[cond_key]
             mean_traj = planes[idx_list, p].mean(axis=0)  # (2, T)
@@ -364,20 +679,44 @@ def _plot_planes_condition_time(F_hat, groups, colors, s_ratio, out_path):
             ax.plot(t_axis, mean_traj[1], lw=1.4, color=color, alpha=0.9,
                     ls="--")
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})", fontsize=12)
+        ax.set_title(_plane_title(p, plane_zeta[p], plane_branch[p]), fontsize=12)
         ax.set_xlabel("time (bins)", fontsize=12)
         ax.set_ylabel("embedding value", fontsize=12)
         ax.tick_params(labelsize=7)
 
     # Style legend (shared): solid = even/x dim, dashed = odd/y dim.
     style_handles = [
-        Line2D([0], [0], color="0.3", lw=1.4, ls="-", label="even dim (x)"),
-        Line2D([0], [0], color="0.3", lw=1.4, ls="--", label="odd dim (y)"),
+        Line2D([0], [0], color="0.3", lw=1.4, ls="-", label="dim 2p"),
+        Line2D([0], [0], color="0.3", lw=1.4, ls="--", label="dim 2p+1"),
     ]
-    axes[0, 0].legend(handles=style_handles, fontsize=8, loc="best",
-                      frameon=False)
+    condition_handles = [
+        Line2D(
+            [0],
+            [0],
+            color=colors[cond_key],
+            lw=2.0,
+            label=(condition_labels or {}).get(cond_key, str(cond_key)),
+        )
+        for cond_key in groups
+    ]
+    legend_ax = axes[0, 0]
+    style_legend = legend_ax.legend(
+        handles=style_handles,
+        fontsize=8,
+        loc="upper left",
+        frameon=False,
+    )
+    legend_ax.add_artist(style_legend)
+    legend_ax.legend(
+        handles=condition_handles,
+        title="condition",
+        fontsize=8,
+        title_fontsize=8,
+        loc="upper right",
+        frameon=False,
+    )
 
-    for i in range(D, nrows * ncols):
+    for i in range(len(plane_indices), nrows * ncols):
         axes[i // ncols, i % ncols].set_visible(False)
 
     fig.tight_layout()
@@ -562,7 +901,16 @@ def _plot_dim_grid(F_hat, s_ratio, out_path,
     print(f"Saved → {out_path}")
 
 
-# ── plot 8: covariance heatmap ───────────────────────────────────────────────
+# ── plot 7: covariance heatmaps ───────────────────────────────────────────────
+
+def _embedding_correlation(F_hat: np.ndarray) -> np.ndarray:
+    """Empirical correlation matrix of the d embedding dims."""
+    K, d, T = F_hat.shape
+    Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
+    Z = Z - Z.mean(axis=0)
+    Z = Z / (Z.std(axis=0) + 1e-6)
+    return (Z.T @ Z) / Z.shape[0]
+
 
 def plot_covariance_heatmap(F_hat, out_path):
     """Empirical correlation matrix of the d embedding dims.
@@ -573,31 +921,244 @@ def plot_covariance_heatmap(F_hat, out_path):
     Corr_{ij} = (1/M) Σ_m Z̃_{m,i} Z̃_{m,j}
     Barlow-Twins target: Corr = I.  Off-diagonal mass ⇒ redundant dims.
     """
-    K, d, T = F_hat.shape
-    Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
-    Z = Z - Z.mean(axis=0)
-    Z = Z / (Z.std(axis=0) + 1e-6)
-    Corr = (Z.T @ Z) / Z.shape[0]
+    d = F_hat.shape[1]
+    Corr = _embedding_correlation(F_hat)
 
-    n_show = min(d, 32)
-    fig, ax = plt.subplots(figsize=(6, 5))
-    im = ax.imshow(Corr[:n_show, :n_show], cmap="RdBu_r", vmin=-1, vmax=1,
-                   interpolation="nearest", aspect="auto")
+    fig_size = min(max(d / 16, 6), 10)
+    fig, ax = plt.subplots(figsize=(fig_size, fig_size))
+    im = ax.imshow(Corr, cmap="RdBu_r", vmin=-1, vmax=1,
+                   interpolation="nearest", aspect="equal")
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     off_diag_mean = float(np.abs(Corr - np.eye(d)).mean())
     ax.set_title(
-        f"Embedding correlation  (top {n_show} of {d} dims)\n"
+        f"Embedding correlation  ({d} dims)\n"
         f"mean |Corr − I| = {off_diag_mean:.4f}  (0 = identity)",
         fontsize=10,
     )
     ax.set_xlabel("Embedding dim", fontsize=9)
     ax.set_ylabel("Embedding dim", fontsize=9)
+    if d > 32:
+        tick_step = max(1, d // 8)
+        ticks = np.arange(0, d, tick_step)
+        ax.set_xticks(ticks)
+        ax.set_yticks(ticks)
     ax.tick_params(labelsize=8)
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {out_path}")
+
+
+def plot_zeta_sorted_correlation_heatmap(
+    F_hat: np.ndarray,
+    out_path: str,
+    cfg: Config | None = None,
+):
+    """Correlation heatmap with plane dims kept adjacent and planes sorted by ζ."""
+    d = F_hat.shape[1]
+    rows = _branch_zeta_sorted_plane_rows(F_hat, cfg)
+    dim_order = [
+        dim
+        for row in rows
+        for dim in (row["dim_even"], row["dim_odd"])
+    ]
+    Corr = _embedding_correlation(F_hat)
+    Corr_sorted = Corr[np.ix_(dim_order, dim_order)]
+
+    fig_size = min(max(d / 16, 7), 11)
+    fig, ax = plt.subplots(figsize=(fig_size, fig_size))
+    im = ax.imshow(Corr_sorted, cmap="RdBu_r", vmin=-1, vmax=1,
+                   interpolation="nearest", aspect="equal")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    off_diag_mean = float(np.abs(Corr - np.eye(d)).mean())
+    ax.set_title(
+        "Embedding correlation sorted by validation ζ\n"
+        f"planes kept paired; mean |Corr − I| = {off_diag_mean:.4f}",
+        fontsize=10,
+    )
+    ax.set_xlabel("Plane order: even branch then odd branch, each ranked by ζ", fontsize=9)
+    ax.set_ylabel("Plane order: even branch then odd branch, each ranked by ζ", fontsize=9)
+
+    plane_centers = np.arange(len(rows)) * 2 + 0.5
+    tick_indices = _correlation_plane_tick_indices(rows)
+    ticks = plane_centers[tick_indices]
+    labels = [str(rows[i]["plane"]) for i in tick_indices]
+    ax.set_xticks(ticks)
+    ax.set_yticks(ticks)
+    ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_yticklabels(labels)
+
+    for tick_label, i in zip(ax.get_xticklabels(), tick_indices):
+        tick_label.set_color(_branch_tick_color(rows[i]["branch"]))
+    for tick_label, i in zip(ax.get_yticklabels(), tick_indices):
+        tick_label.set_color(_branch_tick_color(rows[i]["branch"]))
+
+    boundaries = np.arange(2, d, 2) - 0.5
+    ax.vlines(boundaries, -0.5, d - 0.5, color="white", lw=0.25, alpha=0.45)
+    ax.hlines(boundaries, -0.5, d - 0.5, color="white", lw=0.25, alpha=0.45)
+
+    branch_counts = {
+        "even": sum(1 for row in rows if row["branch"] == "even"),
+        "odd": sum(1 for row in rows if row["branch"] == "odd"),
+    }
+    even_dim_count = 2 * branch_counts["even"]
+    if 0 < even_dim_count < d:
+        boundary = even_dim_count - 0.5
+        ax.axvline(boundary, color="k", lw=1.2, alpha=0.8)
+        ax.axhline(boundary, color="k", lw=1.2, alpha=0.8)
+        ax.text(
+            even_dim_count / 2 - 0.5,
+            -2.2,
+            "even planes",
+            color="tab:blue",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            clip_on=False,
+        )
+        ax.text(
+            even_dim_count + (d - even_dim_count) / 2 - 0.5,
+            -2.2,
+            "odd planes",
+            color="tab:red",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+            clip_on=False,
+        )
+
+    ax.tick_params(labelsize=7)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
+def _correlation_plane_tick_indices(rows: list[dict]) -> np.ndarray:
+    """Choose readable plane-center tick positions for a sorted correlation matrix."""
+    if len(rows) <= 32:
+        return np.arange(len(rows), dtype=int)
+    indices = []
+    for branch in ("even", "odd"):
+        branch_indices = [i for i, row in enumerate(rows) if row["branch"] == branch]
+        if not branch_indices:
+            continue
+        step = max(1, len(branch_indices) // 8)
+        indices.extend(branch_indices[::step])
+    if not indices:
+        step = max(1, len(rows) // 16)
+        indices = list(range(0, len(rows), step))
+    return np.array(sorted(set(indices)), dtype=int)
+
+
+def _branch_tick_color(branch: str) -> str:
+    if branch == "even":
+        return "tab:blue"
+    if branch == "odd":
+        return "tab:red"
+    return "0.2"
+
+
+def plot_block_cca_plane_heatmap(
+    F_hat: np.ndarray,
+    out_path: str,
+    cfg: Config | None = None,
+):
+    """Heatmap of ‖C_pq‖_F² between whitened 2D planes."""
+    F = torch.from_numpy(F_hat)
+    eps = float(getattr(cfg, "block_cca_eps", 1e-4)) if cfg is not None else 1e-4
+    with torch.no_grad():
+        X = _whiten_2d(_plane_samples(F), eps=eps)
+        D, M, _ = X.shape
+        C = torch.einsum("pmi,qmj->pqij", X, X) / M
+        C_frob_sq = C.pow(2).sum(dim=(-1, -2)).cpu().numpy()
+
+    C_plot = C_frob_sq.copy()
+    np.fill_diagonal(C_plot, np.nan)
+    cmap = plt.get_cmap("magma").copy()
+    cmap.set_bad("0.88")
+
+    fig_size = min(max(D / 8, 7), 11)
+    fig, ax = plt.subplots(figsize=(fig_size, fig_size))
+    finite_vals = C_plot[np.isfinite(C_plot)]
+    vmax = float(np.percentile(finite_vals, 99)) if finite_vals.size else 1.0
+    vmax = max(vmax, 1e-8)
+    im = ax.imshow(C_plot, cmap=cmap, vmin=0, vmax=vmax,
+                   interpolation="nearest", aspect="equal")
+    plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04,
+                 label=r"$\|C_{pq}\|_F^2$")
+
+    off_diag_mean = float(finite_vals.mean()) if finite_vals.size else float("nan")
+    ax.set_title(
+        "Cross-plane Regularisation Metric\n"
+        rf"off-diagonal mean $\|C_{{pq}}\|_F^2$ = {off_diag_mean:.4f}",
+        fontsize=10,
+    )
+    ax.set_xlabel("Plane", fontsize=9)
+    ax.set_ylabel("Plane", fontsize=9)
+
+    tick_indices = _native_plane_tick_indices(D, cfg)
+    ax.set_xticks(tick_indices)
+    ax.set_yticks(tick_indices)
+    ax.set_xticklabels([str(i) for i in tick_indices], rotation=45, ha="right")
+    ax.set_yticklabels([str(i) for i in tick_indices])
+
+    split = _mixed_parity_plane_split(2 * D, cfg)
+    if split is not None:
+        even_planes, odd_planes = split
+        for tick_label, i in zip(ax.get_xticklabels(), tick_indices):
+            tick_label.set_color("tab:blue" if i < even_planes else "tab:red")
+        for tick_label, i in zip(ax.get_yticklabels(), tick_indices):
+            tick_label.set_color("tab:blue" if i < even_planes else "tab:red")
+        if 0 < even_planes < D:
+            boundary = even_planes - 0.5
+            ax.axvline(boundary, color="white", lw=1.3, alpha=0.9)
+            ax.axhline(boundary, color="white", lw=1.3, alpha=0.9)
+            ax.text(
+                even_planes / 2 - 0.5,
+                -1.2,
+                "even",
+                color="tab:blue",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                clip_on=False,
+            )
+            ax.text(
+                even_planes + odd_planes / 2 - 0.5,
+                -1.2,
+                "odd",
+                color="tab:red",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                clip_on=False,
+            )
+
+    ax.tick_params(labelsize=7)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
+def _native_plane_tick_indices(D: int, cfg: Config | None = None) -> np.ndarray:
+    if D <= 32:
+        return np.arange(D, dtype=int)
+    split = _mixed_parity_plane_split(2 * D, cfg)
+    if split is None:
+        step = max(1, D // 16)
+        return np.arange(0, D, step, dtype=int)
+    even_planes, odd_planes = split
+    indices = []
+    for start, count in ((0, even_planes), (even_planes, odd_planes)):
+        if count <= 0:
+            continue
+        step = max(1, count // 8)
+        indices.extend(range(start, start + count, step))
+    return np.array(sorted(set(indices)), dtype=int)
 
 
 # ── plot 9: between vs within trial variance ─────────────────────────────────
@@ -691,6 +1252,11 @@ def _hand_windows_from_raw(hand_pos_raw, cfg, trial_info, time_index_s, bin_widt
         strategy=cfg.window_strategy, window_size=cfg.window_size,
         align_field=getattr(cfg, "align_field", "move_onset_time"),
         pre_ms=getattr(cfg, "pre_ms", 100),
+        context_bins=(
+            getattr(cfg, "temporal_context_bins", 0)
+            if getattr(cfg, "temporal_filters", 0) > 0
+            else 0
+        ),
     )
 
 
@@ -756,163 +1322,24 @@ def plot_conditions_diagnostic(hand_windows, trial_info, val_indices, out_path):
     print(f"Saved → {out_path}")
 
 
-# ── loss curve ───────────────────────────────────────────────────────────────
-
-def plot_loss_curve(run_dir: str, cfg: Config) -> None:
-    """Regenerate the training loss curve from saved CSVs.
-
-    Reads  outputs/log.csv         — epoch-level S and loss
-           outputs/reg_history.csv — per-reg raw and λ·reg magnitudes (written
-                                     by train.py when at least one regularizer
-                                     is active; absent for unregularised runs)
-
-    Produces the same single-panel training-dynamics figure as train.py.
-    """
-    import csv as _csv
-
-    out_dir = os.path.join(run_dir, "outputs")
-    log_path = os.path.join(out_dir, "log.csv")
-    if not os.path.isfile(log_path):
-        print(f"  [loss curve] no log.csv found at {log_path!r} — skipping.")
-        return
-
-    # read log.csv
-    epochs, val_s, val_c_plus, val_zeta, val_losses = [], [], [], [], []
-    with open(log_path, newline="") as f:
-        for row in _csv.DictReader(f):
-            epochs.append(int(row["epoch"]))
-            val_s.append(float(row["val_s"]))
-            if row.get("val_c_plus") not in (None, ""):
-                val_c_plus.append(float(row["val_c_plus"]))
-            if row.get("val_zeta") not in (None, ""):
-                val_zeta.append(float(row["val_zeta"]))
-            val_losses.append(float(row["val_loss"]))
-    has_c_plus = len(val_c_plus) == len(epochs)
-    has_zeta = len(val_zeta) == len(epochs)
-
-    reg_lambdas = {
-        "xp": cfg.lambda_xp,
-        "bt": cfg.lambda_bt,
-        "plane_bt": getattr(cfg, "lambda_plane_bt", 0.0),
-        "cca": getattr(cfg, "lambda_block_cca", 0.0),
-    }
-    active_regs = [k for k, v in reg_lambdas.items() if v > 0]
-
-    # try to load per-epoch reg data (written by train.py; absent for old runs)
-    reg_scaled: dict[str, list[float]] = {}
-    reg_path = os.path.join(out_dir, "reg_history.csv")
-    if os.path.isfile(reg_path):
-        with open(reg_path, newline="") as f:
-            reader = _csv.DictReader(f)
-            csv_regs = [c[4:] for c in (reader.fieldnames or [])
-                        if c.startswith("raw_")]
-            for k in csv_regs:
-                reg_scaled[k] = []
-            for row in reader:
-                for k in csv_regs:
-                    reg_scaled[k].append(float(row[f"scaled_{k}"]))
-
-    fig, ax = plt.subplots(figsize=(5.6, 4))
-    ax.plot(epochs, val_s, label="S mean/plane (↑)", color="steelblue")
-    if has_c_plus:
-        ax.plot(
-            epochs,
-            val_c_plus,
-            label=r"$\|C^{(+)}\|_F^2$",
-            color="mediumpurple",
-            alpha=0.35,
-        )
-    if reg_scaled:
-        total_scaled = [
-            sum(
-                reg_scaled[k][i]
-                for k in active_regs
-                if k in reg_scaled and i < len(reg_scaled[k])
-            )
-            for i in range(len(epochs))
-        ]
-        ax.plot(epochs, total_scaled, label="total λ·reg (↓)", color="tomato")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Embedding validation loss components")
-    ax.spines[["top", "right"]].set_visible(False)
-
-    ax_zeta = None
-    if has_zeta:
-        ax_zeta = ax.twinx()
-        ax_zeta.plot(epochs, val_zeta, label="ζ", color="seagreen", alpha=0.6)
-        ax_zeta.set_ylabel("Validation ζ")
-        ax_zeta.spines["top"].set_visible(False)
-
-    best_epoch = None
-    best_label = "best val loss"
-    best_ckpt_path = os.path.join(run_dir, "checkpoints", "best.pt")
-    if os.path.isfile(best_ckpt_path):
-        try:
-            ckpt = torch.load(best_ckpt_path, map_location="cpu", weights_only=False)
-            best_epoch = int(ckpt["epoch"])
-            if ckpt.get("checkpoint_selection") == "best_val_zeta":
-                best_label = "best val ζ"
-        except Exception as exc:
-            print(f"  [loss curve] could not read best.pt ({exc}); falling back to log.csv.")
-    if has_zeta and best_label != "best val ζ":
-        best_epoch = max(range(1, len(val_zeta) + 1), key=lambda i: val_zeta[i - 1])
-        best_label = "best val ζ"
-    if best_epoch is None and val_losses:
-        best_epoch = min(range(1, len(val_losses) + 1), key=lambda i: val_losses[i - 1])
-
-    if best_epoch is not None:
-        idx = best_epoch - 1
-        best_on_zeta = best_label == "best val ζ" and ax_zeta is not None and 0 <= idx < len(val_zeta)
-        if 0 <= idx < len(val_s):
-            target_ax = ax_zeta if best_on_zeta else ax
-            series = val_zeta if best_on_zeta else val_s
-            y = series[idx]
-            target_ax.scatter(
-                [best_epoch],
-                [y],
-                s=52,
-                color="goldenrod",
-                edgecolors="black",
-                linewidths=0.7,
-                zorder=6,
-            )
-            target_ax.annotate(
-                best_label,
-                xy=(best_epoch, y),
-                xytext=(5, -10),
-                textcoords="offset points",
-                va="top",
-                ha="left",
-                fontsize=8,
-                color="black",
-            )
-
-    handles, labels = ax.get_legend_handles_labels()
-    if ax_zeta is not None:
-        z_handles, z_labels = ax_zeta.get_legend_handles_labels()
-        handles += z_handles
-        labels += z_labels
-    ax.legend(handles, labels, loc="lower right")
-    fig.tight_layout()
-    out_path = os.path.join(out_dir, "loss_curve.png")
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
-    print(f"Saved → {out_path}")
-
-
 # ── main ─────────────────────────────────────────────────────────────────────
 
-def _resolve_run_dir(arg_run):
+def _resolve_run_dir(arg_run, require_checkpoint: bool = True):
+    if arg_run is not None and not arg_run.isdigit():
+        return arg_run
+
     runs_root = RUNS_DIR
     if not os.path.isdir(runs_root):
         raise FileNotFoundError(f"No runs directory at {runs_root!r}. Run `python main.py` first.")
+    marker = os.path.join("checkpoints", "best.pt") if require_checkpoint else os.path.join("outputs", "log.csv")
     completed = sorted(
         [os.path.join(runs_root, d) for d in os.listdir(runs_root)
-         if os.path.isfile(os.path.join(runs_root, d, "checkpoints", "best.pt"))],
+         if os.path.isfile(os.path.join(runs_root, d, marker))],
         key=os.path.getmtime, reverse=True,
     )
     if not completed:
-        raise FileNotFoundError("No completed runs found in 'runs/'.")
+        requirement = "completed runs" if require_checkpoint else "runs with outputs/log.csv"
+        raise FileNotFoundError(f"No {requirement} found in {runs_root!r}.")
 
     print("Available runs (newest first):")
     for i, r in enumerate(completed, 1):
@@ -939,6 +1366,10 @@ def make_diagnostic_plots(
     cond_start: int | None = None,
     cond_stop: int | None = None,
     cond_skip: int | None = None,
+    hsv04_trials_per_condition: int = 0,
+    hsv04_condition_indices: str = "",
+    hsv04_condition_count: int = 0,
+    hsv04_trial_seed: int = 0,
 ):
     """Compute embeddings on val_ds and write all diagnostic PNGs to run_dir/outputs/.
 
@@ -963,7 +1394,9 @@ def make_diagnostic_plots(
 
     val_indices = list(val_ds.indices)
     trial_info_val = trial_info.iloc[val_indices].reset_index(drop=True)
-    cond_groups, cond_colors = _get_condition_groups(trial_info_val)
+    all_cond_groups, all_cond_colors = _get_condition_groups(trial_info_val)
+    cond_groups = all_cond_groups
+    cond_colors = all_cond_colors
 
     if cond_start is not None or cond_stop is not None or cond_skip is not None:
         all_keys = list(cond_groups.keys())
@@ -972,6 +1405,58 @@ def make_diagnostic_plots(
               f"plotting {len(keep)} of {len(all_keys)} conditions")
         cond_groups = {k: cond_groups[k] for k in keep}
         cond_colors = {k: cond_colors[k] for k in keep}
+
+    hsv04_groups = cond_groups
+    hsv04_colors = cond_colors
+    hsv04_indices = _parse_index_list(hsv04_condition_indices)
+    if hsv04_indices:
+        hsv04_groups = _select_groups_by_indices(all_cond_groups, hsv04_indices)
+        hsv04_colors = {k: all_cond_colors[k] for k in hsv04_groups}
+        print(
+            "Plot 04 condition indices: "
+            f"{hsv04_indices} from full sorted condition order"
+        )
+    if hsv04_condition_count and hsv04_condition_count > 0:
+        keys = list(hsv04_groups.keys())[:hsv04_condition_count]
+        hsv04_groups = {k: hsv04_groups[k] for k in keys}
+        hsv04_colors = {k: hsv04_colors[k] for k in keys}
+        print(f"Plot 04 condition count cap: plotting {len(keys)} conditions")
+    if hsv04_trials_per_condition > 0:
+        print(
+            "Plot 04 individual trials: "
+            f"up to {hsv04_trials_per_condition} per condition, "
+            f"{len(hsv04_groups)} conditions"
+        )
+
+    plot05_indices = [0, 25, 50, 75, 100]
+    plot05_groups, plot05_missing = _select_available_groups_by_indices(
+        all_cond_groups,
+        plot05_indices,
+    )
+    if not plot05_groups:
+        plot05_groups = cond_groups
+        plot05_colors = cond_colors
+        plot05_labels = {k: str(k) for k in plot05_groups}
+        print(
+            "Plot 05 requested condition indices were all out of range; "
+            "falling back to the active condition set"
+        )
+    else:
+        plot05_colors = {k: all_cond_colors[k] for k in plot05_groups}
+        plot05_labels = {
+            k: f"{idx}"
+            for idx, k in zip(
+                [idx for idx in plot05_indices if idx not in plot05_missing],
+                plot05_groups,
+            )
+        }
+        print(
+            "Plot 05 condition indices: "
+            f"{[idx for idx in plot05_indices if idx not in plot05_missing]} "
+            "from full sorted condition order"
+        )
+        if plot05_missing:
+            print(f"Plot 05 skipped missing condition indices: {plot05_missing}")
 
     hand_windows_val = hand_windows[val_indices] if hand_windows is not None else None
 
@@ -993,6 +1478,17 @@ def make_diagnostic_plots(
         s_ratio_val = compute_S_ratio(_batch_rms_normalize(F_hat_t)).item()
         F_hat = F_hat_t.numpy()
 
+    write_plane_zeta_ranking(
+        F_hat,
+        out_path=os.path.join(out_dir, "06_plane_validation_zeta_ranking.csv"),
+        cfg=cfg,
+    )
+    plot_plane_zeta_bars(
+        F_hat,
+        out_path=os.path.join(out_dir, "06_plane_validation_zeta_bars.png"),
+        cfg=cfg,
+    )
+
     ch_var = val_np.var(axis=(0, 2))
     top2_ch = np.argsort(ch_var)[-2:][::-1]
     ch_a, ch_b = int(top2_ch[0]), int(top2_ch[1])
@@ -1011,6 +1507,7 @@ def make_diagnostic_plots(
     _plot_planes_time_coded(
         F_hat, cond_groups, s_ratio_val,
         out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
+        cfg=cfg,
     )
     _plot_condition_hsv(
         phasors_raw, cond_groups, cond_colors,
@@ -1019,16 +1516,31 @@ def make_diagnostic_plots(
         out_path=os.path.join(out_dir, "03_raw_condition_hsv.png"),
     )
     _plot_planes_condition_hsv(
-        F_hat, cond_groups, cond_colors, s_ratio_val,
+        F_hat, hsv04_groups, hsv04_colors, s_ratio_val,
         out_path=os.path.join(out_dir, "04_embed_planes_condition_hsv.png"),
         hand_windows_val=hand_windows_val,
+        individual_trials_per_condition=hsv04_trials_per_condition,
+        trial_sample_seed=hsv04_trial_seed,
+        cfg=cfg,
     )
     _plot_planes_condition_time(
-        F_hat, cond_groups, cond_colors, s_ratio_val,
+        F_hat, plot05_groups, plot05_colors, s_ratio_val,
         out_path=os.path.join(out_dir, "05_embed_planes_condition_time.png"),
+        cfg=cfg,
+        condition_labels=plot05_labels,
     )
     plot_covariance_heatmap(
         F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
+    )
+    plot_zeta_sorted_correlation_heatmap(
+        F_hat,
+        out_path=os.path.join(out_dir, "07_zeta_sorted_correlation_heatmap.png"),
+        cfg=cfg,
+    )
+    plot_block_cca_plane_heatmap(
+        F_hat,
+        out_path=os.path.join(out_dir, "07_block_cca_plane_heatmap.png"),
+        cfg=cfg,
     )
     plot_between_within_variance(
         F_hat, out_path=os.path.join(out_dir, "08_between_within_variance.png"),
@@ -1059,10 +1571,26 @@ def main():
                         help="One-past-last condition index to plot (sorted order). Default: all.")
     parser.add_argument("--skip", type=int, default=None,
                         help="Step size for condition selection (e.g. --start 0 --stop 100 --skip 10).")
+    parser.add_argument("--hsv04-trials-per-condition", type=int, default=0,
+                        help="Plot this many individual trials per selected condition in plot 04. Default: condition means.")
+    parser.add_argument("--hsv04-condition-indices", default="",
+                        help="Comma-separated condition indices for plot 04, using the full sorted condition order.")
+    parser.add_argument("--hsv04-condition-count", type=int, default=0,
+                        help="Limit plot 04 to the first K selected conditions. Default: no separate cap.")
+    parser.add_argument("--only-loss", action="store_true",
+                        help="Only regenerate outputs/loss_curve.png from outputs/log.csv.")
     args = parser.parse_args()
+    if args.hsv04_trials_per_condition < 0:
+        parser.error("--hsv04-trials-per-condition must be non-negative")
+    if args.hsv04_condition_count < 0:
+        parser.error("--hsv04-condition-count must be non-negative")
 
-    run_dir = _resolve_run_dir(args.run)
+    run_dir = _resolve_run_dir(args.run, require_checkpoint=not args.only_loss)
     print(f"Using run: {os.path.basename(run_dir)}")
+
+    if args.only_loss:
+        plot_loss_curve(run_dir)
+        return
 
     ckpt_path = os.path.join(run_dir, "checkpoints", "best.pt")
     if not os.path.exists(ckpt_path):
@@ -1083,11 +1611,17 @@ def main():
     if softnorm and softnorm != "none":
         from data import soft_normalize
         X_smooth = soft_normalize(X_smooth, method=softnorm)
+    temporal_context_bins = (
+        int(getattr(cfg, "temporal_context_bins", 0))
+        if getattr(cfg, "temporal_filters", 0) > 0
+        else 0
+    )
     windows = make_windows(
         X_smooth, trial_info, time_index_s, bin_width_s,
         strategy=cfg.window_strategy, window_size=cfg.window_size,
         align_field=getattr(cfg, "align_field", "move_onset_time"),
         pre_ms=getattr(cfg, "pre_ms", 100),
+        context_bins=temporal_context_bins,
     )
     # grand_mean = windows.mean(axis=(0,2), keepdims=True)  # (1, N, T)
     # windows = windows - grand_mean
@@ -1119,12 +1653,14 @@ def main():
             state_dict,
             getattr(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
+        temporal_context_bins=getattr(cfg, "temporal_context_bins", 0),
     )
     model.load_state_dict(state_dict)
 
     make_diagnostic_plots(
         model=model,
-        val_ds=train_ds,
+        val_ds=val_ds,
         trial_info=trial_info,
         cfg=cfg,
         run_dir=run_dir,
@@ -1132,6 +1668,10 @@ def main():
         cond_start=args.start,
         cond_stop=args.stop,
         cond_skip=args.skip,
+        hsv04_trials_per_condition=args.hsv04_trials_per_condition,
+        hsv04_condition_indices=args.hsv04_condition_indices,
+        hsv04_condition_count=args.hsv04_condition_count,
+        hsv04_trial_seed=args.seed,
     )
     plot_loss_curve(run_dir, cfg)
 

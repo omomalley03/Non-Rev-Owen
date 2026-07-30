@@ -18,6 +18,55 @@ _TIME_COLS = [
 ]
 
 
+def _time_index_seconds(index) -> np.ndarray:
+    """Convert pandas/numpy time indices to float seconds."""
+    values = index.values if hasattr(index, "values") else np.asarray(index)
+    if np.issubdtype(values.dtype, np.timedelta64):
+        return values.astype("float64") / 1e9
+    return values.astype("float64")
+
+
+# MC Maze resampling can produce a non-monotonic time index when the NWB has
+# gaps. This is a problem for np.searchsorted() when aligning trial times to
+# resampled bins. Detect the first non-monotonic index (if any) and drop
+# the trailing rows, which are NaNs.
+
+def _first_nonmonotonic_time(time_index_s: np.ndarray):
+    diffs = np.diff(time_index_s)
+    bad = np.flatnonzero((diffs <= 0) | ~np.isfinite(diffs))
+    if len(bad) == 0:
+        return None
+    return int(bad[0] + 1)
+
+
+def _drop_empty_reset_tail(ds) -> int:
+    """Remove nlb_tools' empty appended block when resample index resets."""
+    time_index_s = _time_index_seconds(ds.data.index)
+    reset_idx = _first_nonmonotonic_time(time_index_s)
+    if reset_idx is None:
+        return 0
+
+    reset_tail = ds.data.iloc[reset_idx:]
+    if not reset_tail.isna().all(axis=None):
+        raise ValueError(
+            "MC Maze resampling produced a non-monotonic time index with "
+            "non-empty samples after the reset; refusing to align trials with "
+            "np.searchsorted."
+        )
+
+    ds.data = ds.data.iloc[:reset_idx].copy()
+    try:
+        ds.data.index.freq = None
+    except AttributeError:
+        pass
+    return len(reset_tail)
+
+
+def _is_pandas_frequency_error(exc: ValueError) -> bool:
+    msg = str(exc)
+    return "Inferred frequency" in msg and "does not conform" in msg
+
+
 def load_mcmaze(nwb_path: str, bin_ms: int = 5):
     """Load NLB MC_Maze NWB, resample to bin_ms, return spikes + behaviour + trial info.
 
@@ -39,13 +88,29 @@ def load_mcmaze(nwb_path: str, bin_ms: int = 5):
     """
     ds = NWBDataset(nwb_path)
 
-    # nlb_tools' resample() succeeds at downsampling but raises a pandas
-    # freq-set error on data with inter-trial gaps. Suppress and finish the
-    # bookkeeping it skipped.
+    # nlb_tools' resample() replaces ds.data before setting index.freq. MC Maze
+    # data with gaps can raise only at that pandas bookkeeping step; keep the
+    # resampled data, but do not suppress unrelated ValueErrors.
     try:
         ds.resample(bin_ms)
-    except ValueError:
-        pass
+    except ValueError as exc:
+        if not _is_pandas_frequency_error(exc): # if nlb_tools raises a ValueError, inspect error message,
+                                                #  if it is not the expected pandas frequency error, re-raise the exception
+            raise
+        warnings.warn(
+            "nlb_tools completed numerical resampling but failed to set "
+            "pandas index.freq; continuing with validated time indices.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    dropped_rows = _drop_empty_reset_tail(ds)
+    if dropped_rows:
+        warnings.warn(
+            f"Dropped {dropped_rows} empty MC Maze samples appended after a "
+            "resampled time-index reset.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     ds.bin_width = bin_ms
 
     spikes_df = ds.data["spikes"]                          # (T_total, N)
@@ -63,11 +128,12 @@ def load_mcmaze(nwb_path: str, bin_ms: int = 5):
             elif np.issubdtype(delta.dtype, np.timedelta64):
                 trial_info[col] = delta.values.astype("float64") / 1e9
 
-    time_index_s = spikes_df.index.values
-    if np.issubdtype(time_index_s.dtype, np.timedelta64):
-        time_index_s = time_index_s.astype("float64") / 1e9
-    else:
-        time_index_s = time_index_s.astype("float64")
+    time_index_s = _time_index_seconds(spikes_df.index)
+    if _first_nonmonotonic_time(time_index_s) is not None:
+        raise ValueError(
+            "MC Maze time index is not strictly increasing; cannot safely "
+            "align trial times with np.searchsorted."
+        )
 
     # Reach angle for visualisation. Two layouts in the wild:
     #   NLB MC_Maze (Jenkins): `target_pos` is a per-row (n_targets, 2) array
@@ -110,6 +176,15 @@ def load_mcmaze_cached(nwb_path: str, bin_ms: int = 5):
     if os.path.exists(cache_file):
         with open(cache_file, "rb") as f:
             d = pickle.load(f)
+        cached_time = np.asarray(d["time_index_s"], dtype=np.float64)
+        if _first_nonmonotonic_time(cached_time) is not None:
+            warnings.warn(
+                "Ignoring stale MC Maze cache with non-monotonic time index: "
+                f"{cache_file}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return load_mcmaze(nwb_path, bin_ms)
         return (d["spikes_raw"], d["bin_width_s"], d["trial_info"],
                 d["time_index_s"], d["hand_pos_raw"])
 
@@ -148,6 +223,16 @@ def soft_normalize(X: np.ndarray, method: str = "churchland") -> np.ndarray:
     raise ValueError(f"unknown softnorm method: {method!r}")
 
 
+def _pad_temporal_reflect(X: np.ndarray, left: int, right: int, out_len: int) -> np.ndarray:
+    if left == 0 and right == 0:
+        return X
+    if X.shape[1] == 0:
+        return np.zeros((X.shape[0], out_len), dtype=np.float32)
+    if X.shape[1] == 1:
+        return np.pad(X, ((0, 0), (left, right)), mode="edge")
+    return np.pad(X, ((0, 0), (left, right)), mode="reflect")
+
+
 def make_windows(
     X_smooth: np.ndarray,
     trial_info,
@@ -157,14 +242,20 @@ def make_windows(
     window_size: int = 120,
     align_field: str = "move_onset_time",
     pre_ms: int = 100,
+    context_bins: int = 0,
 ) -> np.ndarray:
     """Segment smoothed spikes into windows of shape (K, N, T) aligned to a per-trial event.
 
     For each trial, the window starts pre_ms before align_field and is
-    window_size bins long. If align_field is missing the trial's start_time
-    is used and the entire window is taken from there.
+    window_size bins long. If context_bins > 0, that many samples immediately
+    before and after the window are included, so the returned time dimension is
+    window_size + 2 * context_bins. If align_field is missing the trial's
+    start_time is used and the entire window is taken from there.
     """
     N = X_smooth.shape[0]
+    context_bins = int(context_bins)
+    if context_bins < 0:
+        raise ValueError("context_bins must be non-negative")
     pre_bins = int(round(pre_ms * 1e-3 / bin_width_s))
 
     if align_field in trial_info.columns:
@@ -174,23 +265,29 @@ def make_windows(
         pre_bins = 0
 
     T_total = X_smooth.shape[1]
+    out_len = window_size + 2 * context_bins
     windows = []
     for t_align in align_times:
         idx_align = int(np.searchsorted(time_index_s, t_align))
         idx_start = max(0, idx_align - pre_bins)
-        idx_end = idx_start + window_size
-        chunk = X_smooth[:, idx_start:min(idx_end, T_total)]
-        actual_len = chunk.shape[1]
+        idx_context_start = idx_start - context_bins
+        idx_context_end = idx_start + window_size + context_bins
+        src_start = max(0, idx_context_start)
+        src_end = min(idx_context_end, T_total)
+        chunk = X_smooth[:, src_start:src_end]
 
-        if actual_len == window_size:
-            windows.append(chunk)
-        elif actual_len < window_size:
-            pad = np.zeros((N, window_size - actual_len), dtype=np.float32)
-            windows.append(np.concatenate([chunk, pad], axis=1))
-        else:
-            windows.append(chunk[:, :window_size])
+        left_pad = src_start - idx_context_start
+        right_pad = idx_context_end - src_end
+        if left_pad or right_pad:
+            chunk = _pad_temporal_reflect(chunk, left_pad, right_pad, out_len)
 
-    return np.stack(windows, axis=0).astype(np.float32)   # (K, N, T)
+        if chunk.shape[1] != out_len:
+            raise RuntimeError(
+                f"internal windowing error: got length {chunk.shape[1]}, expected {out_len}"
+            )
+        windows.append(chunk)
+
+    return np.stack(windows, axis=0).astype(np.float32)   # (K, N, window_size + 2*context_bins)
 
 
 def train_val_split(

@@ -43,6 +43,11 @@ def load_finetuned_embeddings(model_path: Path):
         window_size=int(cfg["window_size"]),
         align_field=_cfg_get(cfg, "align_field", "move_onset_time"),
         pre_ms=_cfg_get(cfg, "pre_ms", 100),
+        context_bins=(
+            _cfg_get(cfg, "temporal_context_bins", 0)
+            if _cfg_get(cfg, "temporal_filters", 0) > 0
+            else 0
+        ),
     )
     if _cfg_get(cfg, "split", "dataset") == "random":
         trial_info = trial_info.drop(columns=["split"], errors="ignore")
@@ -65,6 +70,8 @@ def load_finetuned_embeddings(model_path: Path):
             saved["embedder_state_dict"],
             _cfg_get(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=_cfg_get(cfg, "antisymmetric_planes", 0),
+        temporal_context_bins=_cfg_get(cfg, "temporal_context_bins", 0),
     )
     model.load_state_dict(saved["embedder_state_dict"])
     model.eval()

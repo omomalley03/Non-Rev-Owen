@@ -231,6 +231,8 @@ def build_model_from_checkpoint(cfg: Config, state_dict, in_channels: int):
             state_dict,
             getattr(cfg, "multiscale_symmetric_conv_layers", 1),
         ),
+        antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
+        temporal_context_bins=getattr(cfg, "temporal_context_bins", 0),
     )
     model.load_state_dict(state_dict)
     return model
@@ -247,25 +249,53 @@ def compute_embeddings(model, dataset, batch_size: int, device: torch.device):
     return np.concatenate(chunks, axis=0).astype(np.float32)
 
 
+def _hidden_net_without_projection(net: nn.Module, name: str) -> nn.Module:
+    if net is None or len(net) <= 1 or not isinstance(net[-1], nn.Linear):
+        raise ValueError(f"Cannot remove final linear layer: {name} does not end with nn.Linear")
+    return net[:-1]
+
+
+def _apply_pointwise_hidden(x: torch.Tensor, hidden_net: nn.Module) -> torch.Tensor:
+    B, C, T = x.shape
+    x = x.permute(0, 2, 1).reshape(B * T, C)
+    H = hidden_net(x)
+    hidden_dim = H.shape[1]
+    return H.reshape(B, T, hidden_dim).permute(0, 2, 1)
+
+
 def compute_hidden_features(model, dataset, batch_size: int, device: torch.device):
     """Compute penultimate MLP features by removing the final projection layer."""
-    if len(model.net) <= 1 or not isinstance(model.net[-1], nn.Linear):
-        raise ValueError("Cannot remove final linear layer: model.net does not end with nn.Linear")
-
     model = model.to(device).eval()
-    hidden_net = model.net[:-1]
+    if getattr(model, "mixed_parity", False):
+        sym_hidden_net = (
+            _hidden_net_without_projection(model.sym_net, "model.sym_net")
+            if model.sym_net is not None
+            else None
+        )
+        anti_hidden_net = (
+            _hidden_net_without_projection(model.anti_net, "model.anti_net")
+            if model.anti_net is not None
+            else None
+        )
+    else:
+        hidden_net = _hidden_net_without_projection(model.net, "model.net")
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
     chunks = []
     with torch.no_grad():
         for (batch,) in loader:
             x = batch.to(device)
-            if model.temporal_conv is not None:
-                x = model.temporal_conv(x)
-            B, C, T = x.shape
-            x = x.permute(0, 2, 1).reshape(B * T, C)
-            H = hidden_net(x)
-            hidden_dim = H.shape[1]
-            H = H.reshape(B, T, hidden_dim).permute(0, 2, 1)
+            if getattr(model, "mixed_parity", False):
+                x_sym, x_anti = model.temporal_conv(x)
+                parts = []
+                if sym_hidden_net is not None:
+                    parts.append(_apply_pointwise_hidden(x_sym, sym_hidden_net))
+                if anti_hidden_net is not None:
+                    parts.append(_apply_pointwise_hidden(x_anti, anti_hidden_net))
+                H = torch.cat(parts, dim=1)
+            else:
+                if model.temporal_conv is not None:
+                    x = model.temporal_conv(x)
+                H = _apply_pointwise_hidden(x, hidden_net)
             chunks.append(H.cpu().numpy())
     return np.concatenate(chunks, axis=0).astype(np.float32)
 
@@ -546,6 +576,11 @@ def main():
     softnorm = getattr(cfg, "softnorm_method", "none")
     if softnorm and softnorm != "none":
         X_smooth = soft_normalize(X_smooth, method=softnorm)
+    temporal_context_bins = (
+        getattr(cfg, "temporal_context_bins", 0)
+        if getattr(cfg, "temporal_filters", 0) > 0
+        else 0
+    )
     windows = make_windows(
         X_smooth,
         trial_info,
@@ -555,11 +590,16 @@ def main():
         window_size=cfg.window_size,
         align_field=getattr(cfg, "align_field", "move_onset_time"),
         pre_ms=getattr(cfg, "pre_ms", 100),
+        context_bins=temporal_context_bins,
     )
     if getattr(cfg, "split", "dataset") == "random":
         trial_info = trial_info.drop(columns=["split"], errors="ignore")
     train_ds, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
-    print(f"Trials: train={len(train_ds)} val={len(val_ds)}  window={cfg.window_size} bins")
+    print(
+        f"Trials: train={len(train_ds)} val={len(val_ds)}  "
+        f"channels={windows.shape[1]}  input_window={windows.shape[-1]} bins  "
+        f"target_window={cfg.window_size} bins  context={temporal_context_bins} bins/side"
+    )
 
     print("Loading hand velocity and building future targets...")
     hand_vel_raw, vel_meta = load_hand_velocity_resampled(cfg.nwb_path, time_index_s, args.velocity_scale)

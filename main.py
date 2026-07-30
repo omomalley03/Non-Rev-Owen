@@ -45,6 +45,7 @@ def main():
     cfg.save_about(run_dir)
     print(f"Run directory: {run_dir}")
     set_seed(cfg.seed)
+    print("Seed set to:", cfg.seed)
 
     print("Loading MC_Maze data …")
     spikes_raw, bin_width_s, trial_info, time_index_s, hand_pos_raw = load_mcmaze_cached(
@@ -63,12 +64,18 @@ def main():
         print(f"  Soft-normalising per neuron (method={cfg.softnorm_method!r})")
         X_smooth = soft_normalize(X_smooth, method=cfg.softnorm_method)
 
+    temporal_context_bins = (
+        int(getattr(cfg, "temporal_context_bins", 0))
+        if getattr(cfg, "temporal_filters", 0) > 0
+        else 0
+    )
     print(f"Windowing ({cfg.window_strategy}, align={cfg.align_field}, "
-          f"pre={cfg.pre_ms}ms, T={cfg.window_size}) …")
+          f"pre={cfg.pre_ms}ms, T={cfg.window_size}, context={temporal_context_bins}) …")
     windows = make_windows(
         X_smooth, trial_info, time_index_s, bin_width_s,
         strategy=cfg.window_strategy, window_size=cfg.window_size,
         align_field=cfg.align_field, pre_ms=cfg.pre_ms,
+        context_bins=temporal_context_bins,
     )
 
     # grand_mean = windows.mean(axis=(0,2), keepdims=True)  # (1, N, T)
@@ -88,6 +95,8 @@ def main():
         temporal_frontend=getattr(cfg, "temporal_frontend", "symmetric"),
         residual_kernels=getattr(cfg, "residual_kernels", "3,7,15,31"),
         multiscale_symmetric_conv_layers=getattr(cfg, "multiscale_symmetric_conv_layers", 1),
+        antisymmetric_planes=getattr(cfg, "antisymmetric_planes", 0),
+        temporal_context_bins=temporal_context_bins,
     )
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
@@ -121,7 +130,7 @@ def main():
             hand_windows=hand_windows,
         )
 
-        append_best_model_metrics(run_dir, val_ds, cfg)
+    append_best_model_metrics(run_dir, val_ds, cfg)
 
     # from evaluate import run_linear_probe, plot_confusion_matrix
 
