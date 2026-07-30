@@ -295,6 +295,11 @@ def prepare_mcmaze_problem(cfg: Config, args):
     if softnorm and softnorm != "none":
         X_smooth = soft_normalize(X_smooth, method=softnorm)
 
+    temporal_context_bins = (
+        getattr(cfg, "temporal_context_bins", 0)
+        if getattr(cfg, "temporal_filters", 0) > 0
+        else 0
+    )
     windows = make_windows(
         X_smooth,
         trial_info,
@@ -304,11 +309,7 @@ def prepare_mcmaze_problem(cfg: Config, args):
         window_size=cfg.window_size,
         align_field=getattr(cfg, "align_field", "move_onset_time"),
         pre_ms=getattr(cfg, "pre_ms", 100),
-        context_bins=(
-            getattr(cfg, "temporal_context_bins", 0)
-            if getattr(cfg, "temporal_filters", 0) > 0
-            else 0
-        ),
+        context_bins=temporal_context_bins,
     )
     if getattr(cfg, "split", "dataset") == "random":
         trial_info = trial_info.drop(columns=["split"], errors="ignore")
@@ -317,7 +318,8 @@ def prepare_mcmaze_problem(cfg: Config, args):
     val_indices = maybe_cap_indices(val_ds.indices, args.max_val_trials, args.seed + 1)
     print(
         f"Trials: train={len(train_indices)} val={len(val_indices)}  "
-        f"channels={windows.shape[1]}  window={cfg.window_size} bins"
+        f"channels={windows.shape[1]}  input_window={windows.shape[-1]} bins  "
+        f"target_window={cfg.window_size} bins  context={temporal_context_bins} bins/side"
     )
 
     print("Loading hand velocity and building future targets...")
@@ -345,15 +347,15 @@ def main():
     parser.add_argument("--horizon-ms", type=int, default=100)
     parser.add_argument("--velocity-scale", choices=["stored", "si"], default="stored")
     parser.add_argument("--embed-batch-size", type=int, default=256)
-    parser.add_argument("--feature-layer", choices=["output", "hidden"], default="output",
+    parser.add_argument("--feature-layer", choices=["output", "hidden"], default="hidden",
                         help="Use normal embedder output or remove the final linear layer and decode from hidden features.")
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--trial-batch-size", type=int, default=64)
-    parser.add_argument("--mlp-hidden-dim", type=int, default=128)
+    parser.add_argument("--mlp-hidden-dim", type=int, default=64)
     parser.add_argument("--mlp-depth", type=int, default=2)
-    parser.add_argument("--mlp-dropout", type=float, default=0.1)
+    parser.add_argument("--mlp-dropout", type=float, default=0.3)
     parser.add_argument("--decoder-lr", type=float, default=1e-3)
-    parser.add_argument("--embedder-lr", type=float, default=1e-4)
+    parser.add_argument("--embedder-lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--max-train-trials", type=int, default=0)
     parser.add_argument("--max-val-trials", type=int, default=0)

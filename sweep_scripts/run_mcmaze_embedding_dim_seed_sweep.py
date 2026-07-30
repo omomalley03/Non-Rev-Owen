@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
-
-import torch
+from typing import Optional
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +34,7 @@ FIELDNAMES = [
     "seed",
     "run_dir",
     "best_epoch",
+    "saved_checkpoint_epoch",
     "checkpoint_selection",
     "best_val_zeta",
     "best_val_s",
@@ -43,6 +44,7 @@ FIELDNAMES = [
     "regularization_train_log_equiv",
     "regularization_whole_batch_log_equiv",
     "regularization_total_scaled",
+    "regularization_whole_batch_total_raw",
     "regularization_whole_batch_total_scaled",
     "train_log",
 ]
@@ -109,6 +111,7 @@ def parse_about_metrics(run_dir: Path) -> dict[str, str]:
         "regularization_train_log_equiv",
         "regularization_whole_batch_log_equiv",
         "regularization_total_scaled",
+        "regularization_whole_batch_total_raw",
         "regularization_whole_batch_total_scaled",
     }
     for line in about_path.read_text().splitlines():
@@ -121,13 +124,30 @@ def parse_about_metrics(run_dir: Path) -> dict[str, str]:
     return metrics
 
 
+def parse_about_value(run_dir: Path, wanted_key: str) -> Optional[str]:
+    about_path = run_dir / "about.txt"
+    if not about_path.is_file():
+        return None
+    for line in about_path.read_text().splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() == wanted_key:
+            return value.strip()
+    return None
+
+
 def checkpoint_metrics(run_dir: Path) -> dict[str, object]:
+    import torch
+
     ckpt_path = run_dir / "checkpoints" / "best.pt"
     if not ckpt_path.is_file():
         raise FileNotFoundError(f"missing best checkpoint: {ckpt_path}")
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    epoch = ckpt.get("epoch")
     return {
-        "best_epoch": ckpt.get("epoch"),
+        "best_epoch": epoch,
+        "saved_checkpoint_epoch": epoch,
         "checkpoint_selection": ckpt.get("checkpoint_selection"),
         "best_val_zeta": ckpt.get("val_zeta"),
         "best_val_s": ckpt.get("val_s"),
@@ -136,7 +156,19 @@ def checkpoint_metrics(run_dir: Path) -> dict[str, object]:
     }
 
 
-def load_completed(path: Path) -> set[tuple[int, int]]:
+def antisymmetric_planes_from_fraction(dim: int, fraction: float) -> int:
+    if dim % 2 != 0:
+        raise ValueError(f"mixed_parity requires an even embedding dimension, got D={dim}")
+    if fraction < 0.0 or fraction > 1.0:
+        raise ValueError(f"antisymmetric plane fraction must be in [0, 1], got {fraction}")
+    n_planes = dim // 2
+    planes = int(math.floor(n_planes * fraction + 0.5))
+    if fraction > 0.0:
+        planes = max(1, planes)
+    return min(n_planes, planes)
+
+
+def load_completed(path: Path, antisymmetric_plane_fraction: Optional[float] = None) -> set[tuple[int, int]]:
     if not path.is_file():
         return set()
     completed = set()
@@ -147,8 +179,17 @@ def load_completed(path: Path) -> set[tuple[int, int]]:
             except (KeyError, ValueError):
                 continue
             run_dir = Path(row.get("run_dir", ""))
-            if run_dir.is_dir() and (run_dir / "checkpoints" / "best.pt").is_file():
-                completed.add(key)
+            if not (run_dir.is_dir() and (run_dir / "checkpoints" / "best.pt").is_file()):
+                continue
+            if antisymmetric_plane_fraction is not None:
+                expected = antisymmetric_planes_from_fraction(key[0], antisymmetric_plane_fraction)
+                recorded = parse_about_value(run_dir, "antisymmetric_planes")
+                try:
+                    if recorded is None or int(recorded) != expected:
+                        continue
+                except ValueError:
+                    continue
+            completed.add(key)
     return completed
 
 
@@ -162,14 +203,28 @@ def append_summary(row: dict[str, object]) -> None:
         writer.writerow(row)
 
 
-def run_one(dim: int, seed: int, base_env: dict[str, str]) -> None:
+def run_one(
+    dim: int,
+    seed: int,
+    base_env: dict[str, str],
+    antisymmetric_plane_fraction: Optional[float] = None,
+) -> None:
     env = base_env.copy()
     env["D"] = str(dim)
     env["SEED"] = str(seed)
+    if antisymmetric_plane_fraction is not None:
+        env["ANTISYMMETRIC_PLANES"] = str(
+            antisymmetric_planes_from_fraction(dim, antisymmetric_plane_fraction)
+        )
     env["PYTHONUNBUFFERED"] = "1"
 
     log_path = LOG_DIR / f"d{dim}_seed{seed}.log"
-    print(f"\n=== MC Maze embedding: D={dim}, SEED={seed} ===")
+    split_suffix = (
+        f", ANTISYMMETRIC_PLANES={env['ANTISYMMETRIC_PLANES']}"
+        if antisymmetric_plane_fraction is not None
+        else ""
+    )
+    print(f"\n=== MC Maze embedding: D={dim}, SEED={seed}{split_suffix} ===")
     train_output = run_logged([sys.executable, "-u", "main.py"], env, log_path)
     run_dir = parse_run_dir(train_output)
 
@@ -195,25 +250,52 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dims", type=int, nargs="+", default=list(DEFAULT_DIMS))
     parser.add_argument("--seeds", type=int, nargs="+", default=list(DEFAULT_SEEDS))
+    parser.add_argument(
+        "--antisymmetric-plane-fraction",
+        type=float,
+        default=None,
+        help=(
+            "Optional fixed fraction of 2D planes assigned to odd outputs for each D. "
+            "For example, 0.25 gives round((D/2)*0.25) odd planes and writes the "
+            "resulting integer ANTISYMMETRIC_PLANES into each run environment."
+        ),
+    )
     parser.add_argument("--resume", action="store_true", help="Skip dimension/seed rows already present in results.csv.")
     parser.add_argument("--dry-run", action="store_true", help="Print planned runs without launching training.")
     args = parser.parse_args()
+
+    env_fraction = os.environ.get("ANTISYMMETRIC_PLANE_FRACTION")
+    if args.antisymmetric_plane_fraction is None and env_fraction not in (None, ""):
+        args.antisymmetric_plane_fraction = float(env_fraction)
+    if args.antisymmetric_plane_fraction is not None:
+        if args.antisymmetric_plane_fraction < 0.0 or args.antisymmetric_plane_fraction > 1.0:
+            parser.error("--antisymmetric-plane-fraction must be in [0, 1]")
 
     base_env = source_mcmaze_config()
     base_env["DATASET_NAME"] = "mcmaze"
     base_env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib_nonrev")
     Path(base_env["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
 
-    completed = load_completed(SUMMARY_CSV) if args.resume else set()
+    completed = (
+        load_completed(SUMMARY_CSV, args.antisymmetric_plane_fraction)
+        if args.resume
+        else set()
+    )
     planned = [(dim, seed) for dim in args.dims for seed in args.seeds]
     for dim, seed in planned:
         if (dim, seed) in completed:
             print(f"Skipping completed D={dim}, SEED={seed}")
             continue
         if args.dry_run:
-            print(f"Would run D={dim}, SEED={seed}")
+            suffix = ""
+            if args.antisymmetric_plane_fraction is not None:
+                suffix = (
+                    " "
+                    f"ANTISYMMETRIC_PLANES={antisymmetric_planes_from_fraction(dim, args.antisymmetric_plane_fraction)}"
+                )
+            print(f"Would run D={dim}, SEED={seed}{suffix}")
             continue
-        run_one(dim, seed, base_env)
+        run_one(dim, seed, base_env, args.antisymmetric_plane_fraction)
 
 
 if __name__ == "__main__":

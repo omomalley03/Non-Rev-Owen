@@ -68,6 +68,7 @@ def append_best_model_metrics(run_dir: str, val_ds, cfg: Config, n_xp_perms: int
     raw_vals = {}
     scaled_vals = {}
     whole_batch_reg_log_equiv = float("nan")
+    whole_batch_reg_raw_total = float("nan")
     whole_batch_reg_scaled_total = float("nan")
 
     with torch.no_grad():
@@ -114,6 +115,7 @@ def append_best_model_metrics(run_dir: str, val_ds, cfg: Config, n_xp_perms: int
             )
             c_minus, _, _ = non_reversibility_components(F_hat, "mean")
             whole_batch_reg_log_equiv = loss.item() + c_minus.item()
+            whole_batch_reg_raw_total = sum(reg_info["reg_raw"].values())
             whole_batch_reg_scaled_total = sum(reg_info["reg_scaled"].values())
 
     if not val_losses:
@@ -144,6 +146,7 @@ def append_best_model_metrics(run_dir: str, val_ds, cfg: Config, n_xp_perms: int
         f"  regularization_train_log_equiv   = {reg_log_equiv:.6f}",
         f"  regularization_whole_batch_log_equiv = {whole_batch_reg_log_equiv:.6f}",
         f"  regularization_total_scaled      = {reg_scaled_total:.6f}",
+        f"  regularization_whole_batch_total_raw = {whole_batch_reg_raw_total:.6f}",
         f"  regularization_whole_batch_total_scaled = {whole_batch_reg_scaled_total:.6f}",
     ]
     for name in sorted(reg_raw):

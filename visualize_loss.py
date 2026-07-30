@@ -70,25 +70,25 @@ def plot_loss_curve(run_dir: str, cfg=None) -> None:
     has_zeta = full_series(val_zeta)
     has_val_reg = full_series(val_reg)
 
-    reg_scaled: dict[str, list[float]] = {}
+    reg_raw: dict[str, list[float]] = {}
     reg_path = os.path.join(out_dir, "reg_history.csv")
     if os.path.isfile(reg_path):
         with open(reg_path, newline="") as f:
             reader = csv.DictReader(f)
             csv_regs = [
-                c[len("scaled_"):]
+                c[len("raw_"):]
                 for c in (reader.fieldnames or [])
-                if c.startswith("scaled_")
+                if c.startswith("raw_")
             ]
             for k in csv_regs:
-                reg_scaled[k] = []
+                reg_raw[k] = []
             for row in reader:
                 for k in csv_regs:
-                    value = _read_float(row, f"scaled_{k}")
+                    value = _read_float(row, f"raw_{k}")
                     if value is not None:
-                        reg_scaled[k].append(value)
+                        reg_raw[k].append(value)
 
-    active_regs = list(reg_scaled)
+    active_regs = list(reg_raw)
     if cfg is not None and not active_regs:
         reg_lambdas = {
             "xp": getattr(cfg, "lambda_xp", 0.0),
@@ -109,19 +109,19 @@ def plot_loss_curve(run_dir: str, cfg=None) -> None:
             color="mediumpurple",
             alpha=0.35,
         )
-    if reg_scaled:
-        total_scaled = [
+    if reg_raw:
+        total_raw = [
             sum(
-                reg_scaled[k][i]
+                reg_raw[k][i]
                 for k in active_regs
-                if k in reg_scaled and i < len(reg_scaled[k])
+                if k in reg_raw and i < len(reg_raw[k])
             )
             for i in range(len(epochs))
         ]
-        ax.plot(epochs, total_scaled, label="total lambda*reg (down)", color="tomato")
+        ax.plot(epochs, total_raw, label="raw reg", color="tomato")
     elif has_val_reg:
         ax.plot(epochs, val_reg, label="val reg from log.csv (down)", color="tomato")
-    if not (has_s or has_c_plus or reg_scaled or has_val_reg):
+    if not (has_s or has_c_plus or reg_raw or has_val_reg):
         plotted = [v if v is not None else float("nan") for v in val_losses]
         ax.plot(epochs, plotted, label="val loss (down)", color="steelblue")
 

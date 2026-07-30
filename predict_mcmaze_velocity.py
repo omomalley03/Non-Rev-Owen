@@ -576,6 +576,11 @@ def main():
     softnorm = getattr(cfg, "softnorm_method", "none")
     if softnorm and softnorm != "none":
         X_smooth = soft_normalize(X_smooth, method=softnorm)
+    temporal_context_bins = (
+        getattr(cfg, "temporal_context_bins", 0)
+        if getattr(cfg, "temporal_filters", 0) > 0
+        else 0
+    )
     windows = make_windows(
         X_smooth,
         trial_info,
@@ -585,16 +590,16 @@ def main():
         window_size=cfg.window_size,
         align_field=getattr(cfg, "align_field", "move_onset_time"),
         pre_ms=getattr(cfg, "pre_ms", 100),
-        context_bins=(
-            getattr(cfg, "temporal_context_bins", 0)
-            if getattr(cfg, "temporal_filters", 0) > 0
-            else 0
-        ),
+        context_bins=temporal_context_bins,
     )
     if getattr(cfg, "split", "dataset") == "random":
         trial_info = trial_info.drop(columns=["split"], errors="ignore")
     train_ds, val_ds = train_val_split(windows, trial_info, cfg.val_split, cfg.seed)
-    print(f"Trials: train={len(train_ds)} val={len(val_ds)}  window={cfg.window_size} bins")
+    print(
+        f"Trials: train={len(train_ds)} val={len(val_ds)}  "
+        f"channels={windows.shape[1]}  input_window={windows.shape[-1]} bins  "
+        f"target_window={cfg.window_size} bins  context={temporal_context_bins} bins/side"
+    )
 
     print("Loading hand velocity and building future targets...")
     hand_vel_raw, vel_meta = load_hand_velocity_resampled(cfg.nwb_path, time_index_s, args.velocity_scale)

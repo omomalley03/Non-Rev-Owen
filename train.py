@@ -9,7 +9,12 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from config import Config
-from loss import loss_fn, non_reversibility_components, _batch_rms_normalize
+from loss import (
+    loss_fn,
+    non_reversibility_components,
+    _batch_rms_normalize,
+    _pair_terms_per_plane,
+)
 
 
 def _make_loader(dataset, batch_size: int, shuffle: bool, drop_last: bool):
@@ -36,12 +41,23 @@ def _checkpoint_payload(model, cfg: Config, epoch: int, **metrics):
     return payload
 
 
-def _resolve_threshold_checkpoints(cfg: Config):
-    metric = str(getattr(cfg, "val_checkpoint_metric", "zeta") or "zeta").strip().lower()
+def _normalize_checkpoint_metric(metric: str) -> str:
+    metric = str(metric or "zeta").strip().lower()
     if metric in {"ζ", "zetas"}:
         metric = "zeta"
-    if metric not in {"zeta", "s"}:
-        raise ValueError(f"VAL_CHECKPOINT_METRIC must be 'zeta' or 's', got {metric!r}")
+    if metric in {"avg_plane_zeta", "mean_zeta", "plane_zeta", "mean_plane_ζ"}:
+        metric = "mean_plane_zeta"
+    allowed = {"zeta", "s", "mean_plane_zeta"}
+    if metric not in allowed:
+        raise ValueError(
+            "VAL_CHECKPOINT_METRIC must be 'zeta', 's', or 'mean_plane_zeta', "
+            f"got {metric!r}"
+        )
+    return metric
+
+
+def _resolve_threshold_checkpoints(cfg: Config):
+    metric = _normalize_checkpoint_metric(getattr(cfg, "val_checkpoint_metric", "zeta"))
 
     generic = tuple(float(x) for x in getattr(cfg, "val_checkpoint_thresholds", ()) or ())
     zeta_thresholds = tuple(float(x) for x in getattr(cfg, "val_zeta_checkpoint_thresholds", ()) or ())
@@ -51,12 +67,32 @@ def _resolve_threshold_checkpoints(cfg: Config):
     return metric, sorted(set(float(x) for x in thresholds))
 
 
-def _threshold_metric_value(metric: str, mean_val_s: float, mean_val_zeta: float) -> float:
-    return mean_val_zeta if metric == "zeta" else mean_val_s
+def _metric_value(
+    metric: str,
+    mean_val_s: float,
+    mean_val_zeta: float,
+    mean_val_mean_plane_zeta: float,
+) -> float:
+    if metric == "s":
+        return mean_val_s
+    if metric == "mean_plane_zeta":
+        return mean_val_mean_plane_zeta
+    return mean_val_zeta
 
 
 def _threshold_metric_label(metric: str) -> str:
-    return "ζ" if metric == "zeta" else "S"
+    if metric == "s":
+        return "S"
+    if metric == "mean_plane_zeta":
+        return "mean plane ζ"
+    return "ζ"
+
+
+def _mean_plane_zeta(F_norm: torch.Tensor) -> torch.Tensor:
+    """Arithmetic mean of native-plane ζ values for an RMS-normalized embedding."""
+    minus_per_plane, plus_per_plane = _pair_terms_per_plane(F_norm)
+    plane_zeta = minus_per_plane / (plus_per_plane + 1e-8)
+    return plane_zeta.mean()
 
 
 # Unused learned plane-predictor adversary removed from the active training path
@@ -102,6 +138,8 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         return start + (1.0 - start) * (epoch - 1) / (cfg.epochs - 1)
 
     best_val_zeta = float("-inf")
+    best_val_mean_plane_zeta = float("-inf")
+    best_checkpoint_score = float("-inf")
     best_val_epoch = None
     best_checkpoint_val_loss = float("nan")
     min_val_loss = float("inf")
@@ -115,6 +153,7 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                "train_s": [], "val_s": [],
                "train_c_plus": [], "val_c_plus": [],
                "train_zeta": [], "val_zeta": [],
+               "train_mean_plane_zeta": [], "val_mean_plane_zeta": [],
                "train_reg": [], "val_reg": [],
                "lambda_scale": [],
                "reg_raw":    {k: [] for k in active_regs},
@@ -126,22 +165,27 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                                  "train_s", "val_s",
                                  "train_c_plus", "val_c_plus",
                                  "train_zeta", "val_zeta",
+                                 "train_mean_plane_zeta", "val_mean_plane_zeta",
                                  "train_reg", "val_reg"])
 
     threshold_ckpt_log_path = os.path.join(cfg.ckpt_dir, f"val_{threshold_metric}_checkpoints.csv")
     if checkpoint_thresholds:
         with open(threshold_ckpt_log_path, "w", newline="") as f:
             csv.writer(f).writerow([
-                "metric", "threshold", "epoch", "val_s", "val_zeta", "val_c_plus",
-                "val_loss", "train_loss", "train_s", "train_zeta", "path",
+                "metric", "threshold", "epoch", "val_s", "val_zeta",
+                "val_mean_plane_zeta", "val_c_plus",
+                "val_loss", "train_loss", "train_s", "train_zeta",
+                "train_mean_plane_zeta", "path",
             ])
 
     epoch_ckpt_log_path = os.path.join(cfg.ckpt_dir, "epoch_checkpoints.csv")
     if epoch_checkpoint_interval > 0:
         with open(epoch_ckpt_log_path, "w", newline="") as f:
             csv.writer(f).writerow([
-                "interval", "epoch", "val_s", "val_zeta", "val_c_plus",
-                "val_loss", "train_loss", "train_s", "train_zeta", "path",
+                "interval", "epoch", "val_s", "val_zeta",
+                "val_mean_plane_zeta", "val_c_plus",
+                "val_loss", "train_loss", "train_s", "train_zeta",
+                "train_mean_plane_zeta", "path",
             ])
 
     t0 = time.time()
@@ -151,7 +195,7 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         scale = lambda_scale(epoch)
         # --- train ---
         model.train()
-        epoch_losses, epoch_s, epoch_c_plus, epoch_zeta, epoch_reg = [], [], [], [], []
+        epoch_losses, epoch_s, epoch_c_plus, epoch_zeta, epoch_mean_plane_zeta, epoch_reg = [], [], [], [], [], []
         pbar = tqdm(
             train_loader,
             desc=f"Epoch {epoch}/{cfg.epochs} [train]",
@@ -167,15 +211,16 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
             loss.backward()
             optimizer.step()
             with torch.no_grad():
-                c_minus, c_plus, zeta = non_reversibility_components(
-                    _batch_rms_normalize(F), "mean"
-                )
+                F_norm = _batch_rms_normalize(F)
+                c_minus, c_plus, zeta = non_reversibility_components(F_norm, "mean")
+                mean_plane_zeta = _mean_plane_zeta(F_norm)
                 s = c_minus.item()
             l = loss.item()
             epoch_losses.append(l)
             epoch_s.append(s)
             epoch_c_plus.append(c_plus.item())
             epoch_zeta.append(zeta.item())
+            epoch_mean_plane_zeta.append(mean_plane_zeta.item())
             epoch_reg.append(l + s)     # total = -S + reg  →  reg = total + S
             pbar.set_postfix(loss=f"{l:.4f}", S=f"{s:.4f}")
 
@@ -184,11 +229,12 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         mean_train_s    = sum(epoch_s)      / len(epoch_s)
         mean_train_c_plus = sum(epoch_c_plus) / len(epoch_c_plus)
         mean_train_zeta = sum(epoch_zeta) / len(epoch_zeta)
+        mean_train_mean_plane_zeta = sum(epoch_mean_plane_zeta) / len(epoch_mean_plane_zeta)
         mean_train_reg  = sum(epoch_reg)    / len(epoch_reg)
 
         # --- validate ---
         model.eval()
-        val_losses, val_s, val_c_plus, val_zeta, val_reg = [], [], [], [], []
+        val_losses, val_s, val_c_plus, val_zeta, val_mean_plane_zeta, val_reg = [], [], [], [], [], []
         val_raw    = {k: [] for k in active_regs}
         val_scaled = {k: [] for k in active_regs}
         with torch.no_grad():
@@ -200,14 +246,15 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                 F = F - F.mean(dim=cfg.F_mean_axis, keepdim=True)
                 loss, info = loss_function(F, cfg=cfg, training=False,
                                            lambda_scale=scale, return_components=True)
-                c_minus, c_plus, zeta = non_reversibility_components(
-                    _batch_rms_normalize(F), "mean"
-                )
+                F_norm = _batch_rms_normalize(F)
+                c_minus, c_plus, zeta = non_reversibility_components(F_norm, "mean")
+                mean_plane_zeta = _mean_plane_zeta(F_norm)
                 s = c_minus.item()
                 val_losses.append(loss.item())
                 val_s.append(s)
                 val_c_plus.append(c_plus.item())
                 val_zeta.append(zeta.item())
+                val_mean_plane_zeta.append(mean_plane_zeta.item())
                 val_reg.append(loss.item() + s)
                 for k in active_regs:
                     val_raw[k].append(info["reg_raw"][k])
@@ -217,6 +264,11 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         mean_val_s    = sum(val_s)      / len(val_s)      if val_s      else float("nan")
         mean_val_c_plus = sum(val_c_plus) / len(val_c_plus) if val_c_plus else float("nan")
         mean_val_zeta = sum(val_zeta) / len(val_zeta) if val_zeta else float("nan")
+        mean_val_mean_plane_zeta = (
+            sum(val_mean_plane_zeta) / len(val_mean_plane_zeta)
+            if val_mean_plane_zeta
+            else float("nan")
+        )
         mean_val_reg  = sum(val_reg)    / len(val_reg)    if val_reg    else float("nan")
 
         history["train_loss"].append(mean_train_loss)
@@ -227,6 +279,8 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         history["val_c_plus"].append(mean_val_c_plus)
         history["train_zeta"].append(mean_train_zeta)
         history["val_zeta"].append(mean_val_zeta)
+        history["train_mean_plane_zeta"].append(mean_train_mean_plane_zeta)
+        history["val_mean_plane_zeta"].append(mean_val_mean_plane_zeta)
         history["train_reg"].append(mean_train_reg)
         history["val_reg"].append(mean_val_reg)
         history["lambda_scale"].append(scale)
@@ -238,7 +292,8 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
             print(
                 f"Epoch {epoch:3d}/{cfg.epochs}  "
                 f"train loss={mean_train_loss:.4f}  val loss={mean_val_loss:.4f}  "
-                f"S[mean]={mean_val_s:.4f}  ζ={mean_val_zeta:.4f}  reg={mean_val_reg:.4f}  "
+                f"S[mean]={mean_val_s:.4f}  ζ={mean_val_zeta:.4f}  "
+                f"mean_plane_ζ={mean_val_mean_plane_zeta:.4f}  reg={mean_val_reg:.4f}  "
                 f"λscale={scale:.2f}  "
                 f"lr={scheduler.get_last_lr()[0]:.2e}"
             )
@@ -248,14 +303,23 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                                      mean_train_s, mean_val_s,
                                      mean_train_c_plus, mean_val_c_plus,
                                      mean_train_zeta, mean_val_zeta,
+                                     mean_train_mean_plane_zeta, mean_val_mean_plane_zeta,
                                      mean_train_reg, mean_val_reg])
 
         if mean_val_loss < min_val_loss:
             min_val_loss = mean_val_loss
             min_val_loss_epoch = epoch
 
-        if mean_val_zeta > best_val_zeta:
+        best_candidate_score = _metric_value(
+            threshold_metric,
+            mean_val_s,
+            mean_val_zeta,
+            mean_val_mean_plane_zeta,
+        )
+        if best_candidate_score > best_checkpoint_score:
+            best_checkpoint_score = best_candidate_score
             best_val_zeta = mean_val_zeta
+            best_val_mean_plane_zeta = mean_val_mean_plane_zeta
             best_val_epoch = epoch
             best_checkpoint_val_loss = mean_val_loss
             torch.save(
@@ -263,20 +327,29 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                     model,
                     cfg,
                     epoch,
-                    checkpoint_selection="best_val_zeta",
+                    checkpoint_selection=f"best_val_{threshold_metric}",
+                    val_checkpoint_metric=threshold_metric,
+                    val_checkpoint_score=best_candidate_score,
                     val_loss=mean_val_loss,
                     val_s=mean_val_s,
                     val_c_plus=mean_val_c_plus,
                     val_zeta=mean_val_zeta,
+                    val_mean_plane_zeta=mean_val_mean_plane_zeta,
                     train_loss=mean_train_loss,
                     train_s=mean_train_s,
                     train_c_plus=mean_train_c_plus,
                     train_zeta=mean_train_zeta,
+                    train_mean_plane_zeta=mean_train_mean_plane_zeta,
                 ),
                 os.path.join(cfg.ckpt_dir, "best.pt"),
             )
 
-        threshold_value = _threshold_metric_value(threshold_metric, mean_val_s, mean_val_zeta)
+        threshold_value = _metric_value(
+            threshold_metric,
+            mean_val_s,
+            mean_val_zeta,
+            mean_val_mean_plane_zeta,
+        )
         for threshold in checkpoint_thresholds:
             if threshold in saved_checkpoint_thresholds:
                 continue
@@ -293,10 +366,12 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                     "val_s": mean_val_s,
                     "val_c_plus": mean_val_c_plus,
                     "val_zeta": mean_val_zeta,
+                    "val_mean_plane_zeta": mean_val_mean_plane_zeta,
                     "train_loss": mean_train_loss,
                     "train_s": mean_train_s,
                     "train_c_plus": mean_train_c_plus,
                     "train_zeta": mean_train_zeta,
+                    "train_mean_plane_zeta": mean_train_mean_plane_zeta,
                 }
                 torch.save(
                     _checkpoint_payload(
@@ -323,11 +398,13 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                         epoch,
                         mean_val_s,
                         mean_val_zeta,
+                        mean_val_mean_plane_zeta,
                         mean_val_c_plus,
                         mean_val_loss,
                         mean_train_loss,
                         mean_train_s,
                         mean_train_zeta,
+                        mean_train_mean_plane_zeta,
                         ckpt_path,
                     ])
                 print(
@@ -350,10 +427,12 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                     val_s=mean_val_s,
                     val_c_plus=mean_val_c_plus,
                     val_zeta=mean_val_zeta,
+                    val_mean_plane_zeta=mean_val_mean_plane_zeta,
                     train_loss=mean_train_loss,
                     train_s=mean_train_s,
                     train_c_plus=mean_train_c_plus,
                     train_zeta=mean_train_zeta,
+                    train_mean_plane_zeta=mean_train_mean_plane_zeta,
                 ),
                 ckpt_path,
             )
@@ -362,6 +441,7 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                     "interval": epoch_checkpoint_interval,
                     "epoch": epoch,
                     "val_zeta": mean_val_zeta,
+                    "val_mean_plane_zeta": mean_val_mean_plane_zeta,
                     "val_loss": mean_val_loss,
                     "train_loss": mean_train_loss,
                 }
@@ -372,19 +452,26 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                     epoch,
                     mean_val_s,
                     mean_val_zeta,
+                    mean_val_mean_plane_zeta,
                     mean_val_c_plus,
                     mean_val_loss,
                     mean_train_loss,
                     mean_train_s,
                     mean_train_zeta,
+                    mean_train_mean_plane_zeta,
                     ckpt_path,
                 ])
             print(
                 f"Saved epoch checkpoint {ckpt_name}: "
-                f"epoch={epoch} val_loss={mean_val_loss:.4f} val_zeta={mean_val_zeta:.4f}"
+                f"epoch={epoch} val_loss={mean_val_loss:.4f} "
+                f"val_zeta={mean_val_zeta:.4f} "
+                f"val_mean_plane_zeta={mean_val_mean_plane_zeta:.4f}"
             )
 
     history["best_val_zeta"] = best_val_zeta
+    history["best_val_mean_plane_zeta"] = best_val_mean_plane_zeta
+    history["best_checkpoint_metric"] = threshold_metric
+    history["best_checkpoint_score"] = best_checkpoint_score
     history["best_val_epoch"] = best_val_epoch
     history["best_checkpoint_val_loss"] = best_checkpoint_val_loss
     history["best_val_loss"] = min_val_loss
@@ -413,12 +500,12 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
     # Keep this to the main training-dynamics panel so checkpoint markers stay
     # readable as the number of active regularizers changes.
     ep = list(range(1, cfg.epochs + 1))
-    # Compute total λ·reg as the sum of individually tracked scaled components.
+    # Compute total raw reg as the sum of individually tracked unscaled components.
     # history["val_reg"] = loss + s is unreliable with the softmin objective because
     # non_reversibility_S("softmin") silently falls through to "sum" mode, so the
     # subtraction loses the softmin term and inflates the result by ~2x.
-    total_scaled_reg = [
-        sum(history["reg_scaled"][k][i] for k in active_regs)
+    total_raw_reg = [
+        sum(history["reg_raw"][k][i] for k in active_regs)
         for i in range(len(ep))
     ] if active_regs else [0.0] * len(ep)
     fig, ax = plt.subplots(figsize=(5.6, 4))
@@ -430,21 +517,36 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         color="mediumpurple",
         alpha=0.35,
     )
-    ax.plot(ep, total_scaled_reg,     label="reg (↓)",   color="tomato")
+    ax.plot(ep, total_raw_reg,        label="raw reg",   color="tomato")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Embedding validation loss components")
     ax.spines[["top", "right"]].set_visible(False)
 
     ax_zeta = ax.twinx()
     ax_zeta.plot(ep, history["val_zeta"], label="ζ", color="seagreen", alpha=0.6)
+    ax_zeta.plot(
+        ep,
+        history["val_mean_plane_zeta"],
+        label="mean plane ζ",
+        color="darkorange",
+        alpha=0.6,
+    )
     ax_zeta.set_ylabel("Validation ζ")
     ax_zeta.spines["top"].set_visible(False)
 
     if best_val_epoch is not None:
         idx = best_val_epoch - 1
-        if 0 <= idx < len(history["val_zeta"]):
-            y = history["val_zeta"][idx]
-            ax_zeta.scatter(
+        marker_series = (
+            history["val_s"]
+            if threshold_metric == "s"
+            else history["val_mean_plane_zeta"]
+            if threshold_metric == "mean_plane_zeta"
+            else history["val_zeta"]
+        )
+        marker_ax = ax if threshold_metric == "s" else ax_zeta
+        if 0 <= idx < len(marker_series):
+            y = marker_series[idx]
+            marker_ax.scatter(
                 [best_val_epoch],
                 [y],
                 s=52,
@@ -453,8 +555,8 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                 linewidths=0.7,
                 zorder=6,
             )
-            ax_zeta.annotate(
-                "best val ζ",
+            marker_ax.annotate(
+                f"best val {_threshold_metric_label(threshold_metric)}",
                 xy=(best_val_epoch, y),
                 xytext=(5, -10),
                 textcoords="offset points",

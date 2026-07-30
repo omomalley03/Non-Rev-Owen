@@ -104,7 +104,7 @@ class Config:
     lambda_start_frac: float = _env_float("LAMBDA_START_FRAC", 1.0)       # linear lambda warm-up: fraction of full lambda at epoch 1,
                                          # ramping linearly to 1.0 (full lambda) at the final epoch.
                                          # 1.0 = no warm-up (full lambda throughout)
-    val_checkpoint_metric: str = _env_str("VAL_CHECKPOINT_METRIC", "zeta")  # "zeta" or "s"
+    val_checkpoint_metric: str = _env_str("VAL_CHECKPOINT_METRIC", "zeta")  # "zeta", "s", or "mean_plane_zeta"
     val_checkpoint_thresholds: tuple = _env_float_tuple("VAL_CHECKPOINTS", ())
     val_zeta_checkpoint_thresholds: tuple = _env_float_tuple(
         "VAL_ZETA_CHECKPOINTS",
