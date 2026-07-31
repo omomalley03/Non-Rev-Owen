@@ -25,9 +25,9 @@ from mcmaze_train_finetune_common import (
 )
 
 
-DEFAULT_DIMS = (32, 64, 128, 256)
+DEFAULT_DIMS = (128, 256)
 DEFAULT_SEEDS = (0, 1, 2, 3, 4)
-OUT_DIR = REPO_ROOT / "mcmaze" / "dim_train_finetune_sweep"
+OUT_DIR = REPO_ROOT / "mcmaze" / "dim_train_finetune_sweep_mean_plane_zeta"
 LOG_DIR = OUT_DIR / "logs"
 SUMMARY_CSV = OUT_DIR / "results.csv"
 CI_CSV = OUT_DIR / "results_ci95.csv"
@@ -43,6 +43,7 @@ FIELDNAMES = [
     "checkpoint_lambda_scale",
     "checkpoint_regularization_lambda",
     "embedding_val_zeta",
+    "mean_val_zeta",
     "embedding_whole_val_regularization_raw",
     "train_log",
     "finetune_log",

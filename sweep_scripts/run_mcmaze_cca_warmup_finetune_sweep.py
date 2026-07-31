@@ -31,14 +31,17 @@ from mcmaze_train_finetune_common import (
 # baseline convention where start fractions are in [0, 1] and CCA weights can be
 # larger than one.
 SWEEP_POINTS = (
-    (0.1, 10.0),
-    # (0.2, 2.0),
-    # (0.2, 5.0),
+    (1.0, 0.5),
+    # (1.0, 1.0),
+    (1.0, 2.0),
+    (1.0, 5.0),
+    (1.0, 10.0),
+    (1.0, 20.0),
+    # (1.0, 40.0),
     # (0.1, 10.0),
-    # (0.05, 20.0),
 )
 DEFAULT_SEEDS = (0, 1, 2, 3, 4)
-OUT_DIR = REPO_ROOT / "mcmaze" / "zeta_plane_mean"
+OUT_DIR = REPO_ROOT / "mcmaze" / "cca_sweep_constant_lambda_emb_zeta"
 LOG_DIR = OUT_DIR / "logs"
 SUMMARY_CSV = OUT_DIR / "results.csv"
 CI_CSV = OUT_DIR / "results_ci95.csv"
@@ -54,6 +57,7 @@ FIELDNAMES = [
     "checkpoint_lambda_scale",
     "checkpoint_regularization_lambda",
     "embedding_val_zeta",
+    "mean_val_zeta",
     "embedding_whole_val_regularization_raw",
     "train_log",
     "finetune_log",

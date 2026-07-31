@@ -51,6 +51,7 @@ FIELDNAMES = [
     "checkpoint_lambda_scale",
     "checkpoint_regularization_lambda",
     "embedding_val_zeta",
+    "mean_val_zeta",
     "embedding_whole_val_regularization_raw",
     "train_log",
     "finetune_log",

@@ -29,6 +29,7 @@ METRIC_FIELDS = (
 )
 TRIAL_SUMMARY_METRIC_FIELDS = (
     "embedding_val_zeta",
+    "mean_val_zeta",
     "embedding_whole_val_regularization_raw",
     "checkpoint_regularization_lambda",
     "frozen_decoder_rmse_x",
@@ -338,12 +339,77 @@ def embedding_summary_metrics(run_dir: Path) -> dict[str, object]:
         "saved_checkpoint_epoch": epoch,
         "checkpoint_selection": ckpt.get("checkpoint_selection", ""),
         "embedding_val_zeta": val_zeta,
+        "mean_val_zeta": compute_whole_validation_mean_plane_zeta(run_dir),
         "embedding_whole_val_regularization_raw": raw_whole_val_reg,
         "checkpoint_lambda_scale": about.get("lambda_scale", ""),
         "checkpoint_regularization_lambda": (
             "" if checkpoint_regularization_lambda is None else checkpoint_regularization_lambda
         ),
     }
+
+
+def _cfg_get(cfg, name: str, default=None):
+    if isinstance(cfg, dict):
+        return cfg.get(name, default)
+    return getattr(cfg, name, default)
+
+
+def _mean_axes(cfg) -> tuple[int, ...]:
+    axes = _cfg_get(cfg, "F_mean_axis", (0, 2))
+    if axes is None:
+        return ()
+    if isinstance(axes, int):
+        axes = (axes,)
+    return tuple(int(axis) for axis in axes)
+
+
+def compute_whole_validation_mean_plane_zeta(run_dir: Path, batch_size: int | None = None) -> object:
+    """Mean native-plane ζ computed once over the whole validation split."""
+    import torch
+    from torch.utils.data import DataLoader
+
+    from loss import _batch_rms_normalize, _pair_terms_per_plane
+    from plot_mcmaze_plane_spectral_redundancy import build_embedder, load_windows_for_run
+
+    ckpt_path = run_dir / "checkpoints" / "best.pt"
+    if not ckpt_path.is_file():
+        return ""
+
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    cfg = ckpt["config"]
+    dataset_label, in_channels, _train_ds, val_ds, _sample_rate_hz = load_windows_for_run(cfg)
+    if dataset_label != "MC Maze":
+        return ""
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = build_embedder(cfg, ckpt["model_state_dict"], in_channels).to(device)
+    model.eval()
+    loader_batch_size = int(batch_size or _cfg_get(cfg, "batch_size", 64))
+    loader = DataLoader(
+        val_ds,
+        batch_size=loader_batch_size,
+        shuffle=False,
+        drop_last=False,
+        num_workers=0,
+    )
+
+    chunks = []
+    with torch.no_grad():
+        for (batch,) in loader:
+            chunks.append(model(batch.to(device)).detach().cpu())
+    if not chunks:
+        return ""
+
+    F = torch.cat(chunks, dim=0)
+    if F.shape[0] < 2:
+        return ""
+    axes = _mean_axes(cfg)
+    if axes:
+        F = F - F.mean(dim=axes, keepdim=True)
+    F_norm = _batch_rms_normalize(F)
+    minus_per_plane, plus_per_plane = _pair_terms_per_plane(F_norm)
+    plane_zeta = minus_per_plane / (plus_per_plane + 1e-8)
+    return float(plane_zeta.mean().item())
 
 
 def decoder_summary_metrics(metric_rows: list[dict[str, str]]) -> dict[str, str]:

@@ -28,7 +28,7 @@ export POST_MS="140" # THIS IS OBSOLETE
 export WINDOW_SIZE="90"
 export WINDOW_STRATEGY="trial_aligned"
 export VAL_SPLIT="0.25"
-export SPLIT="dataset"
+export SPLIT="random"
 export SEED="0"
 
 # Model settings.
@@ -39,7 +39,7 @@ export SEED="0"
 # export TEMPORAL_FILTERS="4"
 # export TEMPORAL_KERNEL_SIZE="31"
 
-export D="16"
+export D="128"
 export HIDDEN_DIM="256"
 export DEPTH="2" # depth=2 ==> one hidden layer. depth=1 ==> linear 
 export DROPOUT="0.2"

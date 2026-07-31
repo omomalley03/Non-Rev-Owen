@@ -1,0 +1,9 @@
+scope,decoder_metric,metric,n,pearson_r,spearman_rho
+individual_checkpoints,frozen_decoder_r2_mean,mean_val_zeta,135,0.590297691890127,0.36699592692861144
+individual_checkpoints,frozen_decoder_r2_mean,zeta_emb,135,0.8886452597249592,0.5329235872295797
+grouped_conditions,frozen_decoder_r2_mean,mean_val_zeta,27,0.616329222030624,0.3072454906756343
+grouped_conditions,frozen_decoder_r2_mean,zeta_emb,27,0.920857124740448,0.7138489758483644
+individual_checkpoints,frozen_decoder_rmse_mean,mean_val_zeta,135,-0.6098616538916407,-0.3571229970000731
+individual_checkpoints,frozen_decoder_rmse_mean,zeta_emb,135,-0.8955090838156834,-0.5365039877076169
+grouped_conditions,frozen_decoder_rmse_mean,mean_val_zeta,27,-0.6342887755370167,-0.3029654539896056
+grouped_conditions,frozen_decoder_rmse_mean,zeta_emb,27,-0.925345121223035,-0.7089575053500459

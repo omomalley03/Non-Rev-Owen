@@ -35,8 +35,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
 
+from mcmaze_train_finetune_common import compute_whole_validation_mean_plane_zeta
 
-ROOT = Path(__file__).resolve().parent
+
+ROOT = Path(__file__).resolve().parents[1]
 EXPERIMENT_DIR = ROOT / "mcmaze" / "embedding_dim_vs_rmse_experiment" / "nonlinear_multiscale_zeta"
 LOG_DIR = EXPERIMENT_DIR / "logs"
 OUT_CSV = EXPERIMENT_DIR / "results.csv"
@@ -203,7 +205,10 @@ def _plot_metric_with_zeta(
     path: Path,
 ) -> None:
     dims = [int(r["dimension"]) for r in records]
-    zetas = [float(r["embedding_val_zeta"]) for r in records]
+    zetas = [
+        float(r.get("mean_val_zeta") or r["embedding_val_zeta"])
+        for r in records
+    ]
 
     fig, ax = plt.subplots(figsize=(7.4, 4.7))
     line_metric = ax.plot(
@@ -229,9 +234,9 @@ def _plot_metric_with_zeta(
         marker="s",
         linewidth=1.8,
         color="seagreen",
-        label="Best validation ζ",
+        label="Mean validation plane ζ",
     )
-    ax_zeta.set_ylabel("Best validation ζ")
+    ax_zeta.set_ylabel("Mean validation plane ζ")
     ax_zeta.spines["top"].set_visible(False)
 
     handles = line_metric + line_zeta
@@ -261,6 +266,7 @@ def write_outputs(records: list[dict[str, object]]) -> None:
         "checkpoint_selection",
         "embedding_val_s",
         "embedding_val_zeta",
+        "mean_val_zeta",
         "embedding_val_c_plus",
         "embedding_val_loss",
         "run",
@@ -312,6 +318,7 @@ def row_from_run(dim: int, run_dir: str, metrics: dict[str, str]) -> dict[str, o
         "checkpoint_selection": meta["checkpoint_selection"],
         "embedding_val_s": meta["val_s"],
         "embedding_val_zeta": meta["val_zeta"],
+        "mean_val_zeta": compute_whole_validation_mean_plane_zeta(Path(run_dir)),
         "embedding_val_c_plus": meta["val_c_plus"],
         "embedding_val_loss": meta["val_loss"],
         "run": run_dir,
@@ -468,7 +475,7 @@ def main() -> None:
         print(
             f"D={dim} MLP MSE mean: {float(row['mse_mean']):.4f}  "
             f"RMSE mean: {float(row['rmse_mean']):.4f}  "
-            f"embedding ζ: {float(row['embedding_val_zeta']):.4f}"
+            f"mean plane ζ: {float(row['mean_val_zeta']):.4f}"
         )
         print(f"Updated {OUT_CSV}")
         print(f"Updated {OUT_MSE_PLOT}")

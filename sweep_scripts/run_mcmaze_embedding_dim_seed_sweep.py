@@ -21,6 +21,7 @@ from typing import Optional
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+from mcmaze_train_finetune_common import compute_whole_validation_mean_plane_zeta
 
 DEFAULT_DIMS = (16, 32, 64, 128, 256, 512)
 DEFAULT_SEEDS = (0, 1, 2, 3, 4)
@@ -37,6 +38,7 @@ FIELDNAMES = [
     "saved_checkpoint_epoch",
     "checkpoint_selection",
     "best_val_zeta",
+    "mean_val_zeta",
     "best_val_s",
     "best_val_c_plus",
     "best_val_loss",
@@ -150,6 +152,7 @@ def checkpoint_metrics(run_dir: Path) -> dict[str, object]:
         "saved_checkpoint_epoch": epoch,
         "checkpoint_selection": ckpt.get("checkpoint_selection"),
         "best_val_zeta": ckpt.get("val_zeta"),
+        "mean_val_zeta": compute_whole_validation_mean_plane_zeta(run_dir),
         "best_val_s": ckpt.get("val_s"),
         "best_val_c_plus": ckpt.get("val_c_plus"),
         "best_val_loss": ckpt.get("val_loss"),
