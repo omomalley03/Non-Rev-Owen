@@ -1,4 +1,4 @@
-"""Evaluate MC Maze zeta-threshold and periodic embedder checkpoints on hand velocity prediction.
+"""Evaluate MC Maze val-S and periodic embedder checkpoints on hand velocity prediction.
 
 The intended workflow is:
 
@@ -6,13 +6,12 @@ The intended workflow is:
     python -u mcmaze_val_s_checkpoint_velocity_experiment.py
 
 With no --run, this trains a new embedder using the current MC Maze config, but
-saves validation-zeta threshold checkpoints every 0.1 increase and periodic
-embedder checkpoints every 10 epochs. The script then trains the same
-hand-velocity decoders on all of those checkpoints and plots embedder validation
-loss vs downstream MLP RMSE, labeling points by validation zeta. It also plots
-embedder checkpoint epoch vs downstream MLP RMSE.
+saves validation-S threshold checkpoints every 0.1 increase and periodic
+embedder checkpoints every 10 epochs. The script then trains the same frozen
+hand-velocity decoders on all of those checkpoints and plots downstream MLP R^2
+against validation mean-plane zeta, embedding zeta, and validation S.
 
-To reuse an existing run that already has checkpoints/val_zeta_checkpoints.csv
+To reuse an existing run that already has checkpoints/val_s_checkpoints.csv
 and checkpoints/epoch_checkpoints.csv:
 
     python -u mcmaze_val_s_checkpoint_velocity_experiment.py --run mcmaze/runs/<run>
@@ -24,10 +23,18 @@ import os
 from dataclasses import asdict
 
 
-CHECKPOINT_METRIC = "zeta"
-ZETA_CHECKPOINT_STEP = 0.1
-ZETA_CHECKPOINT_MAX = 1.0
+CHECKPOINT_METRIC = "s"
+S_CHECKPOINT_STEP = 0.1
+S_CHECKPOINT_MAX = 1.0
 EPOCH_CHECKPOINT_INTERVAL = 10
+DEFAULT_DECODER_FEATURE_LAYER = "hidden"
+DEFAULT_DECODER_HIDDEN_DIM = 64
+DEFAULT_DECODER_DEPTH = 2
+DEFAULT_DECODER_DROPOUT = 0.3
+DEFAULT_DECODER_EPOCHS = 200
+DEFAULT_DECODER_BATCH_SIZE = 4096
+DEFAULT_DECODER_LR = 1e-3
+DEFAULT_DECODER_WEIGHT_DECAY = 1e-4
 
 
 def _threshold_sequence(step: float, max_value: float) -> str:
@@ -40,7 +47,7 @@ def _threshold_sequence(step: float, max_value: float) -> str:
 # affected.
 os.environ["CHECKPOINT_EVERY_EPOCHS"] = str(EPOCH_CHECKPOINT_INTERVAL)
 os.environ["VAL_CHECKPOINT_METRIC"] = CHECKPOINT_METRIC
-os.environ["VAL_CHECKPOINTS"] = _threshold_sequence(ZETA_CHECKPOINT_STEP, ZETA_CHECKPOINT_MAX)
+os.environ["VAL_CHECKPOINTS"] = _threshold_sequence(S_CHECKPOINT_STEP, S_CHECKPOINT_MAX)
 
 import matplotlib
 matplotlib.use("Agg")
@@ -92,7 +99,7 @@ def _record_metric_value(record: dict, metric: str) -> float:
 
 def _output_root(args) -> str:
     base = (
-        f"velocity_prediction_zeta{ZETA_CHECKPOINT_STEP:g}_"
+        f"velocity_prediction_val_s{S_CHECKPOINT_STEP:g}_"
         f"epoch{EPOCH_CHECKPOINT_INTERVAL}_checkpoints_{args.horizon_ms}ms"
     )
     feature_layer = getattr(args, "feature_layer", "output")
@@ -134,12 +141,12 @@ def resolve_nwb_path(path: str) -> str:
     )
 
 
-def load_zeta_checkpoint_manifest(run_dir: str):
-    manifest_path = os.path.join(run_dir, "checkpoints", "val_zeta_checkpoints.csv")
+def load_threshold_checkpoint_manifest(run_dir: str):
+    manifest_path = os.path.join(run_dir, "checkpoints", f"val_{CHECKPOINT_METRIC}_checkpoints.csv")
     if not os.path.isfile(manifest_path):
         raise FileNotFoundError(
-            f"No zeta checkpoint manifest at {manifest_path!r}. "
-            f"Run embedder training with VAL_CHECKPOINT_METRIC=zeta and "
+            f"No val-{_metric_label(CHECKPOINT_METRIC)} checkpoint manifest at {manifest_path!r}. "
+            f"Run embedder training with VAL_CHECKPOINT_METRIC={CHECKPOINT_METRIC} and "
             f"VAL_CHECKPOINTS={os.environ['VAL_CHECKPOINTS']} first."
         )
 
@@ -153,20 +160,22 @@ def load_zeta_checkpoint_manifest(run_dir: str):
                 raise FileNotFoundError(f"Manifest checkpoint does not exist: {ckpt_path}")
             rows.append(
                 {
-                    "checkpoint_label": f"zeta >= {threshold:g}",
-                    "checkpoint_kind": "val_zeta_threshold",
+                    "checkpoint_label": f"{_metric_label(CHECKPOINT_METRIC)} >= {threshold:g}",
+                    "checkpoint_kind": f"val_{CHECKPOINT_METRIC}_threshold",
                     "checkpoint_metric": CHECKPOINT_METRIC,
                     "checkpoint_epoch_interval": None,
-                    "output_name": f"zeta_{threshold:g}",
+                    "output_name": f"{CHECKPOINT_METRIC}_{threshold:g}",
                     "threshold": threshold,
                     "epoch": int(row["epoch"]),
                     "val_s": _float_or_nan(row, "val_s"),
                     "val_zeta": _float_or_nan(row, "val_zeta"),
+                    "val_mean_plane_zeta": _float_or_nan(row, "val_mean_plane_zeta"),
                     "val_c_plus": _float_or_nan(row, "val_c_plus"),
                     "val_loss": _float_or_nan(row, "val_loss"),
                     "train_loss": _float_or_nan(row, "train_loss"),
                     "train_s": _float_or_nan(row, "train_s"),
                     "train_zeta": _float_or_nan(row, "train_zeta"),
+                    "train_mean_plane_zeta": _float_or_nan(row, "train_mean_plane_zeta"),
                     "path": ckpt_path,
                 }
             )
@@ -203,11 +212,13 @@ def load_epoch_checkpoint_manifest(run_dir: str):
                     "epoch": epoch,
                     "val_s": _float_or_nan(row, "val_s"),
                     "val_zeta": _float_or_nan(row, "val_zeta"),
+                    "val_mean_plane_zeta": _float_or_nan(row, "val_mean_plane_zeta"),
                     "val_c_plus": _float_or_nan(row, "val_c_plus"),
                     "val_loss": _float_or_nan(row, "val_loss"),
                     "train_loss": _float_or_nan(row, "train_loss"),
                     "train_s": _float_or_nan(row, "train_s"),
                     "train_zeta": _float_or_nan(row, "train_zeta"),
+                    "train_mean_plane_zeta": _float_or_nan(row, "train_mean_plane_zeta"),
                     "path": ckpt_path,
                 }
             )
@@ -218,8 +229,8 @@ def load_epoch_checkpoint_manifest(run_dir: str):
 
 
 def load_experiment_checkpoint_records(run_dir: str):
-    records = load_zeta_checkpoint_manifest(run_dir) + load_epoch_checkpoint_manifest(run_dir)
-    kind_order = {"val_zeta_threshold": 0, "epoch_interval": 1}
+    records = load_threshold_checkpoint_manifest(run_dir) + load_epoch_checkpoint_manifest(run_dir)
+    kind_order = {f"val_{CHECKPOINT_METRIC}_threshold": 0, "epoch_interval": 1}
     return sorted(
         records,
         key=lambda r: (
@@ -237,7 +248,10 @@ def load_best_checkpoint_record(run_dir: str):
         raise FileNotFoundError(f"No best checkpoint at {ckpt_path!r}")
     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     selection = ckpt.get("checkpoint_selection", "best_val_loss")
-    if selection == "best_val_zeta":
+    if selection == "best_val_s":
+        label = "best val S"
+        output_name = "best_val_s"
+    elif selection == "best_val_zeta":
         label = "best val zeta"
         output_name = "best_val_zeta"
     else:
@@ -253,11 +267,13 @@ def load_best_checkpoint_record(run_dir: str):
         "epoch": int(ckpt.get("epoch") or -1),
         "val_s": float(ckpt.get("val_s", "nan")),
         "val_zeta": float(ckpt.get("val_zeta", "nan")),
+        "val_mean_plane_zeta": float(ckpt.get("val_mean_plane_zeta", "nan")),
         "val_c_plus": float(ckpt.get("val_c_plus", "nan")),
         "val_loss": float(ckpt.get("val_loss", "nan")),
         "train_loss": float(ckpt.get("train_loss", "nan")),
         "train_s": float(ckpt.get("train_s", "nan")),
         "train_zeta": float(ckpt.get("train_zeta", "nan")),
+        "train_mean_plane_zeta": float(ckpt.get("train_mean_plane_zeta", "nan")),
         "path": ckpt_path,
     }
 
@@ -494,6 +510,9 @@ def evaluate_checkpoint(run_dir: str, record: dict, problem: dict, args, device:
         "embedding_val_loss": float(ckpt.get("val_loss", record["val_loss"])),
         "embedding_val_s": float(ckpt.get("val_s", record["val_s"])),
         "embedding_val_zeta": float(ckpt.get("val_zeta", record["val_zeta"])),
+        "embedding_val_mean_plane_zeta": float(
+            ckpt.get("val_mean_plane_zeta", record["val_mean_plane_zeta"])
+        ),
         "embedding_val_c_plus": float(ckpt.get("val_c_plus", record["val_c_plus"])),
         "linear_mse_mean": linear_metrics["mse_mean"],
         "linear_rmse_mean": linear_metrics["rmse_mean"],
@@ -521,21 +540,32 @@ def save_summary_csv(path: str, rows):
 def _pearson(x, y):
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
+    keep = np.isfinite(x) & np.isfinite(y)
+    x = x[keep]
+    y = y[keep]
     if len(x) < 2 or np.std(x) < 1e-12 or np.std(y) < 1e-12:
         return float("nan")
     return float(np.corrcoef(x, y)[0, 1])
 
 
-def save_scatter(out_dir: str, rows, x_key: str, xlabel: str, title: str, filename: str):
-    x = np.asarray([row[x_key] for row in rows], dtype=float)
-    y = np.asarray([row["mlp_rmse_mean"] for row in rows], dtype=float)
-    checkpoint_epoch = np.asarray([row["checkpoint_epoch"] for row in rows], dtype=float)
+def save_r2_scatter(out_dir: str, rows, x_key: str, xlabel: str, title: str, filename: str):
+    x_all = np.asarray([row[x_key] for row in rows], dtype=float)
+    y_all = np.asarray([row["mlp_r2_mean"] for row in rows], dtype=float)
+    checkpoint_epoch_all = np.asarray([row["checkpoint_epoch"] for row in rows], dtype=float)
+    keep = np.isfinite(x_all) & np.isfinite(y_all) & np.isfinite(checkpoint_epoch_all)
+    x = x_all[keep]
+    y = y_all[keep]
+    checkpoint_epoch = checkpoint_epoch_all[keep]
+    if len(x) == 0:
+        print(f"No finite points for plot {filename}; skipping.")
+        return
 
     fig, ax = plt.subplots(figsize=(7.2, 5.2))
     sc = ax.scatter(x, y, c=checkpoint_epoch, s=45)
     ax.set_xlabel(xlabel)
-    ax.set_ylabel("MLP mean RMSE")
-    ax.set_title(title)
+    ax.set_ylabel(r"Frozen decoder mean $R^2$")
+    r = _pearson(x, y)
+    ax.set_title(f"{title}\nPearson r={r:.3f}")
     ax.grid(True, alpha=0.3)
     cbar = fig.colorbar(sc, ax=ax)
     cbar.set_label("Checkpoint epoch")
@@ -551,30 +581,60 @@ def save_scatter(out_dir: str, rows, x_key: str, xlabel: str, title: str, filena
 
 
 def plot_checkpoint_scatters(out_dir: str, rows):
-    save_scatter(
-        out_dir,
-        rows,
-        "checkpoint_epoch",
-        "Embedder checkpoint epoch",
-        "MC Maze checkpoint epoch vs decoder RMSE",
-        "embedding_checkpoint_epoch_vs_velocity_rmse",
-    )
-    save_scatter(
-        out_dir,
-        rows,
-        "embedding_val_loss",
-        "Embedder validation loss",
-        "MC Maze embedder validation loss vs decoder RMSE",
-        "embedding_val_loss_vs_velocity_rmse",
-    )
-    save_scatter(
-        out_dir,
-        rows,
-        "embedding_val_zeta",
-        "Embedder validation ζ",
-        "MC Maze embedder validation ζ vs decoder RMSE",
-        "embedding_val_zeta_vs_velocity_rmse",
-    )
+    specs = [
+        (
+            "embedding_val_mean_plane_zeta",
+            r"Validation mean-plane $\zeta$",
+            r"MC Maze mean-plane $\zeta$ vs frozen decoder",
+            "embedding_mean_plane_zeta_vs_frozen_velocity_r2",
+        ),
+        (
+            "embedding_val_zeta",
+            r"Embedding $\zeta$: validation $S / \|C^{(+)}\|$",
+            r"MC Maze embedding $\zeta$ vs frozen decoder",
+            "embedding_zeta_vs_frozen_velocity_r2",
+        ),
+        (
+            "embedding_val_s",
+            r"Validation $S$",
+            r"MC Maze validation $S$ vs frozen decoder",
+            "embedding_val_s_vs_frozen_velocity_r2",
+        ),
+    ]
+    for x_key, xlabel, title, filename in specs:
+        save_r2_scatter(out_dir, rows, x_key, xlabel, title, filename)
+
+    fig, axes = plt.subplots(1, 3, figsize=(16.2, 4.8), sharey=True, constrained_layout=True)
+    epoch_all = np.asarray([row["checkpoint_epoch"] for row in rows], dtype=float)
+    vmin = float(np.nanmin(epoch_all)) if np.any(np.isfinite(epoch_all)) else None
+    vmax = float(np.nanmax(epoch_all)) if np.any(np.isfinite(epoch_all)) else None
+    scatter = None
+    for ax, (x_key, xlabel, title, _filename) in zip(axes, specs):
+        x_all = np.asarray([row[x_key] for row in rows], dtype=float)
+        y_all = np.asarray([row["mlp_r2_mean"] for row in rows], dtype=float)
+        keep = np.isfinite(x_all) & np.isfinite(y_all) & np.isfinite(epoch_all)
+        x = x_all[keep]
+        y = y_all[keep]
+        epochs = epoch_all[keep]
+        if len(x) == 0:
+            ax.set_visible(False)
+            continue
+        scatter = ax.scatter(x, y, c=epochs, s=42, vmin=vmin, vmax=vmax)
+        ax.set_xlabel(xlabel)
+        ax.grid(True, alpha=0.3)
+        ax.spines[["top", "right"]].set_visible(False)
+    axes[0].set_ylabel(r"Frozen decoder mean $R^2$")
+    if scatter is not None:
+        cbar = fig.colorbar(scatter, ax=axes.ravel().tolist(), shrink=0.9)
+        cbar.set_label("Checkpoint epoch")
+    fig.suptitle("MC Maze Frozen Decoder Metrics vs. Embedding Metrics")
+    png_path = os.path.join(out_dir, "embedder_metrics_vs_frozen_velocity_r2.png")
+    svg_path = os.path.join(out_dir, "embedder_metrics_vs_frozen_velocity_r2.svg")
+    fig.savefig(png_path, dpi=300, bbox_inches="tight")
+    fig.savefig(svg_path, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved plot: {png_path}")
+    print(f"Saved plot: {svg_path}")
 
 
 def save_hidden_vs_output_comparison(run_dir: str, args, hidden_rows):
@@ -640,19 +700,23 @@ def main():
     parser.add_argument("--horizon-ms", type=int, default=100)
     parser.add_argument("--velocity-scale", choices=["stored", "si"], default="stored")
     parser.add_argument("--embed-batch-size", type=int, default=256)
-    parser.add_argument("--mlp-hidden-dim", type=int, default=128)
-    parser.add_argument("--mlp-depth", type=int, default=2)
-    parser.add_argument("--mlp-dropout", type=float, default=0.1)
-    parser.add_argument("--mlp-epochs", type=int, default=50)
-    parser.add_argument("--mlp-batch-size", type=int, default=4096)
-    parser.add_argument("--mlp-lr", type=float, default=1e-3)
-    parser.add_argument("--mlp-weight-decay", type=float, default=1e-4)
+    parser.add_argument("--mlp-hidden-dim", type=int, default=DEFAULT_DECODER_HIDDEN_DIM)
+    parser.add_argument("--mlp-depth", type=int, default=DEFAULT_DECODER_DEPTH)
+    parser.add_argument("--mlp-dropout", type=float, default=DEFAULT_DECODER_DROPOUT)
+    parser.add_argument("--mlp-epochs", type=int, default=DEFAULT_DECODER_EPOCHS)
+    parser.add_argument("--mlp-batch-size", type=int, default=DEFAULT_DECODER_BATCH_SIZE)
+    parser.add_argument("--mlp-lr", type=float, default=DEFAULT_DECODER_LR)
+    parser.add_argument("--mlp-weight-decay", type=float, default=DEFAULT_DECODER_WEIGHT_DECAY)
     parser.add_argument("--max-train-samples", type=int, default=0)
     parser.add_argument("--max-plot-points", type=int, default=5000)
     parser.add_argument("--plot-predictions", action="store_true")
     parser.add_argument("--include-best", action="store_true",
                         help="Also evaluate checkpoints/best.pt from the embedder run.")
-    parser.add_argument("--feature-layer", choices=["output", "hidden"], default="output",
+    parser.add_argument("--min-checkpoint-epoch", type=int, default=None,
+                        help="Only evaluate checkpoints from this epoch or later.")
+    parser.add_argument("--max-checkpoint-epoch", type=int, default=None,
+                        help="Only evaluate checkpoints from this epoch or earlier.")
+    parser.add_argument("--feature-layer", choices=["output", "hidden"], default=DEFAULT_DECODER_FEATURE_LAYER,
                         help="Use normal embedder output or remove the final linear layer and use hidden features.")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
@@ -666,6 +730,12 @@ def main():
     records = load_experiment_checkpoint_records(run_dir)
     if args.include_best:
         records.append(load_best_checkpoint_record(run_dir))
+    if args.min_checkpoint_epoch is not None:
+        records = [record for record in records if int(record["epoch"]) >= args.min_checkpoint_epoch]
+    if args.max_checkpoint_epoch is not None:
+        records = [record for record in records if int(record["epoch"]) <= args.max_checkpoint_epoch]
+    if not records:
+        raise RuntimeError("No checkpoints matched the requested epoch filters.")
     print("Experiment checkpoints:")
     for record in records:
         label = record.get("checkpoint_label") or f"{_metric_label(CHECKPOINT_METRIC)}>={record['threshold']:g}"
@@ -689,22 +759,22 @@ def main():
     plot_checkpoint_scatters(out_dir, rows)
     save_hidden_vs_output_comparison(run_dir, args, rows)
 
-    r_val_loss = _pearson(
-        [row["embedding_val_loss"] for row in rows],
-        [row["mlp_rmse_mean"] for row in rows],
+    r_mean_plane_zeta = _pearson(
+        [row["embedding_val_mean_plane_zeta"] for row in rows],
+        [row["mlp_r2_mean"] for row in rows],
     )
-    r_epoch = _pearson(
-        [row["checkpoint_epoch"] for row in rows],
-        [row["mlp_rmse_mean"] for row in rows],
-    )
-    r_zeta = _pearson(
+    r_embedding_zeta = _pearson(
         [row["embedding_val_zeta"] for row in rows],
-        [row["mlp_rmse_mean"] for row in rows],
+        [row["mlp_r2_mean"] for row in rows],
+    )
+    r_val_s = _pearson(
+        [row["embedding_val_s"] for row in rows],
+        [row["mlp_r2_mean"] for row in rows],
     )
     print()
-    print(f"Pearson r(embedder val loss, MLP velocity RMSE): {r_val_loss:.4f}")
-    print(f"Pearson r(embedder checkpoint epoch, MLP velocity RMSE): {r_epoch:.4f}")
-    print(f"Pearson r(embedder val zeta, MLP velocity RMSE): {r_zeta:.4f}")
+    print(f"Pearson r(mean-plane zeta, frozen MLP velocity R2): {r_mean_plane_zeta:.4f}")
+    print(f"Pearson r(embedding zeta, frozen MLP velocity R2): {r_embedding_zeta:.4f}")
+    print(f"Pearson r(validation S, frozen MLP velocity R2): {r_val_s:.4f}")
 
 
 if __name__ == "__main__":

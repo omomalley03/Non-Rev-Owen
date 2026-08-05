@@ -5,8 +5,10 @@ Each diagnostic plot is saved as its own PNG in the run's `outputs/` dir:
 
   01_raw_time_coded.png                 — raw, condition-avg, time-coded
   02_embed_planes_time_coded.png        — per rotation plane, condition-avg, time-coded
+  02b_embed_planes_time_coded_selected_trials.png — per plane, selected individual trials, time-coded
   03_raw_condition_hsv.png              — raw, condition-avg, HSV by reach angle
   04_embed_planes_condition_hsv.png     — hand traj + embedding planes, same HSV colours
+  04b_embed_planes_condition_hsv_selected_trials.png — selected individual trials, HSV by condition
   05_embed_planes_condition_time.png    — per plane, both dims vs time, condition HSV colours
   06_plane_validation_zeta_ranking.csv  — all planes ranked by validation ζ
   06_plane_validation_zeta_bars.png     — bar chart of ranked plane validation ζ
@@ -258,6 +260,35 @@ def _plane_zeta_values(planes: np.ndarray, plane_indices: list[int]) -> dict[int
     return {p: zeta[i].item() for i, p in enumerate(plane_indices)}
 
 
+def _plane_redundancy_matrix(planes: np.ndarray, cfg: Config | None = None) -> np.ndarray:
+    """Return ‖C_pq‖_F² between whitened native 2D planes."""
+    F = torch.from_numpy(planes.reshape(planes.shape[0], planes.shape[1] * 2, planes.shape[3]))
+    eps = float(getattr(cfg, "block_cca_eps", 1e-4)) if cfg is not None else 1e-4
+    with torch.no_grad():
+        X = _whiten_2d(_plane_samples(F), eps=eps)
+        C = torch.einsum("pmi,qmj->pqij", X, X) / X.shape[1]
+        return C.pow(2).sum(dim=(-1, -2)).cpu().numpy()
+
+
+def _select_nonredundant_ranked_planes(
+    candidate_indices: list[int],
+    plane_zeta: dict[int, float],
+    redundancy: np.ndarray,
+    max_planes: int,
+    reg_thresh: float,
+) -> list[int]:
+    """Rank by ζ and skip planes too redundant with earlier kept planes."""
+    ranked = sorted(candidate_indices, key=lambda p: plane_zeta[p], reverse=True)
+    selected: list[int] = []
+    for p in ranked:
+        if any(float(redundancy[p, q]) >= reg_thresh for q in selected):
+            continue
+        selected.append(p)
+        if len(selected) >= max_planes:
+            break
+    return selected
+
+
 def _mixed_parity_plane_split(d: int, cfg: Config | None) -> tuple[int, int] | None:
     """Return (even/symmetric planes, odd/anti-symmetric planes) for mixed parity."""
     if cfg is None:
@@ -286,23 +317,43 @@ def _plane_indices_for_ranked_branch_plot(
     d: int,
     cfg: Config | None,
     per_branch: int = 8,
+    reg_thresh: float = 1.0,
 ) -> tuple[list[int], dict[int, float], dict[int, str]]:
-    """Select top-ζ planes from each mixed-parity branch for plots 02 and 04."""
+    """Select high-ζ nonredundant planes for plots 02, 04, and 05."""
     D = d // 2
+    all_plane_indices = list(range(D))
+    plane_zeta = _plane_zeta_values(planes, all_plane_indices)
+    redundancy = _plane_redundancy_matrix(planes, cfg)
+    max_planes = min(D, 2 * per_branch if d > 32 else D)
+    plane_indices = _select_nonredundant_ranked_planes(
+        all_plane_indices,
+        plane_zeta,
+        redundancy,
+        max_planes=max_planes,
+        reg_thresh=reg_thresh,
+    )
+
     split = _mixed_parity_plane_split(d, cfg)
     if split is None:
-        plane_indices = _plane_indices_for_plot(d)
-        plane_zeta = _plane_zeta_values(planes, plane_indices)
         return plane_indices, plane_zeta, {p: "plane" for p in plane_indices}
 
     even_planes, odd_planes = split
-    all_plane_indices = list(range(D))
-    plane_zeta = _plane_zeta_values(planes, all_plane_indices)
     even_indices = list(range(even_planes))
     odd_indices = list(range(even_planes, even_planes + odd_planes))
-
-    top_even = sorted(even_indices, key=lambda p: plane_zeta[p], reverse=True)[:per_branch]
-    top_odd = sorted(odd_indices, key=lambda p: plane_zeta[p], reverse=True)[:per_branch]
+    top_even = _select_nonredundant_ranked_planes(
+        even_indices,
+        plane_zeta,
+        redundancy,
+        max_planes=min(per_branch, len(even_indices)),
+        reg_thresh=reg_thresh,
+    )
+    top_odd = _select_nonredundant_ranked_planes(
+        odd_indices,
+        plane_zeta,
+        redundancy,
+        max_planes=min(per_branch, len(odd_indices)),
+        reg_thresh=reg_thresh,
+    )
     plane_branch = {p: "even" for p in top_even}
     plane_branch.update({p: "odd" for p in top_odd})
     return top_even + top_odd, plane_zeta, plane_branch
@@ -313,7 +364,15 @@ def _plane_title(p: int, zeta: float, branch: str | None = None) -> str:
     return f"Plane {p}{branch_label}  (dims {2*p}, {2*p+1})  ζ={zeta:.2f}"
 
 
-def _plane_zeta_ranking_rows(F_hat: np.ndarray, cfg: Config | None = None) -> list[dict]:
+def _simple_plane_zeta_title(p: int, zeta: float) -> str:
+    return rf"Plane {p}: $\zeta$={zeta:.2f}"
+
+
+def _plane_zeta_ranking_rows(
+    F_hat: np.ndarray,
+    cfg: Config | None = None,
+    reg_thresh: float = 1.0,
+) -> list[dict]:
     """Return all native planes ranked by validation ζ."""
     K, d, T = F_hat.shape
     D = d // 2
@@ -323,6 +382,7 @@ def _plane_zeta_ranking_rows(F_hat: np.ndarray, cfg: Config | None = None) -> li
         planes,
         d,
         cfg,
+        reg_thresh=reg_thresh,
     )
     ranked_branch_plotted_planes = set(ranked_branch_plotted_planes)
     split = _mixed_parity_plane_split(d, cfg)
@@ -368,9 +428,14 @@ def _branch_zeta_sorted_plane_rows(F_hat: np.ndarray, cfg: Config | None = None)
     return even_rows + odd_rows + other_rows
 
 
-def write_plane_zeta_ranking(F_hat: np.ndarray, out_path: str, cfg: Config | None = None):
+def write_plane_zeta_ranking(
+    F_hat: np.ndarray,
+    out_path: str,
+    cfg: Config | None = None,
+    reg_thresh: float = 1.0,
+):
     """Write all native planes ranked by validation ζ."""
-    rows = _plane_zeta_ranking_rows(F_hat, cfg)
+    rows = _plane_zeta_ranking_rows(F_hat, cfg, reg_thresh=reg_thresh)
     with open(out_path, "w", newline="") as f:
         writer = csv.DictWriter(
             f,
@@ -389,9 +454,14 @@ def write_plane_zeta_ranking(F_hat: np.ndarray, out_path: str, cfg: Config | Non
     print(f"Saved → {out_path}")
 
 
-def plot_plane_zeta_bars(F_hat: np.ndarray, out_path: str, cfg: Config | None = None):
+def plot_plane_zeta_bars(
+    F_hat: np.ndarray,
+    out_path: str,
+    cfg: Config | None = None,
+    reg_thresh: float = 1.0,
+):
     """Bar chart of validation ζ for all planes, coloured by mixed-parity branch."""
-    rows = _plane_zeta_ranking_rows(F_hat, cfg)
+    rows = _plane_zeta_ranking_rows(F_hat, cfg, reg_thresh=reg_thresh)
     planes = [row["plane"] for row in rows]
     zeta = [row["validation_zeta"] for row in rows]
     colors = [
@@ -481,8 +551,11 @@ def _plot_planes_time_coded(
     out_path,
     cmap_name="coolwarm",
     cfg: Config | None = None,
+    individual_trials_per_condition: int = 0,
+    trial_sample_seed: int = 0,
+    reg_thresh: float = 1.0,
 ):
-    """Subplot grid: one panel per 2D rotation plane, condition-avg, time-coded."""
+    """Subplot grid: one panel per 2D rotation plane, time-coded."""
     K, d, T = F_hat.shape
     D = d // 2
     planes = F_hat.reshape(K, D, 2, T)
@@ -490,7 +563,14 @@ def _plot_planes_time_coded(
         planes,
         d,
         cfg,
+        reg_thresh=reg_thresh,
     )
+    plot_groups = _sample_trials_per_condition(
+        groups,
+        individual_trials_per_condition,
+        trial_sample_seed,
+    )
+    plot_individual_trials = individual_trials_per_condition > 0
     cmap = plt.get_cmap(cmap_name)
 
     ncols = min(len(plane_indices), 4)
@@ -500,18 +580,26 @@ def _plot_planes_time_coded(
 
     for panel_idx, p in enumerate(plane_indices):
         ax = axes[panel_idx // ncols, panel_idx % ncols]
-        for cond_key in groups:
-            idx_list = groups[cond_key]
-            mean_traj = planes[idx_list, p].mean(axis=0)  # (2, T)
-            x, y = mean_traj[0], mean_traj[1]
-            for t in range(T - 1):
-                ax.plot(x[t:t+2], y[t:t+2], color=cmap(t / (T - 1)),
-                        lw=1.1, alpha=0.85)
+        for cond_key in plot_groups:
+            idx_list = plot_groups[cond_key]
+            if plot_individual_trials:
+                trajectories = (planes[trial_idx, p] for trial_idx in idx_list)
+                linewidth = 0.75
+                alpha = 0.45
+            else:
+                trajectories = (planes[idx_list, p].mean(axis=0),)
+                linewidth = 1.1
+                alpha = 0.85
+            for traj in trajectories:
+                x, y = traj[0], traj[1]
+                for t in range(T - 1):
+                    ax.plot(x[t:t+2], y[t:t+2], color=cmap(t / (T - 1)),
+                            lw=linewidth, alpha=alpha)
 
         ax.axhline(0, color="k", lw=0.4, alpha=0.25)
         ax.axvline(0, color="k", lw=0.4, alpha=0.25)
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_title(_plane_title(p, plane_zeta[p], plane_branch[p]), fontsize=9)
+        ax.set_title(_simple_plane_zeta_title(p, plane_zeta[p]), fontsize=9)
         ax.set_xlabel(f"dim {2*p}", fontsize=8)
         ax.set_ylabel(f"dim {2*p+1}", fontsize=8)
         ax.tick_params(labelsize=7)
@@ -520,8 +608,6 @@ def _plot_planes_time_coded(
     for panel_idx in range(len(plane_indices), nrows * ncols):
         axes[panel_idx // ncols, panel_idx % ncols].set_visible(False)
 
-    fig.suptitle(f"Embedding — condition-avg, time-coded  (ζ = {s_ratio:.2f})",
-                 fontsize=11)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -538,6 +624,7 @@ def _plot_planes_condition_hsv(
     individual_trials_per_condition: int = 0,
     trial_sample_seed: int = 0,
     cfg: Config | None = None,
+    reg_thresh: float = 1.0,
 ):
     """Subplot grid: hand trajectories (if available) + one panel per 2D rotation plane.
 
@@ -552,6 +639,7 @@ def _plot_planes_condition_hsv(
         planes,
         d,
         cfg,
+        reg_thresh=reg_thresh,
     )
     plot_groups = _sample_trials_per_condition(
         groups,
@@ -609,7 +697,7 @@ def _plot_planes_condition_hsv(
         # ax.set_xlim(-6,6)
         # ax.set_ylim(-6,6)
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_title(_plane_title(p, plane_zeta[p], plane_branch[p]), fontsize=12)
+        ax.set_title(_simple_plane_zeta_title(p, plane_zeta[p]), fontsize=12)
         ax.set_xlabel(f"dim {2*p}", fontsize=12)
         ax.set_ylabel(f"dim {2*p+1}", fontsize=12)
         ax.tick_params(labelsize=7)
@@ -618,14 +706,6 @@ def _plot_planes_condition_hsv(
     for i in range(n_panels, nrows * ncols):
         axes[i // ncols, i % ncols].set_visible(False)
 
-    n_conds = len(plot_groups)
-    n_per = float(np.mean([len(v) for v in plot_groups.values()]))
-    # if plot_individual_trials:
-    #     fig.suptitle(
-    #         f"Embeddings coded by trial (ζ = {s_ratio:.2f}, "
-    #         f"{n_conds} conditions, up to {individual_trials_per_condition} trials/cond)",
-    #         fontsize=12,
-    #     )
     # else:
     #     fig.suptitle(f"Embeddings coded by condition (ζ = {s_ratio:.2f},  "
     #                  f"{n_conds} conditions, {n_per:.1f} trials/cond avg)", fontsize=14)
@@ -645,6 +725,7 @@ def _plot_planes_condition_time(
     out_path,
     cfg: Config | None = None,
     condition_labels: dict | None = None,
+    reg_thresh: float = 1.0,
 ):
     """Subplot grid: one panel per 2D rotation plane, condition-avg, dims vs time.
 
@@ -660,6 +741,7 @@ def _plot_planes_condition_time(
         planes,
         d,
         cfg,
+        reg_thresh=reg_thresh,
     )
     t_axis = np.arange(T)
 
@@ -1370,6 +1452,7 @@ def make_diagnostic_plots(
     hsv04_condition_indices: str = "",
     hsv04_condition_count: int = 0,
     hsv04_trial_seed: int = 0,
+    reg_thresh: float = 1.0,
 ):
     """Compute embeddings on val_ds and write all diagnostic PNGs to run_dir/outputs/.
 
@@ -1387,6 +1470,7 @@ def make_diagnostic_plots(
     cond_start    : first condition index to plot (angle-sorted order)
     cond_stop     : one-past-last condition index to plot
     cond_skip     : step size for condition selection
+    reg_thresh    : skip a ranked plane if ‖C_pq‖_F² >= this for any kept plane
     """
 
     out_dir = os.path.join(run_dir, "outputs")
@@ -1427,6 +1511,32 @@ def make_diagnostic_plots(
             f"up to {hsv04_trials_per_condition} per condition, "
             f"{len(hsv04_groups)} conditions"
         )
+
+    selected_trial_indices = [0, 25, 50, 75, 100]
+    selected_trial_groups, selected_trial_missing = _select_available_groups_by_indices(
+        all_cond_groups,
+        selected_trial_indices,
+    )
+    if selected_trial_groups:
+        selected_trial_colors = {
+            k: all_cond_colors[k]
+            for k in selected_trial_groups
+        }
+        selected_trial_present = [
+            idx
+            for idx in selected_trial_indices
+            if idx not in selected_trial_missing
+        ]
+        print(
+            "Selected-trial plots 02b/04b condition indices: "
+            f"{selected_trial_present} from full sorted condition order; "
+            "up to 3 trials per condition"
+        )
+        if selected_trial_missing:
+            print(f"Selected-trial plots skipped missing condition indices: {selected_trial_missing}")
+    else:
+        selected_trial_colors = {}
+        print("Selected-trial plots skipped: no requested condition indices are available")
 
     plot05_indices = [0, 25, 50, 75, 100]
     plot05_groups, plot05_missing = _select_available_groups_by_indices(
@@ -1482,11 +1592,13 @@ def make_diagnostic_plots(
         F_hat,
         out_path=os.path.join(out_dir, "06_plane_validation_zeta_ranking.csv"),
         cfg=cfg,
+        reg_thresh=reg_thresh,
     )
     plot_plane_zeta_bars(
         F_hat,
         out_path=os.path.join(out_dir, "06_plane_validation_zeta_bars.png"),
         cfg=cfg,
+        reg_thresh=reg_thresh,
     )
 
     ch_var = val_np.var(axis=(0, 2))
@@ -1508,7 +1620,19 @@ def make_diagnostic_plots(
         F_hat, cond_groups, s_ratio_val,
         out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
         cfg=cfg,
+        reg_thresh=reg_thresh,
     )
+    if selected_trial_groups:
+        _plot_planes_time_coded(
+            F_hat,
+            selected_trial_groups,
+            s_ratio_val,
+            out_path=os.path.join(out_dir, "02b_embed_planes_time_coded_selected_trials.png"),
+            cfg=cfg,
+            individual_trials_per_condition=3,
+            trial_sample_seed=hsv04_trial_seed,
+            reg_thresh=reg_thresh,
+        )
     _plot_condition_hsv(
         phasors_raw, cond_groups, cond_colors,
         title=f"Raw — condition-averaged (ch {ch_a} vs ch {ch_b})",
@@ -1522,12 +1646,27 @@ def make_diagnostic_plots(
         individual_trials_per_condition=hsv04_trials_per_condition,
         trial_sample_seed=hsv04_trial_seed,
         cfg=cfg,
+        reg_thresh=reg_thresh,
     )
+    if selected_trial_groups:
+        _plot_planes_condition_hsv(
+            F_hat,
+            selected_trial_groups,
+            selected_trial_colors,
+            s_ratio_val,
+            out_path=os.path.join(out_dir, "04b_embed_planes_condition_hsv_selected_trials.png"),
+            hand_windows_val=hand_windows_val,
+            individual_trials_per_condition=3,
+            trial_sample_seed=hsv04_trial_seed,
+            cfg=cfg,
+            reg_thresh=reg_thresh,
+        )
     _plot_planes_condition_time(
         F_hat, plot05_groups, plot05_colors, s_ratio_val,
         out_path=os.path.join(out_dir, "05_embed_planes_condition_time.png"),
         cfg=cfg,
         condition_labels=plot05_labels,
+        reg_thresh=reg_thresh,
     )
     plot_covariance_heatmap(
         F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
@@ -1577,6 +1716,9 @@ def main():
                         help="Comma-separated condition indices for plot 04, using the full sorted condition order.")
     parser.add_argument("--hsv04-condition-count", type=int, default=0,
                         help="Limit plot 04 to the first K selected conditions. Default: no separate cap.")
+    parser.add_argument("--reg-thresh", type=float, default=1.0,
+                        help="Skip a zeta-ranked embedding plane if its cross-plane regularisation score "
+                             "with any already selected plane is at least this value. Default: 1.0.")
     parser.add_argument("--only-loss", action="store_true",
                         help="Only regenerate outputs/loss_curve.png from outputs/log.csv.")
     args = parser.parse_args()
@@ -1672,6 +1814,7 @@ def main():
         hsv04_condition_indices=args.hsv04_condition_indices,
         hsv04_condition_count=args.hsv04_condition_count,
         hsv04_trial_seed=args.seed,
+        reg_thresh=args.reg_thresh,
     )
     plot_loss_curve(run_dir, cfg)
 

@@ -25,6 +25,7 @@ from mcmaze_train_finetune_common import (
     run_main_then_finetune,
     source_mcmaze_config,
     write_ci95_summary,
+    write_paired_ttest_summary,
 )
 
 
@@ -34,6 +35,7 @@ OUT_DIR = REPO_ROOT / "mcmaze" / "odd_plane_fraction_finetune_sweep"
 LOG_DIR = OUT_DIR / "logs"
 SUMMARY_CSV = OUT_DIR / "results.csv"
 CI_CSV = OUT_DIR / "results_ci95.csv"
+TTEST_CSV = OUT_DIR / "paired_ttests.csv"
 
 FIELDNAMES = [
     "odd_plane_fraction",
@@ -115,7 +117,24 @@ def main() -> None:
     parser.add_argument("--aggregate-only", action="store_true")
     parser.add_argument("--results", type=Path, default=SUMMARY_CSV)
     parser.add_argument("--ci-results", type=Path, default=CI_CSV)
+    parser.add_argument("--paired-ttest-results", type=Path, default=TTEST_CSV)
     args = parser.parse_args()
+
+    base_env = source_mcmaze_config()
+    dim = int(args.dimension if args.dimension is not None else base_env.get("D", "128"))
+    if dim % 2 != 0:
+        raise ValueError(f"mixed_parity requires an even embedding dimension, got D={dim}")
+    baseline_fraction = args.percentages[0]
+    baseline_antisymmetric_planes = antisymmetric_planes_from_fraction(dim, baseline_fraction)
+    baseline_n_planes = dim // 2
+    baseline_group = {
+        "odd_plane_fraction": baseline_fraction,
+        "antisymmetric_planes": baseline_antisymmetric_planes,
+        "symmetric_planes": baseline_n_planes - baseline_antisymmetric_planes,
+        "dimension": dim,
+        "lambda_start_frac": base_env.get("LAMBDA_START_FRAC", ""),
+        "lambda_block_cca": base_env.get("LAMBDA_BLOCK_CCA", ""),
+    }
 
     if args.aggregate_only:
         write_ci95_summary(
@@ -132,13 +151,24 @@ def main() -> None:
             metric_fields=TRIAL_SUMMARY_METRIC_FIELDS,
             stratify_fields=(),
         )
+        write_paired_ttest_summary(
+            args.results,
+            args.paired_ttest_results,
+            group_fields=(
+                "odd_plane_fraction",
+                "antisymmetric_planes",
+                "symmetric_planes",
+                "dimension",
+                "lambda_start_frac",
+                "lambda_block_cca",
+            ),
+            baseline_group=baseline_group,
+            metric_fields=TRIAL_SUMMARY_METRIC_FIELDS,
+            stratify_fields=(),
+        )
         print(f"Wrote 95% CI summary to {args.ci_results}")
+        print(f"Wrote paired t-test summary to {args.paired_ttest_results}")
         return
-
-    base_env = source_mcmaze_config()
-    dim = int(args.dimension if args.dimension is not None else base_env.get("D", "128"))
-    if dim % 2 != 0:
-        raise ValueError(f"mixed_parity requires an even embedding dimension, got D={dim}")
 
     completed = (
         load_completed(
@@ -228,7 +258,23 @@ def main() -> None:
             metric_fields=TRIAL_SUMMARY_METRIC_FIELDS,
             stratify_fields=(),
         )
+        write_paired_ttest_summary(
+            args.results,
+            args.paired_ttest_results,
+            group_fields=(
+                "odd_plane_fraction",
+                "antisymmetric_planes",
+                "symmetric_planes",
+                "dimension",
+                "lambda_start_frac",
+                "lambda_block_cca",
+            ),
+            baseline_group=baseline_group,
+            metric_fields=TRIAL_SUMMARY_METRIC_FIELDS,
+            stratify_fields=(),
+        )
         print(f"Wrote 95% CI summary to {args.ci_results}")
+        print(f"Wrote paired t-test summary to {args.paired_ttest_results}")
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ from config import Config
 from model import MLP, infer_multiscale_symmetric_conv_layers
 from paths import RUNS_BASE, SYNTH_RUNS_DIR
 from synth_data import load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
-from visualize_synth import _dataset_source_indices, train_val_split_synth
+from visualize_synth import _dataset_source_indices, _load_dataset_split_counts, train_val_split_synth
 
 
 CONDITION_NAMES = {
@@ -815,6 +815,8 @@ def main():
                         help="Use normal embedder output or remove the final linear layer and decode from hidden features.")
     parser.add_argument("--decoder-type", choices=["mlp", "temporal_conv"], default="temporal_conv",
                         help="Differentiable condition decoder to train and fine-tune jointly with the embedder.")
+    parser.add_argument("--frozen-only", action="store_true",
+                        help="Only train/evaluate the frozen-embedding decoder; skip joint embedder fine-tuning.")
     parser.add_argument("--output-suffix", default=None,
                         help="Optional suffix for the output directory name.")
     parser.add_argument("--embed-batch-size", type=int, default=128)
@@ -825,10 +827,10 @@ def main():
     parser.add_argument("--mlp-hidden-dim", type=int, default=256)
     parser.add_argument("--mlp-depth", type=int, default=2)
     parser.add_argument("--mlp-dropout", type=float, default=0.2)
-    parser.add_argument("--conv-hidden-dim", type=int, default=64)
+    parser.add_argument("--conv-hidden-dim", type=int, default=32)
     parser.add_argument("--conv-depth", type=int, default=2)
     parser.add_argument("--conv-kernel-size", type=int, default=31)
-    parser.add_argument("--conv-dropout", type=float, default=0.4,
+    parser.add_argument("--conv-dropout", type=float, default=0.6,
                         help="Temporal-conv dropout. Defaults to --mlp-dropout when omitted.")
     parser.add_argument("--decoder-lr", type=float, default=1e-3)
     parser.add_argument("--embedder-lr", type=float, default=1e-4)
@@ -899,6 +901,11 @@ def main():
         raise ValueError(f"subjects length ({len(subjects)}) must match windows ({len(windows)})")
 
     split = getattr(cfg, "synth_split", "random") if args.decoder_split == "checkpoint" else args.decoder_split
+    dataset_split_counts = (
+        _load_dataset_split_counts(data_path, len(windows))
+        if str(split).lower() == "dataset"
+        else None
+    )
     train_ds, val_ds, holdout_ds, trainval_subjects, holdout_subjects = train_val_split_synth(
         windows,
         cfg.val_split,
@@ -910,6 +917,7 @@ def main():
         holdout_subject_count=getattr(cfg, "synth_holdout_subject_count", 0),
         holdout_subject_ids=getattr(cfg, "synth_holdout_subject_ids", ""),
         return_holdout=True,
+        dataset_split_counts=dataset_split_counts,
     )
     train_idx = _dataset_source_indices(train_ds)
     val_idx = _dataset_source_indices(val_ds)
@@ -999,20 +1007,42 @@ def main():
     if X_test is not None and F_test_seq is not None:
         print(f"Held-out test features: flat={X_test.shape} temporal={F_test_seq.shape}")
 
-    train_ft_ds = WindowConditionDataset(windows, y_train, train_idx)
-    val_ft_ds = WindowConditionDataset(windows, y_val, val_idx)
-    holdout_ft_ds = (
-        WindowConditionDataset(windows, y_test, holdout_idx)
-        if holdout_idx is not None and y_test is not None
-        else None
-    )
-    train_loader = DataLoader(train_ft_ds, batch_size=args.trial_batch_size, shuffle=True, drop_last=False, num_workers=0)
-    val_loader = DataLoader(val_ft_ds, batch_size=args.trial_batch_size, shuffle=False, drop_last=False, num_workers=0)
-    holdout_loader = (
-        DataLoader(holdout_ft_ds, batch_size=args.trial_batch_size, shuffle=False, drop_last=False, num_workers=0)
-        if holdout_ft_ds is not None
-        else None
-    )
+    train_loader = None
+    val_loader = None
+    holdout_loader = None
+    if not args.frozen_only:
+        train_ft_ds = WindowConditionDataset(windows, y_train, train_idx)
+        val_ft_ds = WindowConditionDataset(windows, y_val, val_idx)
+        holdout_ft_ds = (
+            WindowConditionDataset(windows, y_test, holdout_idx)
+            if holdout_idx is not None and y_test is not None
+            else None
+        )
+        train_loader = DataLoader(
+            train_ft_ds,
+            batch_size=args.trial_batch_size,
+            shuffle=True,
+            drop_last=False,
+            num_workers=0,
+        )
+        val_loader = DataLoader(
+            val_ft_ds,
+            batch_size=args.trial_batch_size,
+            shuffle=False,
+            drop_last=False,
+            num_workers=0,
+        )
+        holdout_loader = (
+            DataLoader(
+                holdout_ft_ds,
+                batch_size=args.trial_batch_size,
+                shuffle=False,
+                drop_last=False,
+                num_workers=0,
+            )
+            if holdout_ft_ds is not None
+            else None
+        )
 
     suffix = f"_{args.output_suffix}" if args.output_suffix else f"_{args.decoder_type}"
     out_name = f"condition_prediction_finetune{suffix}"
@@ -1023,7 +1053,7 @@ def main():
     out_dir = os.path.join(run_dir, "outputs", out_name)
     os.makedirs(out_dir, exist_ok=True)
 
-    run_frozen_baseline = args.embedder_init != "random"
+    run_frozen_baseline = args.frozen_only or args.embedder_init != "random"
     pred_frozen = None
     frozen_decoder = None
     frozen_test_pred = None
@@ -1105,10 +1135,85 @@ def main():
         if frozen_test_pred is not None and y_test is not None:
             frozen_row.update(classification_metrics(y_test, frozen_test_pred, prefix="test_"))
         fine_decoder.load_state_dict(clone_state_dict_cpu(frozen_decoder))
-        print("Initialized fine-tune decoder from the trained frozen decoder.")
+        if not args.frozen_only:
+            print("Initialized fine-tune decoder from the trained frozen decoder.")
     else:
         print("Skipping frozen decoder baseline for random embedder init.")
         print("Training embedder and decoder end-to-end from random initialization.")
+
+    if args.frozen_only:
+        rows = [frozen_row]
+        save_metrics(out_dir, rows)
+        plot_confusions(
+            out_dir,
+            y_val,
+            {f"frozen_{args.decoder_type}": pred_frozen},
+            labels=np.arange(len(classes)),
+            label_names=label_names,
+        )
+        if y_test is not None and frozen_test_pred is not None:
+            plot_confusions(
+                out_dir,
+                y_test,
+                {f"frozen_{args.decoder_type}": frozen_test_pred},
+                labels=np.arange(len(classes)),
+                label_names=label_names,
+                filename="confusion_matrices_holdout.png",
+            )
+
+        torch.save(
+            {
+                "embedder_state_dict": initial_embedder.cpu().state_dict(),
+                "decoder_state_dict": frozen_decoder.cpu().state_dict(),
+                "ran_frozen_baseline": True,
+                "frozen_only": True,
+                "args": vars(args),
+                "resolved_conv_dropout": conv_dropout,
+                "checkpoint_run_dir": run_dir,
+                "checkpoint_epoch": ckpt.get("epoch"),
+                "embedder_init": args.embedder_init,
+                "feature_layer": args.feature_layer,
+                "feature_dim": int(F_train.shape[1]),
+                "flat_feature_dim": int(X_train.shape[1]),
+                "decoder_type": args.decoder_type,
+                "classes": classes,
+                "label_names": label_names,
+                "train_indices": train_idx,
+                "val_indices": val_idx,
+                "holdout_indices": holdout_idx,
+                "trainval_subjects": np.asarray(trainval_subjects) if trainval_subjects is not None else None,
+                "holdout_subjects": np.asarray(holdout_subjects) if holdout_subjects is not None else None,
+                "embedding_mean": emb_mean,
+                "feature_mean": feature_mean,
+                "feature_std": feature_std,
+                "seq_feature_mean": seq_feature_mean,
+                "seq_feature_std": seq_feature_std,
+                "decoder_feature_mean": decoder_feature_mean,
+                "decoder_feature_std": decoder_feature_std,
+                "config": asdict(cfg),
+                "metrics": rows,
+            },
+            os.path.join(out_dir, "frozen_condition_decoder.pt"),
+        )
+        print(f"Saved frozen decoder checkpoint: {os.path.join(out_dir, 'frozen_condition_decoder.pt')}")
+
+        print()
+        print("Validation metrics:")
+        for row in rows:
+            msg = (
+                f"  {row['model']:<24} "
+                f"acc={row['accuracy']:.1%}  "
+                f"balanced_acc={row['balanced_accuracy']:.1%}  "
+                f"macro_f1={row['macro_f1']:.3f}"
+            )
+            if "test_accuracy" in row:
+                msg += (
+                    f"  |  heldout_test_acc={row['test_accuracy']:.1%}  "
+                    f"test_balanced_acc={row['test_balanced_accuracy']:.1%}  "
+                    f"test_macro_f1={row['test_macro_f1']:.3f}"
+                )
+            print(msg)
+        return
 
     finetune_embedder = build_model_from_checkpoint(
         cfg,
@@ -1187,6 +1292,7 @@ def main():
                 frozen_decoder.cpu().state_dict() if frozen_decoder is not None else None
             ),
             "ran_frozen_baseline": run_frozen_baseline,
+            "frozen_only": False,
             "args": vars(args),
             "resolved_conv_dropout": conv_dropout,
             "checkpoint_run_dir": run_dir,

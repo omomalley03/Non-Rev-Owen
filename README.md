@@ -8,7 +8,25 @@ The main training entry points are `main.py` for MC Maze and `main_synth.py` for
 
 MC Maze data should be cached with `cache_data.py`.
 
-Physionet should be converted to `.npy` shape `K,N,T`.
+Physionet should be converted to `.npy` shape `K,N,T`. The current
+`physionetmi_config.sh` uses an all-splits padded cache: the center 800 samples
+are copied exactly from the old LMDB-derived cache, 30 samples of raw EDF
+context are added on each side, and end-of-run trials without full real context
+are removed. The default Physionet training split is `SYNTH_SPLIT=subject_random`
+over the exported subjects.
+
+To regenerate the padded Physionet cache after unpacking the PhysioNet ZIP into
+`physionetmi_raw/files`:
+
+```bash
+micromamba run -n nonrev python prepare_physionetmi_context.py \
+  --out cache/physionetmi_all_context30_noedge.npy \
+  --labels-out cache/physionetmi_all_context30_noedge_labels.npy \
+  --subjects-out cache/physionetmi_all_context30_noedge_subjects.npy \
+  --keys-out cache/physionetmi_all_context30_noedge_keys.txt \
+  --splits train,val,test \
+  --drop-edge-padded
+```
 
 ## Pre-training Embeddings
 

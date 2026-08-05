@@ -24,6 +24,7 @@ from mcmaze_train_finetune_common import (
     run_main_then_finetune,
     source_mcmaze_config,
     write_ci95_summary,
+    write_paired_ttest_summary,
 )
 
 
@@ -32,7 +33,7 @@ from mcmaze_train_finetune_common import (
 # larger than one.
 SWEEP_POINTS = (
     (1.0, 0.5),
-    # (1.0, 1.0),
+    (1.0, 1.0),
     (1.0, 2.0),
     (1.0, 5.0),
     (1.0, 10.0),
@@ -45,6 +46,7 @@ OUT_DIR = REPO_ROOT / "mcmaze" / "cca_sweep_constant_lambda_emb_zeta"
 LOG_DIR = OUT_DIR / "logs"
 SUMMARY_CSV = OUT_DIR / "results.csv"
 CI_CSV = OUT_DIR / "results_ci95.csv"
+TTEST_CSV = OUT_DIR / "paired_ttests.csv"
 
 FIELDNAMES = [
     "lambda_start_frac",
@@ -89,7 +91,16 @@ def main() -> None:
     parser.add_argument("--aggregate-only", action="store_true")
     parser.add_argument("--results", type=Path, default=SUMMARY_CSV)
     parser.add_argument("--ci-results", type=Path, default=CI_CSV)
+    parser.add_argument("--paired-ttest-results", type=Path, default=TTEST_CSV)
     args = parser.parse_args()
+
+    base_env = source_mcmaze_config()
+    baseline_lambda_start_frac, baseline_lambda_block_cca = SWEEP_POINTS[0]
+    baseline_group = {
+        "lambda_start_frac": baseline_lambda_start_frac,
+        "lambda_block_cca": baseline_lambda_block_cca,
+        "dimension": base_env.get("D", ""),
+    }
 
     if args.aggregate_only:
         write_ci95_summary(
@@ -99,10 +110,18 @@ def main() -> None:
             metric_fields=TRIAL_SUMMARY_METRIC_FIELDS,
             stratify_fields=(),
         )
+        write_paired_ttest_summary(
+            args.results,
+            args.paired_ttest_results,
+            group_fields=("lambda_start_frac", "lambda_block_cca", "dimension"),
+            baseline_group=baseline_group,
+            metric_fields=TRIAL_SUMMARY_METRIC_FIELDS,
+            stratify_fields=(),
+        )
         print(f"Wrote 95% CI summary to {args.ci_results}")
+        print(f"Wrote paired t-test summary to {args.paired_ttest_results}")
         return
 
-    base_env = source_mcmaze_config()
     completed = (
         load_completed(args.results, ("lambda_start_frac", "lambda_block_cca", "seed"))
         if args.resume
@@ -168,7 +187,16 @@ def main() -> None:
             metric_fields=TRIAL_SUMMARY_METRIC_FIELDS,
             stratify_fields=(),
         )
+        write_paired_ttest_summary(
+            args.results,
+            args.paired_ttest_results,
+            group_fields=("lambda_start_frac", "lambda_block_cca", "dimension"),
+            baseline_group=baseline_group,
+            metric_fields=TRIAL_SUMMARY_METRIC_FIELDS,
+            stratify_fields=(),
+        )
         print(f"Wrote 95% CI summary to {args.ci_results}")
+        print(f"Wrote paired t-test summary to {args.paired_ttest_results}")
 
 
 if __name__ == "__main__":

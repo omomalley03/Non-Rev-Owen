@@ -49,3 +49,5 @@ machine.file.*
 .ipynb_checkpoints/
 
 physionet.org/
+physionetmi_raw/
+eeg-motor-movementimagery-dataset-*.zip

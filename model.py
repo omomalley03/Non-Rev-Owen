@@ -583,11 +583,15 @@ class MLP(nn.Module):
             )
 
 
-            self.anti_net = _make_odd_pointwise_mlp(
-                conv_out_channels,
-                self.anti_out_dim,
-                hidden_dim,
-                depth,
+            self.anti_net = (
+                _make_odd_pointwise_mlp(
+                    conv_out_channels,
+                    self.anti_out_dim,
+                    hidden_dim,
+                    depth,
+                )
+                if self.anti_out_dim > 0
+                else None
             )
             self.net = None
             self._init_weights()

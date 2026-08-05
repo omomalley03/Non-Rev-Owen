@@ -67,6 +67,6 @@ export VAL_S_CHECKPOINTS="0.1,0.2,0.3,0.4,0.5,0.6"
 export T_0="10" # learn rate scheduler hyperparams 
 export T_MULT="2"
 export SKIP_DIAGNOSTICS="1" # set to 1 to skip diagnostics (e.g., plotting) for faster runs
-export VAL_CHECKPOINT_METRIC="zeta"
+export VAL_CHECKPOINT_METRIC="mean_plane_zeta"
 
 mkdir -p "$RUNS_BASE/$DATASET_NAME/runs" "$RUNS_BASE/$DATASET_NAME/synth_runs" "$CACHE_DIR" "$MPLCONFIGDIR"

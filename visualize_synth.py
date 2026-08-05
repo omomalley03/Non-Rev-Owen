@@ -6,7 +6,12 @@ Each diagnostic plot is saved as its own PNG in the run's `outputs/` dir:
   01_raw_time_coded.png           — raw input, time-coded (top-2 input PCA)
   02_embed_planes_time_coded.png  — one subplot per 2D rotation plane, time-coded
   04_embed_planes_participant_hsv.png — participant-avg embedding, HSV by participant ID
+  05_embed_planes_condition_time.png — per plane, dims vs time, class means
+  06_plane_validation_zeta_ranking.csv — all planes ranked by validation ζ
+  06_plane_validation_zeta_bars.png — bar chart of ranked plane validation ζ
   07_covariance_heatmap.png       — embedding correlation matrix
+  07_zeta_sorted_correlation_heatmap.png — correlation sorted by branch/plane ζ
+  07_block_cca_plane_heatmap.png  — cross-plane regularisation metric
   08_between_within_variance.png  — trial-discriminability over time
   09_embedding_norm_distribution.png — embedding norm distribution
   14/15_*_participant_conditions.png — selected participants, colour-coded by class label
@@ -24,10 +29,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 
 import numpy as np
 import torch
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib_nonrev")
+os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -48,6 +58,13 @@ from loss import (
 )
 from synth_data import load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
 from visualize_loss import plot_loss_curve
+from visualize import (
+    plot_block_cca_plane_heatmap as plot_regularisation_block_cca_plane_heatmap,
+    plot_embedding_norm_distribution,
+    plot_plane_zeta_bars,
+    plot_zeta_sorted_correlation_heatmap,
+    write_plane_zeta_ranking,
+)
 
 
 def _fit_pca2(X):
@@ -176,6 +193,35 @@ def _parse_subject_ids(spec: str) -> np.ndarray:
     return np.array([int(item.strip()) for item in spec.split(",") if item.strip()], dtype=np.int64)
 
 
+def _load_dataset_split_counts(data_path: str, n_windows: int) -> dict[str, int]:
+    sidecar_path = data_path + ".json"
+    if not os.path.exists(sidecar_path):
+        raise ValueError(
+            "SYNTH_SPLIT=dataset requires a sidecar JSON next to SYNTH_DATA_PATH "
+            f"with split_counts; missing {sidecar_path}"
+        )
+    with open(sidecar_path) as f:
+        sidecar = json.load(f)
+    split_counts = sidecar.get("split_counts")
+    if not isinstance(split_counts, dict) or "train" not in split_counts or "val" not in split_counts:
+        raise ValueError(f"{sidecar_path} must contain split_counts with train and val entries")
+
+    n_train = int(split_counts["train"])
+    n_val = int(split_counts["val"])
+    if n_train < 1 or n_val < 1:
+        raise ValueError(f"dataset split requires positive train/val counts, got {split_counts}")
+    if n_train + n_val != n_windows:
+        if n_windows < n_train + n_val:
+            n_train = min(n_train, n_windows)
+            n_val = max(0, n_windows - n_train)
+        if n_train + n_val != n_windows or n_val < 1:
+            raise ValueError(
+                f"dataset split counts train={split_counts['train']} val={split_counts['val']} "
+                f"do not match loaded windows={n_windows}; remove SYNTH_MAX_TRIALS or regenerate sidecar"
+            )
+    return {"train": n_train, "val": n_val}
+
+
 def _select_subject_sets(
     subjects: np.ndarray,
     rng: np.random.Generator,
@@ -238,6 +284,7 @@ def train_val_split_synth(
     holdout_subject_count: int = 0,
     holdout_subject_ids: str = "",
     return_holdout: bool = False,
+    dataset_split_counts: dict[str, int] | None = None,
 ):
     """Split synthetic windows using the same modes as main_synth.py."""
     tensor = torch.from_numpy(windows)
@@ -253,6 +300,21 @@ def train_val_split_synth(
         if return_holdout:
             return full_ds, full_ds, None, None, np.array([], dtype=np.int64)
         return full_ds, full_ds
+    if split == "dataset":
+        if dataset_split_counts is None:
+            raise ValueError("SYNTH_SPLIT=dataset requires dataset_split_counts")
+        n_train = int(dataset_split_counts["train"])
+        n_val = int(dataset_split_counts["val"])
+        if n_train + n_val != len(tensor):
+            raise ValueError(
+                f"dataset split counts train={n_train} val={n_val} "
+                f"do not match windows length {len(tensor)}"
+            )
+        train_ds = Subset(full_ds, list(range(n_train)))
+        val_ds = Subset(full_ds, list(range(n_train, n_train + n_val)))
+        if return_holdout:
+            return train_ds, val_ds, None, None, np.array([], dtype=np.int64)
+        return train_ds, val_ds
     if split in {"subject_random", "participant_random"}:
         if subjects is None:
             raise ValueError("SYNTH_SPLIT=subject_random requires SYNTH_SUBJECTS_PATH")
@@ -287,7 +349,7 @@ def train_val_split_synth(
             return train_ds, val_ds, holdout_ds, trainval_subjects, holdout_subjects
         return train_ds, val_ds
     if split != "random":
-        raise ValueError("SYNTH_SPLIT must be one of: random, train_eq_val, subject_random")
+        raise ValueError("SYNTH_SPLIT must be one of: random, train_eq_val, subject_random, dataset")
 
     n_val = max(1, int(len(tensor) * val_frac))
     n_train = len(tensor) - n_val
@@ -672,6 +734,85 @@ def plot_covariance_heatmap(F_hat, out_path):
     ax.tick_params(labelsize=8)
 
     fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
+def _plot_planes_condition_time(
+    F_hat,
+    labels,
+    s_ratio,
+    out_path,
+):
+    """Subplot grid: one panel per 2D rotation plane, class means vs time."""
+    K, d, T = F_hat.shape
+    D = d // 2
+    planes = F_hat.reshape(K, D, 2, T)
+    t_axis = np.arange(T)
+
+    if labels is None:
+        present_labels = [None]
+    else:
+        labels = np.asarray(labels)
+        if len(labels) != K:
+            raise ValueError(f"labels length ({len(labels)}) must match F_hat trials ({K})")
+        present_labels = [label for label in sorted(np.unique(labels).tolist())]
+
+    ncols = min(D, 4)
+    nrows = (D + ncols - 1) // ncols
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(4.5 * ncols, 3.2 * nrows),
+        squeeze=False,
+    )
+
+    for p in range(D):
+        ax = axes[p // ncols, p % ncols]
+        for label in present_labels:
+            if label is None:
+                idx = np.arange(K)
+                color = "steelblue"
+            else:
+                idx = np.flatnonzero(labels == label)
+                color = _condition_color(label)
+            mean_traj = planes[idx, p].mean(axis=0)
+            ax.plot(t_axis, mean_traj[0], lw=1.2, color=color, alpha=0.9, ls="-")
+            ax.plot(t_axis, mean_traj[1], lw=1.2, color=color, alpha=0.9, ls="--")
+
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})", fontsize=10)
+        ax.set_xlabel("time (bins)", fontsize=8)
+        ax.set_ylabel("embedding value", fontsize=8)
+        ax.tick_params(labelsize=7)
+
+    for p in range(D, nrows * ncols):
+        axes[p // ncols, p % ncols].set_visible(False)
+
+    style_handles = [
+        plt.Line2D([0], [0], color="0.3", lw=1.4, ls="-", label="dim 2p"),
+        plt.Line2D([0], [0], color="0.3", lw=1.4, ls="--", label="dim 2p+1"),
+    ]
+    legend_handles = style_handles
+    if labels is not None:
+        legend_handles = style_handles + _condition_legend_handles(present_labels)
+    else:
+        legend_handles = style_handles + [
+            plt.Line2D([0], [0], color="steelblue", lw=1.8, label="validation mean")
+        ]
+    fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+        ncol=min(6, len(legend_handles)),
+        fontsize=8,
+        frameon=False,
+    )
+
+    zeta_text = f"  (ζ = {s_ratio:.2f})" if np.isfinite(s_ratio) else ""
+    fig.suptitle(f"Embedding coordinates over time{zeta_text}", fontsize=11)
+    fig.tight_layout(rect=(0, 0.08, 1, 0.96))
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {out_path}")
@@ -1213,15 +1354,41 @@ def make_diagnostic_plots_synth(
             s_ratio_val,
             out_path=os.path.join(out_dir, "18_val_condition_means_all_trials.png"),
         )
+    _plot_planes_condition_time(
+        F_hat_plot,
+        val_labels_plot,
+        s_ratio_val,
+        out_path=os.path.join(out_dir, "05_embed_planes_condition_time.png"),
+    )
+    write_plane_zeta_ranking(
+        F_hat,
+        out_path=os.path.join(out_dir, "06_plane_validation_zeta_ranking.csv"),
+        cfg=cfg,
+    )
+    plot_plane_zeta_bars(
+        F_hat,
+        out_path=os.path.join(out_dir, "06_plane_validation_zeta_bars.png"),
+        cfg=cfg,
+    )
     plot_covariance_heatmap(
         F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
     )
-    # plot_between_within_variance(
-    #     F_hat, out_path=os.path.join(out_dir, "08_between_within_variance.png"),
-    # )
-    # plot_norm_distribution(
-    #     F_hat, out_path=os.path.join(out_dir, "09_embedding_norm_distribution.png"),
-    # )
+    plot_zeta_sorted_correlation_heatmap(
+        F_hat,
+        out_path=os.path.join(out_dir, "07_zeta_sorted_correlation_heatmap.png"),
+        cfg=cfg,
+    )
+    plot_regularisation_block_cca_plane_heatmap(
+        F_hat,
+        out_path=os.path.join(out_dir, "07_block_cca_plane_heatmap.png"),
+        cfg=cfg,
+    )
+    plot_between_within_variance(
+        F_hat, out_path=os.path.join(out_dir, "08_between_within_variance.png"),
+    )
+    plot_embedding_norm_distribution(
+        F_hat, out_path=os.path.join(out_dir, "09_embedding_norm_distribution.png"),
+    )
 
     # plot_conv_kernels(model=model, out_path=os.path.join(out_dir, "11_conv_kernels.png"))
     if train_ds is not None and subjects is not None:
@@ -1375,6 +1542,11 @@ def main():
     N_in = windows.shape[1]
     print(f"  Windows shape: {windows.shape}  (K, N, T)")
 
+    dataset_split_counts = (
+        _load_dataset_split_counts(data_path, len(windows))
+        if str(getattr(cfg, "synth_split", "random")).lower() == "dataset"
+        else None
+    )
     train_ds, val_ds, test_ds, trainval_subjects, holdout_subjects = train_val_split_synth(
         windows,
         cfg.val_split,
@@ -1386,6 +1558,7 @@ def main():
         holdout_subject_count=getattr(cfg, "synth_holdout_subject_count", 0),
         holdout_subject_ids=getattr(cfg, "synth_holdout_subject_ids", ""),
         return_holdout=True,
+        dataset_split_counts=dataset_split_counts,
     )
 
     model = MLP(

@@ -1,3 +1,4 @@
+import json
 import os
 import random
 from datetime import datetime
@@ -29,8 +30,11 @@ def print_summary(history: dict, cfg: Config):
     print("=" * 50)
     print("Training complete")
     print(f"  Final train loss    : {history['train_loss'][-1]:.4f}")
-    print(f"  Best val ζ          : {history['best_val_zeta']:.4f}")
-    print(f"  Val loss at best ζ  : {history['best_checkpoint_val_loss']:.4f}")
+    checkpoint_metric = history.get("best_checkpoint_metric", "zeta")
+    checkpoint_score = history.get("best_checkpoint_score", history.get("best_val_zeta", float("nan")))
+    print(f"  Best checkpoint metric ({checkpoint_metric}) : {checkpoint_score:.4f}")
+    print(f"  Val ζ at checkpoint : {history['best_val_zeta']:.4f}")
+    print(f"  Val loss at checkpoint : {history['best_checkpoint_val_loss']:.4f}")
     print(f"  Wall-clock time     : {history['elapsed_s']:.1f} s  ({history['elapsed_s']/60:.1f} min)")
     print(f"  Checkpoint          : {cfg.ckpt_dir}/best.pt")
     print(f"  Loss curve          : {cfg.out_dir}/loss_curve.png")
@@ -42,6 +46,35 @@ def _parse_subject_ids(spec: str) -> np.ndarray:
     if not spec or spec.lower() in {"all", "none"}:
         return np.array([], dtype=np.int64)
     return np.array([int(item.strip()) for item in spec.split(",") if item.strip()], dtype=np.int64)
+
+
+def _load_dataset_split_counts(data_path: str, n_windows: int) -> dict[str, int]:
+    sidecar_path = data_path + ".json"
+    if not os.path.exists(sidecar_path):
+        raise ValueError(
+            "SYNTH_SPLIT=dataset requires a sidecar JSON next to SYNTH_DATA_PATH "
+            f"with split_counts; missing {sidecar_path}"
+        )
+    with open(sidecar_path) as f:
+        sidecar = json.load(f)
+    split_counts = sidecar.get("split_counts")
+    if not isinstance(split_counts, dict) or "train" not in split_counts or "val" not in split_counts:
+        raise ValueError(f"{sidecar_path} must contain split_counts with train and val entries")
+
+    n_train = int(split_counts["train"])
+    n_val = int(split_counts["val"])
+    if n_train < 1 or n_val < 1:
+        raise ValueError(f"dataset split requires positive train/val counts, got {split_counts}")
+    if n_train + n_val != n_windows:
+        if n_windows < n_train + n_val:
+            n_train = min(n_train, n_windows)
+            n_val = max(0, n_windows - n_train)
+        if n_train + n_val != n_windows or n_val < 1:
+            raise ValueError(
+                f"dataset split counts train={split_counts['train']} val={split_counts['val']} "
+                f"do not match loaded windows={n_windows}; remove SYNTH_MAX_TRIALS or regenerate sidecar"
+            )
+    return {"train": n_train, "val": n_val}
 
 
 def _select_subject_sets(
@@ -105,6 +138,7 @@ def train_val_split_synth(
     subject_ids: str = "",
     holdout_subject_count: int = 0,
     holdout_subject_ids: str = "",
+    dataset_split_counts: Optional[dict[str, int]] = None,
 ):
     """Split synthetic windows for training/validation."""
     tensor = torch.from_numpy(windows)
@@ -118,6 +152,24 @@ def train_val_split_synth(
 
     if split in {"train_eq_val", "train_equals_val", "all", "none"}:
         return full_ds, full_ds, None, len(tensor), np.array([], dtype=np.int64), 0
+    if split == "dataset":
+        if dataset_split_counts is None:
+            raise ValueError("SYNTH_SPLIT=dataset requires dataset_split_counts")
+        n_train = int(dataset_split_counts["train"])
+        n_val = int(dataset_split_counts["val"])
+        if n_train + n_val != len(tensor):
+            raise ValueError(
+                f"dataset split counts train={n_train} val={n_val} "
+                f"do not match windows length {len(tensor)}"
+            )
+        return (
+            Subset(full_ds, list(range(n_train))),
+            Subset(full_ds, list(range(n_train, n_train + n_val))),
+            None,
+            len(tensor),
+            np.array([], dtype=np.int64),
+            0,
+        )
     if split in {"subject_random", "participant_random"}:
         if subjects is None:
             raise ValueError("SYNTH_SPLIT=subject_random requires SYNTH_SUBJECTS_PATH")
@@ -154,7 +206,7 @@ def train_val_split_synth(
             len(holdout_idx),
         )
     if split != "random":
-        raise ValueError("SYNTH_SPLIT must be one of: random, train_eq_val, subject_random")
+        raise ValueError("SYNTH_SPLIT must be one of: random, train_eq_val, subject_random, dataset")
 
     n_val = max(1, int(len(tensor) * val_frac))
     n_train = len(tensor) - n_val
@@ -202,6 +254,11 @@ def main():
         print(f"  Labels: {dict(zip(unique_labels.tolist(), label_counts.tolist()))}")
 
     N = windows.shape[1]
+    dataset_split_counts = (
+        _load_dataset_split_counts(cfg.synth_data_path, len(windows))
+        if cfg.synth_split.lower() == "dataset"
+        else None
+    )
     train_ds, val_ds, trainval_subjects, eligible_trials, holdout_subjects, holdout_trials = train_val_split_synth(
         windows,
         cfg.val_split,
@@ -212,6 +269,7 @@ def main():
         subject_ids=getattr(cfg, "synth_subject_ids", ""),
         holdout_subject_count=getattr(cfg, "synth_holdout_subject_count", 0),
         holdout_subject_ids=getattr(cfg, "synth_holdout_subject_ids", ""),
+        dataset_split_counts=dataset_split_counts,
     )
     if trainval_subjects is not None:
         print(

@@ -60,6 +60,7 @@ class Config:
         os.path.join(RUNS_BASE, "rotations_mixed_freqs.npy"),
     )
     synth_data_layout: str = os.environ.get("SYNTH_DATA_LAYOUT", "auto")  # auto, knt, ktn
+    synth_precomputed_context_bins: int = _env_int("SYNTH_PRECOMPUTED_CONTEXT_BINS", 0)
     synth_normalize: str = os.environ.get("SYNTH_NORMALIZE", "none")      # none, zscore
     synth_preprocess: str = _env_str("SYNTH_PREPROCESS", "none")          # none, car, analytic_bandpass
     eeg_fs: float = _env_float("EEG_FS", 250.0)
@@ -162,7 +163,8 @@ class Config:
             "data":     ["dataset_name", "nwb_path", "bin_ms", "sigma_ms", "softnorm_method",
                          "align_field", "pre_ms", "post_ms", "window_size",
                          "window_strategy", "val_split", "seed",
-                         "synth_data_path", "synth_data_layout", "synth_normalize",
+                         "synth_data_path", "synth_data_layout", "synth_precomputed_context_bins",
+                         "synth_normalize",
                          "synth_preprocess", "eeg_fs", "eeg_bands",
                          "synth_noise_std", "synth_max_trials", "synth_split",
                          "synth_labels_path", "synth_subjects_path", "synth_subject_count", "synth_subject_ids",

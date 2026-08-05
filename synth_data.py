@@ -56,6 +56,41 @@ def _add_temporal_reflect_context(windows: np.ndarray, context_bins: int) -> np.
     return np.pad(windows, ((0, 0), (0, 0), (context_bins, context_bins)), mode="reflect")
 
 
+def _select_temporal_context(
+    windows: np.ndarray,
+    requested_context_bins: int,
+    precomputed_context_bins: int,
+) -> np.ndarray:
+    """Return windows with the requested context, preserving precomputed context."""
+    requested_context_bins = int(requested_context_bins)
+    precomputed_context_bins = int(precomputed_context_bins)
+    if requested_context_bins < 0:
+        raise ValueError("requested context_bins must be non-negative")
+    if precomputed_context_bins < 0:
+        raise ValueError("synth_precomputed_context_bins must be non-negative")
+
+    if precomputed_context_bins <= 0:
+        return _add_temporal_reflect_context(windows, requested_context_bins)
+
+    if windows.shape[-1] <= 2 * precomputed_context_bins:
+        raise ValueError(
+            f"window length {windows.shape[-1]} is too short for "
+            f"SYNTH_PRECOMPUTED_CONTEXT_BINS={precomputed_context_bins}"
+        )
+    if requested_context_bins > precomputed_context_bins:
+        raise ValueError(
+            f"requested temporal context ({requested_context_bins}) exceeds "
+            f"precomputed context ({precomputed_context_bins}); regenerate the data "
+            "with more context or lower TEMPORAL_CONTEXT_BINS"
+        )
+    if requested_context_bins == precomputed_context_bins:
+        return windows
+
+    trim = precomputed_context_bins - requested_context_bins
+    stop = windows.shape[-1] - trim
+    return windows[..., trim:stop]
+
+
 def _parse_steps(spec: str) -> list[str]:
     if spec is None:
         return []
@@ -149,7 +184,11 @@ def load_synthetic_windows(
 
     if context_bins is None:
         context_bins = 0
-    windows = _add_temporal_reflect_context(windows, context_bins)
+    windows = _select_temporal_context(
+        windows,
+        requested_context_bins=context_bins,
+        precomputed_context_bins=getattr(cfg, "synth_precomputed_context_bins", 0),
+    )
 
     return np.ascontiguousarray(windows, dtype=np.float32)
 

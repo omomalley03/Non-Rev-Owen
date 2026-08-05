@@ -42,7 +42,7 @@ from data import gaussian_smooth, load_mcmaze_cached, make_windows, soft_normali
 from model import MLP, infer_multiscale_symmetric_conv_layers
 from paths import RUNS_BASE, RUNS_DIR
 from synth_data import load_synthetic_subjects, load_synthetic_windows
-from visualize_synth import train_val_split_synth
+from visualize_synth import _load_dataset_split_counts, train_val_split_synth
 
 
 ROOT = REPO_ROOT
@@ -70,7 +70,10 @@ def _completed_runs() -> list[Path]:
         [
             Path(RUNS_DIR),
             Path(RUNS_BASE) / "mcmaze" / "runs",
+            Path(RUNS_BASE) / "physionetmi" / "synth_runs",
             ROOT / "mcmaze" / "runs",
+            ROOT / "physionetmi" / "synth_runs",
+            ROOT / "synth_runs",
             ROOT / "runs",
         ]
     )
@@ -87,7 +90,7 @@ def resolve_run_dir(arg_run: str | None) -> Path:
     completed = _completed_runs()
     if arg_run is None:
         if not completed:
-            raise FileNotFoundError("No completed MC Maze runs with checkpoints/best.pt were found.")
+            raise FileNotFoundError("No completed MC Maze/PhysioNet runs with checkpoints/best.pt were found.")
         print("Using most recent run. Available runs:")
         for i, run_dir in enumerate(completed[:10], 1):
             print(f"  [{i}] {run_dir.relative_to(ROOT) if run_dir.is_relative_to(ROOT) else run_dir}")
@@ -218,25 +221,39 @@ def load_physionet_windows(cfg):
         ),
     )
     subjects = load_synthetic_subjects(cfg)
+    synth_split = _cfg_get(cfg, "synth_split", "random")
+    dataset_split_counts = (
+        _load_dataset_split_counts(_cfg_get(cfg, "synth_data_path"), len(windows))
+        if str(synth_split).lower() == "dataset"
+        else None
+    )
     train_ds, val_ds, _holdout_ds, _trainval_subjects, _holdout_subjects = train_val_split_synth(
         windows,
         float(_cfg_get(cfg, "val_split")),
         int(_cfg_get(cfg, "seed")),
-        _cfg_get(cfg, "synth_split", "random"),
+        synth_split,
         subjects=subjects,
         subject_count=int(_cfg_get(cfg, "synth_subject_count", 0)),
         subject_ids=_cfg_get(cfg, "synth_subject_ids", ""),
         holdout_subject_count=int(_cfg_get(cfg, "synth_holdout_subject_count", 0)),
         holdout_subject_ids=_cfg_get(cfg, "synth_holdout_subject_ids", ""),
         return_holdout=True,
+        dataset_split_counts=dataset_split_counts,
     )
     return windows, train_ds, val_ds
+
+
+def _synthetic_sample_rate_hz(cfg) -> float:
+    dataset_name = str(_cfg_get(cfg, "dataset_name", "")).lower()
+    if dataset_name == "physionetmi":
+        return 160.0
+    return float(_cfg_get(cfg, "eeg_fs", 250.0))
 
 
 def load_windows_for_run(cfg):
     if _is_physionet_or_synth_run(cfg):
         windows, train_ds, val_ds = load_physionet_windows(cfg)
-        sample_rate_hz = float(_cfg_get(cfg, "eeg_fs", 250.0))
+        sample_rate_hz = _synthetic_sample_rate_hz(cfg)
         return "PhysioNet/synth", int(windows.shape[1]), train_ds, val_ds, sample_rate_hz
 
     spikes_raw, train_ds, val_ds = load_mcmaze_windows(cfg)

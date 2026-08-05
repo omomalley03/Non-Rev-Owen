@@ -226,6 +226,191 @@ def ci95_half_width(values: list[float]) -> float:
     return t_critical * standard_error
 
 
+def _two_sided_t_p_value(t_stat: float, df: int) -> float:
+    if df < 1 or not math.isfinite(t_stat):
+        return 0.0 if math.isinf(t_stat) else float("nan")
+    try:
+        from scipy import stats
+
+        return float(2.0 * stats.t.sf(abs(t_stat), df))
+    except Exception:
+        # Fallback for environments without SciPy. Sweeps run in an env with SciPy,
+        # but this keeps aggregation usable for quick smoke tests.
+        return math.erfc(abs(t_stat) / math.sqrt(2.0))
+
+
+def paired_t_test(deltas: list[float]) -> dict[str, float | int]:
+    n = len(deltas)
+    if n == 0:
+        return {
+            "n": 0,
+            "mean_delta": float("nan"),
+            "delta_ci95_half_width": float("nan"),
+            "t_stat": float("nan"),
+            "p_value": float("nan"),
+        }
+    mean_delta = sum(deltas) / n
+    half_width = ci95_half_width(deltas)
+    if n < 2:
+        t_stat = float("nan")
+        p_value = float("nan")
+    else:
+        variance = sum((value - mean_delta) ** 2 for value in deltas) / (n - 1)
+        standard_error = math.sqrt(variance) / math.sqrt(n)
+        if standard_error == 0.0:
+            t_stat = 0.0 if mean_delta == 0.0 else math.copysign(float("inf"), mean_delta)
+        else:
+            t_stat = mean_delta / standard_error
+        p_value = _two_sided_t_p_value(t_stat, n - 1)
+    return {
+        "n": n,
+        "mean_delta": mean_delta,
+        "delta_ci95_half_width": half_width,
+        "t_stat": t_stat,
+        "p_value": p_value,
+    }
+
+
+def _fmt_stat(value: float | int) -> str:
+    if isinstance(value, int):
+        return str(value)
+    if math.isnan(value):
+        return ""
+    if math.isinf(value):
+        return "inf" if value > 0 else "-inf"
+    return f"{value:.10g}"
+
+
+def _seed_sort_key(value: str) -> tuple[int, int | str]:
+    try:
+        return (0, int(value))
+    except ValueError:
+        return (1, value)
+
+
+def write_paired_ttest_summary(
+    source_csv: Path,
+    ttest_csv: Path,
+    group_fields: tuple[str, ...],
+    baseline_group: dict[str, object],
+    metric_fields: tuple[str, ...] = METRIC_FIELDS,
+    seed_field: str = "seed",
+    stratify_fields: tuple[str, ...] = ("model", "embedder_init", "feature_layer"),
+) -> None:
+    """Write paired t-tests of each config's seed deltas against the baseline."""
+    ttest_csv.parent.mkdir(parents=True, exist_ok=True)
+    baseline_key_by_field = {
+        field: str(baseline_group[field]) for field in group_fields
+    }
+    base_fieldnames = [f"baseline_{field}" for field in group_fields]
+    empty_fieldnames = [
+        *base_fieldnames,
+        *group_fields,
+        *stratify_fields,
+        "metric",
+        "n",
+        "paired_seeds",
+        "baseline_mean",
+        "experimental_mean",
+        "mean_delta",
+        "delta_ci95_low",
+        "delta_ci95_high",
+        "delta_ci95_half_width",
+        "t_stat",
+        "p_value",
+    ]
+    if not source_csv.is_file():
+        with ttest_csv.open("w", newline="") as f:
+            csv.DictWriter(f, fieldnames=empty_fieldnames).writeheader()
+        return
+
+    grouped: dict[tuple[str, ...], dict[str, dict[str, float]]] = {}
+    group_meta: dict[tuple[str, ...], dict[str, str]] = {}
+    with source_csv.open(newline="") as f:
+        reader = csv.DictReader(f)
+        present_stratify_fields = tuple(
+            field for field in stratify_fields if field in (reader.fieldnames or [])
+        )
+        key_fields = (*group_fields, *present_stratify_fields)
+        fieldnames = [
+            *base_fieldnames,
+            *group_fields,
+            *present_stratify_fields,
+            "metric",
+            "n",
+            "paired_seeds",
+            "baseline_mean",
+            "experimental_mean",
+            "mean_delta",
+            "delta_ci95_low",
+            "delta_ci95_high",
+            "delta_ci95_half_width",
+            "t_stat",
+            "p_value",
+        ]
+        for row in reader:
+            seed = row.get(seed_field, "")
+            if seed == "":
+                continue
+            key = tuple(row.get(field, "") for field in key_fields)
+            grouped.setdefault(key, {metric: {} for metric in metric_fields})
+            group_meta.setdefault(key, {field: row.get(field, "") for field in key_fields})
+            for metric in metric_fields:
+                value = parse_float(row.get(metric))
+                if value is not None and math.isfinite(value):
+                    grouped[key][metric][seed] = value
+
+    baseline_prefix = tuple(baseline_key_by_field[field] for field in group_fields)
+    baseline_meta = {f"baseline_{field}": baseline_key_by_field[field] for field in group_fields}
+    rows = []
+    for key in sorted(grouped):
+        if key[: len(group_fields)] == baseline_prefix:
+            continue
+        meta = group_meta[key]
+        baseline_key = (*baseline_prefix, *key[len(group_fields):])
+        baseline_metrics = grouped.get(baseline_key)
+        if baseline_metrics is None:
+            continue
+        for metric in metric_fields:
+            baseline_by_seed = baseline_metrics.get(metric, {})
+            experimental_by_seed = grouped[key].get(metric, {})
+            paired_seeds = sorted(
+                set(baseline_by_seed) & set(experimental_by_seed),
+                key=_seed_sort_key,
+            )
+            deltas = [
+                experimental_by_seed[seed] - baseline_by_seed[seed]
+                for seed in paired_seeds
+            ]
+            if not deltas:
+                continue
+            stats = paired_t_test(deltas)
+            mean_delta = stats["mean_delta"]
+            half_width = stats["delta_ci95_half_width"]
+            rows.append(
+                {
+                    **baseline_meta,
+                    **meta,
+                    "metric": metric,
+                    "n": stats["n"],
+                    "paired_seeds": ";".join(paired_seeds),
+                    "baseline_mean": _fmt_stat(sum(baseline_by_seed[seed] for seed in paired_seeds) / len(paired_seeds)),
+                    "experimental_mean": _fmt_stat(sum(experimental_by_seed[seed] for seed in paired_seeds) / len(paired_seeds)),
+                    "mean_delta": _fmt_stat(mean_delta),
+                    "delta_ci95_low": "" if math.isnan(half_width) else _fmt_stat(mean_delta - half_width),
+                    "delta_ci95_high": "" if math.isnan(half_width) else _fmt_stat(mean_delta + half_width),
+                    "delta_ci95_half_width": _fmt_stat(half_width),
+                    "t_stat": _fmt_stat(stats["t_stat"]),
+                    "p_value": _fmt_stat(stats["p_value"]),
+                }
+            )
+
+    with ttest_csv.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def write_ci95_summary(
     source_csv: Path,
     ci_csv: Path,
