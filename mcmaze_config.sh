@@ -28,7 +28,7 @@ export POST_MS="140" # THIS IS OBSOLETE
 export WINDOW_SIZE="90"
 export WINDOW_STRATEGY="trial_aligned"
 export VAL_SPLIT="0.25"
-export SPLIT="random"
+export SPLIT="dataset"
 export SEED="0"
 
 # Model settings.
@@ -59,8 +59,8 @@ export WEIGHT_DECAY="1e-4"
 export LAMBDA_XP="0.0" # PENALISE NONREV IN CROSS-PLANES (e.g., dim 0 and dim 3 are cross-plane)
 export LAMBDA_BT="0.0" 
 export LAMBDA_PLANE_BT="0.0" # BARLOW-TWINS MASKING OUT DIMS THAT FORM PLANES
-export LAMBDA_BLOCK_CCA="10.0" # THIS IS THE CROSS-PLANE REGULARISATION
-export LAMBDA_START_FRAC="0.1" # Use this to linearly step regularisation scaling
+export LAMBDA_BLOCK_CCA="1.0" # THIS IS THE CROSS-PLANE REGULARISATION
+export LAMBDA_START_FRAC="1.0" # Use this to linearly step regularisation scaling
 export S_OBJECTIVE="mean" # have also tried sum, softmin across planes... USE MEAN
 export S_SOFTMIN_TAU="0.05" # obsolete if using mean ^
 export VAL_S_CHECKPOINTS="0.1,0.2,0.3,0.4,0.5,0.6" 

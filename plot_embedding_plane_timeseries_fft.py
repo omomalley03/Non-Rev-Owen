@@ -1,8 +1,10 @@
 """Plot embedding plane coordinates over time and their FFT spectra.
 
 By default this plots condition-averaged x-coordinate trajectories for the same
-ranked embedding planes used by visualize.py plots 02 and 04, plus the
-one-sided FFT magnitude of those same time series.
+ranked embedding planes used by visualize.py plots 02 and 04. The FFT panels
+plot the mean one-sided FFT magnitude across the individual trials in each
+condition, so phase-shifted trial-level frequency content is not canceled by
+averaging trajectories before the FFT.
 
 Examples
 --------
@@ -41,18 +43,19 @@ from plot_mcmaze_plane_spectral_redundancy import (
 )
 from visualize import (
     _get_condition_groups,
+    _mixed_parity_plane_split,
     _plane_indices_for_ranked_branch_plot,
-    _plane_title,
     _plane_zeta_values,
 )
 
 
-def _kernel_fft_magnitudes(weight: torch.Tensor, sample_rate_hz: float, n_fft: int) -> tuple[np.ndarray, np.ndarray]:
+def _kernel_fft_magnitudes(weight: torch.Tensor, sample_rate_hz: float) -> tuple[np.ndarray, np.ndarray]:
     kernel = weight.detach().cpu().float().numpy()
     if kernel.ndim == 1:
         kernel = kernel.reshape(1, 1, -1)
+    n_fft = kernel.shape[-1]
     freqs = np.fft.rfftfreq(n_fft, d=1.0 / sample_rate_hz)
-    mag = np.abs(np.fft.rfft(kernel, n=n_fft, axis=-1, norm="ortho")) # zero pad to the right
+    mag = np.abs(np.fft.rfft(kernel, axis=-1, norm="ortho"))
     mag = mag.reshape(-1, mag.shape[-1])
     return freqs, mag
 
@@ -60,7 +63,6 @@ def _kernel_fft_magnitudes(weight: torch.Tensor, sample_rate_hz: float, n_fft: i
 def temporal_filter_fft_records(
     model,
     sample_rate_hz: float,
-    n_fft: int,
     individual_count: int = 0,
 ):
     temporal_conv = getattr(model, "temporal_conv", None)
@@ -70,13 +72,16 @@ def temporal_filter_fft_records(
     records = []
 
     def add_weight(label: str, weight: torch.Tensor, groups: int | None, kernel, layer: int) -> None:
-        freqs, mags = _kernel_fft_magnitudes(weight, sample_rate_hz, n_fft)
+        freqs, mags = _kernel_fft_magnitudes(weight, sample_rate_hz)
         if individual_count > 0:
             groups = int(groups or len(mags))
             filters_per_input = max(1, len(mags) // groups)
-            for flat_idx, mag in enumerate(mags[:individual_count]):
-                input_dim = flat_idx // filters_per_input
-                filter_in_input = flat_idx % filters_per_input
+            grid_channel_count = min(groups, max(individual_count, 8))
+            input_dims = np.linspace(0, groups - 1, grid_channel_count, dtype=int)[:individual_count]
+            for input_dim in input_dims:
+                flat_idx = int(input_dim) * filters_per_input
+                filter_in_input = 0
+                mag = mags[flat_idx]
                 records.append(
                     {
                         "label": f"{label} input {input_dim} filter {filter_in_input}",
@@ -174,6 +179,18 @@ def parse_condition_indices(spec: str) -> list[int]:
     return out
 
 
+def parse_plane_indices(spec: str | None) -> list[int]:
+    spec = str(spec or "").strip()
+    if not spec:
+        return []
+    out = []
+    for item in spec.split(","):
+        item = item.strip()
+        if item:
+            out.append(int(item))
+    return out
+
+
 def mcmaze_condition_groups(cfg, dataset, condition_indices: list[int]):
     _, _, trial_info, _, _ = load_mcmaze_cached(
         _cfg_get(cfg, "nwb_path"), int(_cfg_get(cfg, "bin_ms"))
@@ -211,9 +228,10 @@ def select_traces(
     F: np.ndarray,
     trial_index: int | None,
     condition_groups=None,
-) -> tuple[np.ndarray, list[str], list, str]:
+) -> tuple[np.ndarray, list[np.ndarray], list[str], list, str]:
     if condition_groups:
         traces = []
+        fft_source_indices = []
         labels = []
         colors = []
         total_trials = 0
@@ -222,6 +240,7 @@ def select_traces(
             if len(idx) == 0:
                 continue
             traces.append(F[idx].mean(axis=0))
+            fft_source_indices.append(idx)
             labels.append(f"{group['label']} mean (n={len(idx)})")
             colors.append(group["color"])
             total_trials += len(idx)
@@ -229,6 +248,7 @@ def select_traces(
             raise ValueError("No trials matched the requested conditions.")
         return (
             np.stack(traces, axis=0),
+            fft_source_indices,
             labels,
             colors,
             f"{len(traces)} condition means over {total_trials} trials",
@@ -236,13 +256,20 @@ def select_traces(
     if trial_index is None:
         return (
             F.mean(axis=0)[None, :, :],
+            [np.arange(F.shape[0], dtype=int)],
             [f"split mean (n={F.shape[0]})"],
             [None],
             f"split mean over {F.shape[0]} trials",
         )
     if trial_index < 0 or trial_index >= F.shape[0]:
         raise ValueError(f"--trial-index must be in 0-{F.shape[0] - 1}, got {trial_index}")
-    return F[trial_index][None, :, :], [f"trial {trial_index}"], [None], f"trial {trial_index}"
+    return (
+        F[trial_index][None, :, :],
+        [np.asarray([trial_index], dtype=int)],
+        [f"trial {trial_index}"],
+        [None],
+        f"trial {trial_index}",
+    )
 
 
 def select_plane_indices(
@@ -274,8 +301,47 @@ def select_plane_indices(
     )
 
 
+def explicit_plane_metadata(
+    F: np.ndarray,
+    cfg,
+    plane_indices: list[int],
+) -> tuple[dict[int, float], dict[int, str]]:
+    if F.ndim != 3:
+        raise ValueError(f"Expected embeddings with shape (trials, dims, time), got {F.shape}")
+    K, d, T = F.shape
+    if d % 2:
+        raise ValueError(f"Expected an even embedding dimension made of 2D planes, got d={d}")
+    D = d // 2
+    bad = [p for p in plane_indices if p < 0 or p >= D]
+    if bad:
+        raise ValueError(
+            f"Plane indices out of range for d={d}: {bad}. "
+            f"Valid range is 0-{D - 1}."
+        )
+
+    planes = F.reshape(K, D, 2, T)
+    plane_zeta = _plane_zeta_values(planes, plane_indices)
+
+    split = _mixed_parity_plane_split(d, cfg)
+    if split is None:
+        return plane_zeta, {p: "plane" for p in plane_indices}
+
+    even_planes, odd_planes = split
+    plane_branch = {}
+    for p in plane_indices:
+        if p < even_planes:
+            plane_branch[p] = "even"
+        elif p < even_planes + odd_planes:
+            plane_branch[p] = "odd"
+        else:
+            plane_branch[p] = "plane"
+    return plane_zeta, plane_branch
+
+
 def save_plot(
+    F: np.ndarray,
     traces: np.ndarray,
+    fft_source_indices: list[np.ndarray],
     trace_labels: list[str],
     trace_colors: list,
     sample_rate_hz: float,
@@ -305,25 +371,55 @@ def save_plot(
     )
     t_axis = np.arange(T) / sample_rate_hz
     freqs = np.fft.rfftfreq(T, d=1.0 / sample_rate_hz) # get frequency axis
-    fft_mag = np.abs(np.fft.rfft(planes, axis=-1, norm="ortho")) # compute one-sided real FFT mag
+    fft_mag = []
+    for idx in fft_source_indices:
+        source_planes = np.stack(
+            [F[idx, 2 * p : 2 * p + 2, :] for p in plane_indices],
+            axis=1,
+        )
+        trial_fft_mag = np.abs(
+            np.fft.rfft(source_planes, axis=-1, norm="ortho")
+        )
+        fft_mag.append(trial_fft_mag.mean(axis=0))
+    fft_mag = np.stack(fft_mag, axis=0)
     f_start = 0 if include_dc else 1
+    fft_values = np.maximum(fft_mag[:, :, :, f_start:], 1e-12)
+    fft_ymin = float(np.min(fft_values))
+    fft_ymax = float(np.max(fft_values))
+    if fft_ymax <= fft_ymin:
+        fft_ylim = (fft_ymin / 1.25, fft_ymax * 1.25)
+    else:
+        log_min = np.log10(fft_ymin)
+        log_max = np.log10(fft_ymax)
+        margin = 0.04 * (log_max - log_min)
+        fft_ylim = (10 ** (log_min - margin), 10 ** (log_max + margin))
     coord_specs = [(0, "-", "x / dim 2p")]
     if coordinates == "both":
         coord_specs.append((1, ":", "y / dim 2p+1"))
-    time_panel_label = "x coordinate" if coordinates == "x" else "coordinates"
+    font_scale = 1 # don't change this from 1
+    title_fs = 15 * font_scale
+    label_fs = 10.8 * font_scale
+    tick_fs = 8 * font_scale
+    legend_fs = 7 * font_scale
+    suptitle_fs = 12 * font_scale
 
-    fig, axes = plt.subplots(n_planes, 2, figsize=(12, 2.7 * n_planes), squeeze=False)
+    n_blocks = 2 if n_planes > 1 else 1
+    n_rows = int(np.ceil(n_planes / n_blocks))
+    fig, axes = plt.subplots(
+        n_rows,
+        2 * n_blocks,
+        figsize=(12 * n_blocks, 2.7 * n_rows),
+        squeeze=False,
+    )
     for p in range(n_planes):
-        ax_time = axes[p, 0]
-        ax_fft = axes[p, 1]
+        block = p // n_rows
+        row = p % n_rows
+        ax_time = axes[row, 2 * block]
+        ax_fft = axes[row, 2 * block + 1]
         plane_idx = plane_indices[p]
         x_dim = 2 * plane_idx
         y_dim = 2 * plane_idx + 1
-        plane_label = _plane_title(
-            plane_idx,
-            plane_zeta.get(plane_idx, float("nan")),
-            plane_branch.get(plane_idx),
-        )
+        plane_label = f"Plane {plane_idx} (dim {x_dim})"
 
         for trace_idx, label in enumerate(trace_labels):
             color = trace_colors[trace_idx]
@@ -343,13 +439,13 @@ def save_plot(
                     alpha=0.9,
                     label=coord_labels[coord_idx],
                 )
-        ax_time.set_title(f"{plane_label}: {time_panel_label} vs time", fontsize=10)
-        ax_time.set_xlabel("time (s)", fontsize=9)
-        ax_time.set_ylabel("embedding value", fontsize=9)
+        ax_time.set_title(f"{plane_label} time domain", fontsize=title_fs)
+        ax_time.set_xlabel("time (s)", fontsize=label_fs)
+        ax_time.set_ylabel("embedding value", fontsize=label_fs)
         ax_time.spines[["top", "right"]].set_visible(False)
-        ax_time.tick_params(labelsize=8)
+        ax_time.tick_params(labelsize=tick_fs)
         if not any(color is not None for color in trace_colors) and p == 0:
-            ax_time.legend(fontsize=8, frameon=False, loc="best")
+            ax_time.legend(fontsize=tick_fs, frameon=False, loc="best")
 
         for trace_idx, label in enumerate(trace_labels):
             color = trace_colors[trace_idx]
@@ -370,14 +466,21 @@ def save_plot(
                     alpha=0.9,
                     label=coord_labels[coord_idx],
                 )
-        ax_fft.set_title(f"{plane_label}: FFT magnitude", fontsize=10)
-        ax_fft.set_xlabel("frequency (Hz)", fontsize=9)
-        ax_fft.set_ylabel("|FFT| (log)", fontsize=9)
+        ax_fft.set_title(f"{plane_label} freq domain", fontsize=title_fs)
+        ax_fft.set_xlabel("frequency (Hz)", fontsize=label_fs)
+        ax_fft.set_ylabel("|FFT| (log)", fontsize=label_fs)
         ax_fft.set_yscale("log")
+        ax_fft.set_ylim(*fft_ylim)
         ax_fft.spines[["top", "right"]].set_visible(False)
-        ax_fft.tick_params(labelsize=8)
+        ax_fft.tick_params(labelsize=tick_fs)
         if not any(color is not None for color in trace_colors) and p == 0:
-            ax_fft.legend(fontsize=8, frameon=False, loc="best")
+            ax_fft.legend(fontsize=tick_fs, frameon=False, loc="best")
+
+    for p in range(n_planes, n_rows * n_blocks):
+        block = p // n_rows
+        row = p % n_rows
+        axes[row, 2 * block].set_visible(False)
+        axes[row, 2 * block + 1].set_visible(False)
 
     if any(color is not None for color in trace_colors):
         condition_handles = [
@@ -391,7 +494,7 @@ def save_plot(
             ]
             style_legend = axes[0, 0].legend(
                 handles=style_handles,
-                fontsize=7,
+                fontsize=legend_fs,
                 frameon=False,
                 loc="upper left",
             )
@@ -399,16 +502,16 @@ def save_plot(
             legend_loc = "upper right"
         else:
             legend_loc = "best"
-        axes[0, 0].legend(
-            handles=condition_handles,
-            title="condition",
-            fontsize=7,
-            title_fontsize=7,
-            frameon=False,
-            loc=legend_loc,
-        )
+        # axes[0, 0].legend(
+        #     handles=condition_handles,
+        #     title="condition",
+        #     fontsize=legend_fs,
+        #     title_fontsize=legend_fs,
+        #     frameon=False,
+        #     loc=legend_loc,
+        # )
 
-    fig.suptitle(title, fontsize=12)
+    fig.suptitle(title, fontsize=suptitle_fs)
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=170, bbox_inches="tight")
@@ -418,6 +521,7 @@ def save_plot(
         out_path.with_suffix(".npz"),
         traces=traces,
         trace_labels=np.asarray(trace_labels, dtype=object),
+        fft_source_trial_indices=np.asarray(fft_source_indices, dtype=object),
         plotted_planes=planes,
         plane_indices=np.asarray(plane_indices, dtype=np.int64),
         plane_zeta=np.asarray([plane_zeta.get(p, np.nan) for p in plane_indices], dtype=np.float32),
@@ -426,6 +530,7 @@ def save_plot(
         time_s=t_axis,
         frequency_hz=freqs,
         fft_magnitude=fft_mag,
+        fft_magnitude_summary="mean trial FFT magnitude",
     )
     print(f"Saved plot: {out_path}")
     print(f"Saved plotted arrays: {out_path.with_suffix('.npz')}")
@@ -453,8 +558,8 @@ def _save_filter_npz(records: list[dict], out_path: Path) -> None:
         filter_layer=np.asarray([record["layer"] for record in records], dtype=object),
         filter_input_dim=np.asarray([record["input_dim"] for record in records], dtype=object),
         filter_index=np.asarray([record["filter_index"] for record in records], dtype=object),
-        filter_frequency_hz=records[0]["frequency_hz"],
-        filter_fft_magnitude=np.stack([record["magnitude"] for record in records], axis=0),
+        filter_frequency_hz=np.asarray([record["frequency_hz"] for record in records], dtype=object),
+        filter_fft_magnitude=np.asarray([record["magnitude"] for record in records], dtype=object),
     )
 
 
@@ -472,8 +577,15 @@ def save_filter_by_size_plot(records: list[dict], include_dc: bool, out_path: Pa
 
     f_start = 0 if include_dc else 1
     branch_labels = list(dict.fromkeys(record["branch_label"] for record in records))
-    y_max = max(float(np.max(record["magnitude"][f_start:])) for record in records)
-    y_lim = (0.0, y_max * 1.05 if y_max > 0 else 1.0)
+    positive_values = np.concatenate([
+        np.maximum(record["magnitude"][f_start:], 1e-12)
+        for record in records
+        if len(record["magnitude"][f_start:]) > 0
+    ])
+    y_lim = (
+        float(np.min(positive_values)) / 1.25,
+        float(np.max(positive_values)) * 1.25,
+    )
     fig, axes = plt.subplots(
         len(branch_labels),
         1,
@@ -493,13 +605,16 @@ def save_filter_by_size_plot(records: list[dict], include_dc: bool, out_path: Pa
             )
             ax.plot(
                 record["frequency_hz"][f_start:],
-                record["magnitude"][f_start:],
+                np.maximum(record["magnitude"][f_start:], 1e-12),
                 lw=1.0,
+                marker="o",
+                markersize=3,
                 alpha=0.85,
                 label=label,
             )
         ax.set_title(branch_label, fontsize=10)
-        ax.set_ylabel("|FFT|", fontsize=8)
+        ax.set_ylabel("|FFT| (log)", fontsize=8)
+        ax.set_yscale("log")
         ax.set_ylim(*y_lim)
         ax.spines[["top", "right"]].set_visible(False)
         ax.tick_params(labelsize=8)
@@ -537,8 +652,15 @@ def save_filter_by_input_plot(records: list[dict], include_dc: bool, out_path: P
 
     f_start = 0 if include_dc else 1
     input_dims = list(dict.fromkeys(record["input_dim"] for record in individual_records))
-    y_max = max(float(np.max(record["magnitude"][f_start:])) for record in individual_records)
-    y_lim = (0.0, y_max * 1.05 if y_max > 0 else 1.0)
+    positive_values = np.concatenate([
+        np.maximum(record["magnitude"][f_start:], 1e-12)
+        for record in individual_records
+        if len(record["magnitude"][f_start:]) > 0
+    ])
+    y_lim = (
+        float(np.min(positive_values)) / 1.25,
+        float(np.max(positive_values)) * 1.25,
+    )
     fig, axes = plt.subplots(
         len(input_dims),
         1,
@@ -552,13 +674,16 @@ def save_filter_by_input_plot(records: list[dict], include_dc: bool, out_path: P
         for record in input_records:
             ax.plot(
                 record["frequency_hz"][f_start:],
-                record["magnitude"][f_start:],
+                np.maximum(record["magnitude"][f_start:], 1e-12),
                 lw=1.0,
+                marker="o",
+                markersize=3,
                 alpha=0.85,
                 label=record["branch_label"],
             )
         ax.set_title(f"input dimension {input_dim}", fontsize=10)
-        ax.set_ylabel("|FFT|", fontsize=8)
+        ax.set_ylabel("|FFT| (log)", fontsize=8)
+        ax.set_yscale("log")
         ax.set_ylim(*y_lim)
         ax.spines[["top", "right"]].set_visible(False)
         ax.tick_params(labelsize=8)
@@ -603,6 +728,14 @@ def main() -> None:
         help="Number of first planes to plot with --plane-selection first.",
     )
     parser.add_argument(
+        "--planes",
+        default="",
+        help=(
+            "Comma-separated explicit plane indices to plot, e.g. '18,33'. "
+            "When set, this overrides --plane-selection, --n-planes, and --planes-per-branch."
+        ),
+    )
+    parser.add_argument(
         "--trial-index",
         type=int,
         default=None,
@@ -632,8 +765,9 @@ def main() -> None:
         type=int,
         default=4,
         help=(
-            "Plot the first N individual temporal filters from each filter-size branch. "
-            "Default 4. Use 0 to plot one mean spectrum per branch."
+            "Plot the first N linspaced input-channel filters from each filter-size branch, "
+            "matching the conv-kernel grid column selection. Default 4. Use 0 to plot one "
+            "mean spectrum per branch."
         ),
     )
     parser.add_argument("--out", type=Path, default=None, help="Output PNG path.")
@@ -678,18 +812,23 @@ def main() -> None:
         condition_groups = mcmaze_condition_groups(cfg, dataset, condition_indices)
         counts = [len(group["local_indices"]) for group in condition_groups]
         print(f"Averaging condition indices separately: {list(zip(condition_indices, counts))}")
-    traces, trace_labels, trace_colors, trace_label = select_traces(
+    traces, fft_source_indices, trace_labels, trace_colors, trace_label = select_traces(
         F,
         args.trial_index,
         condition_groups=condition_groups,
     )
-    plane_indices, plane_zeta, plane_branch = select_plane_indices(
-        F,
-        cfg,
-        args.plane_selection,
-        args.n_planes,
-        args.planes_per_branch,
-    )
+    explicit_planes = parse_plane_indices(args.planes)
+    if explicit_planes:
+        plane_indices = explicit_planes
+        plane_zeta, plane_branch = explicit_plane_metadata(F, cfg, plane_indices)
+    else:
+        plane_indices, plane_zeta, plane_branch = select_plane_indices(
+            F,
+            cfg,
+            args.plane_selection,
+            args.n_planes,
+            args.planes_per_branch,
+        )
     print(
         "Plotting embedding planes: "
         + ", ".join(
@@ -700,7 +839,6 @@ def main() -> None:
     filter_records = temporal_filter_fft_records(
         model,
         sample_rate_hz,
-        n_fft=traces.shape[-1],
         individual_count=args.filter_individual_count,
     )
     if filter_records:
@@ -716,7 +854,9 @@ def main() -> None:
     )
     title = ""
     save_plot(
+        F,
         traces,
+        fft_source_indices,
         trace_labels,
         trace_colors,
         sample_rate_hz,

@@ -470,6 +470,47 @@ class MixedParityTemporalConv1d(nn.Module):
         return self.sym_conv(x), self.anti_conv(x)
 
 
+class DualSymmetricTemporalConv1d(nn.Module):
+    """Two independent symmetric temporal filter banks with mixed-parity shape."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        filters_per_channel: int,
+        kernels=(7, 15, 31, 61),
+        conv_layers: int = 1,
+        context_bins: int = 0,
+    ):
+        super().__init__()
+        self.sym_conv = MultiScaleSymmetricConv1d(
+            in_channels,
+            filters_per_channel,
+            kernels=kernels,
+            conv_layers=conv_layers,
+            context_bins=context_bins,
+        )
+        self.anti_conv = MultiScaleSymmetricConv1d(
+            in_channels,
+            filters_per_channel,
+            kernels=kernels,
+            conv_layers=conv_layers,
+            context_bins=context_bins,
+        )
+        self.in_channels = int(in_channels)
+        self.filters_per_channel = int(filters_per_channel)
+        self.kernels = _parse_kernels(kernels)
+        self.conv_layers = int(conv_layers)
+        self.context_bins = int(context_bins)
+        self.out_channels = self.sym_conv.out_channels + self.anti_conv.out_channels
+
+    @property
+    def weight(self):
+        return torch.cat([self.sym_conv.weight, self.anti_conv.weight])
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.sym_conv(x), self.anti_conv(x)
+
+
 # class ResidualBranch(nn.Module):
 #     """Kernel-specific temporal branch from the CoCoT-style EEG embedder."""
 
@@ -542,39 +583,68 @@ class MLP(nn.Module):
         temporal_frontend = (temporal_frontend or "symmetric").lower()
         self.temporal_frontend = temporal_frontend
         self.temporal_context_bins = int(temporal_context_bins)
-        self.mixed_parity = temporal_frontend in {
+        mixed_parity_frontends = {
             "mixed_parity",
             "mixed_symmetric_antisymmetric",
             "mixed_sym_anti",
             "sym_anti",
         }
+        dual_symmetric_frontends = {
+            "dual_symmetric",
+            "even_even",
+            "symmetric_symmetric",
+            "double_symmetric",
+        }
+        self.dual_symmetric = temporal_frontend in dual_symmetric_frontends
+        self.mixed_parity = temporal_frontend in mixed_parity_frontends or self.dual_symmetric
         self.d = int(d)
 
         if self.mixed_parity:
             if temporal_filters <= 0:
-                raise ValueError("mixed_parity requires temporal_filters > 0")
+                raise ValueError(f"{temporal_frontend} requires temporal_filters > 0")
             if d % 2 != 0:
-                raise ValueError(f"mixed_parity requires an even embedding dimension, got d={d}")
+                raise ValueError(f"{temporal_frontend} requires an even embedding dimension, got d={d}")
             n_planes = d // 2
-            antisymmetric_planes = int(antisymmetric_planes)
-            if antisymmetric_planes < 0:
-                antisymmetric_planes = max(1, n_planes // 2)
-            if antisymmetric_planes < 0 or antisymmetric_planes > n_planes:
-                raise ValueError(
-                    f"antisymmetric_planes must be between 0 and {n_planes}, "
-                    f"got {antisymmetric_planes}"
+            if self.dual_symmetric:
+                if n_planes % 2 != 0:
+                    raise ValueError(
+                        f"{temporal_frontend} requires an even number of 2D planes, got {n_planes}"
+                    )
+                antisymmetric_planes = 0
+                self.first_symmetric_planes = n_planes // 2
+                self.second_symmetric_planes = n_planes - self.first_symmetric_planes
+                self.symmetric_planes = n_planes
+                self.sym_out_dim = 2 * self.first_symmetric_planes
+                self.anti_out_dim = 2 * self.second_symmetric_planes
+                self.temporal_conv = DualSymmetricTemporalConv1d(
+                    in_channels,
+                    temporal_filters,
+                    kernels=residual_kernels,
+                    conv_layers=multiscale_symmetric_conv_layers,
+                    context_bins=self.temporal_context_bins,
+                )
+            else:
+                antisymmetric_planes = int(antisymmetric_planes)
+                if antisymmetric_planes < 0:
+                    antisymmetric_planes = max(1, n_planes // 2)
+                if antisymmetric_planes < 0 or antisymmetric_planes > n_planes:
+                    raise ValueError(
+                        f"antisymmetric_planes must be between 0 and {n_planes}, "
+                        f"got {antisymmetric_planes}"
+                    )
+                self.first_symmetric_planes = n_planes - antisymmetric_planes
+                self.second_symmetric_planes = 0
+                self.symmetric_planes = self.first_symmetric_planes
+                self.sym_out_dim = 2 * self.symmetric_planes
+                self.anti_out_dim = 2 * antisymmetric_planes
+                self.temporal_conv = MixedParityTemporalConv1d(
+                    in_channels,
+                    temporal_filters,
+                    kernels=residual_kernels,
+                    conv_layers=multiscale_symmetric_conv_layers,
+                    context_bins=self.temporal_context_bins,
                 )
             self.antisymmetric_planes = antisymmetric_planes
-            self.symmetric_planes = n_planes - antisymmetric_planes
-            self.sym_out_dim = 2 * self.symmetric_planes
-            self.anti_out_dim = 2 * self.antisymmetric_planes
-            self.temporal_conv = MixedParityTemporalConv1d(
-                in_channels,
-                temporal_filters,
-                kernels=residual_kernels,
-                conv_layers=multiscale_symmetric_conv_layers,
-                context_bins=self.temporal_context_bins,
-            )
             conv_out_channels = self.temporal_conv.sym_conv.out_channels
             self.sym_net = (
                 _make_pointwise_mlp(conv_out_channels, self.sym_out_dim, hidden_dim, depth, dropout)
@@ -584,7 +654,15 @@ class MLP(nn.Module):
 
 
             self.anti_net = (
-                _make_odd_pointwise_mlp(
+                _make_pointwise_mlp(
+                    conv_out_channels,
+                    self.anti_out_dim,
+                    hidden_dim,
+                    depth,
+                    dropout,
+                )
+                if self.dual_symmetric and self.anti_out_dim > 0
+                else _make_odd_pointwise_mlp(
                     conv_out_channels,
                     self.anti_out_dim,
                     hidden_dim,
@@ -627,7 +705,7 @@ class MLP(nn.Module):
             else:
                 raise ValueError(
                     "temporal_frontend must be one of: symmetric, multiscale_symmetric, "
-                    "multiscale_antisymmetric, mixed_parity, residual"
+                    "multiscale_antisymmetric, mixed_parity, dual_symmetric, residual"
                 )
             in_channels = self.temporal_conv.out_channels   # use temporal features only (no raw concat)
         else:

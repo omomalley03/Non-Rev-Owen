@@ -26,9 +26,9 @@ from mcmaze_train_finetune_common import (
 )
 
 
-DEFAULT_DIMS = (128, 256)
+DEFAULT_DIMS = (128,)
 DEFAULT_SEEDS = (0, 1, 2, 3, 4)
-OUT_DIR = REPO_ROOT / "mcmaze" / "dim_train_finetune_sweep_mean_plane_zeta"
+OUT_DIR = REPO_ROOT / "mcmaze" / "dim_train_finetune_sweep_dataset_split"
 LOG_DIR = OUT_DIR / "logs"
 SUMMARY_CSV = OUT_DIR / "results.csv"
 CI_CSV = OUT_DIR / "results_ci95.csv"

@@ -86,7 +86,7 @@ class Config:
     dropout: float = _env_float("DROPOUT", 0.2)            # dropout probability applied after each hidden activation
     temporal_filters: int = _env_int("TEMPORAL_FILTERS", 0)        # per-channel temporal filters; 0 disables the front-end
     temporal_kernel_size: int = _env_int("TEMPORAL_KERNEL_SIZE", 61)     # odd; zero-phase 'same' conv (tunable; sweep e.g. 15/31/51)
-    temporal_frontend: str = _env_str("TEMPORAL_FRONTEND", "symmetric")  # symmetric, multiscale_symmetric, mixed_parity, or residual
+    temporal_frontend: str = _env_str("TEMPORAL_FRONTEND", "symmetric")  # symmetric, multiscale_symmetric, mixed_parity, dual_symmetric, or residual
     residual_kernels: str = _env_str("RESIDUAL_KERNELS", "3,7,15,31")    # comma-separated odd kernels for multi-scale front-ends
     multiscale_symmetric_conv_layers: int = _env_int("MULTISCALE_SYMMETRIC_CONV_LAYERS", 1)  # 1 or 2; only for multiscale_symmetric
     antisymmetric_planes: int = _env_int("ANTISYMMETRIC_PLANES", -1)      # mixed_parity only; -1 auto-selects half the planes
@@ -105,7 +105,8 @@ class Config:
     lambda_start_frac: float = _env_float("LAMBDA_START_FRAC", 1.0)       # linear lambda warm-up: fraction of full lambda at epoch 1,
                                          # ramping linearly to 1.0 (full lambda) at the final epoch.
                                          # 1.0 = no warm-up (full lambda throughout)
-    val_checkpoint_metric: str = _env_str("VAL_CHECKPOINT_METRIC", "zeta")  # "zeta", "s", or "mean_plane_zeta"
+    val_checkpoint_metric: str = _env_str("VAL_CHECKPOINT_METRIC", "zeta")  # threshold checkpoint metric: "zeta", "s", or "mean_plane_zeta"
+    val_best_checkpoint_metric: str = _env_str("VAL_BEST_CHECKPOINT_METRIC", "")  # best.pt metric; defaults to VAL_CHECKPOINT_METRIC
     val_checkpoint_thresholds: tuple = _env_float_tuple("VAL_CHECKPOINTS", ())
     val_zeta_checkpoint_thresholds: tuple = _env_float_tuple(
         "VAL_ZETA_CHECKPOINTS",
@@ -144,6 +145,13 @@ class Config:
             if self.d % 2 != 0:
                 raise ValueError(f"mixed_parity requires an even embedding dimension, got d={self.d}")
             self.antisymmetric_planes = max(1, (self.d // 2) // 2)
+        if frontend in {
+            "dual_symmetric",
+            "even_even",
+            "symmetric_symmetric",
+            "double_symmetric",
+        }:
+            self.antisymmetric_planes = 0
 
     def run_name(self) -> str:
         """Short descriptive tag encoding the key hyperparameters."""
@@ -180,7 +188,8 @@ class Config:
                          "lambda_xp", "lambda_bt", "lambda_plane_bt",
                          "lambda_block_cca", "lambda_start_frac",
                          "s_objective", "s_softmin_tau", "block_cca_eps",
-                         "val_checkpoint_metric", "val_checkpoint_thresholds",
+                         "val_checkpoint_metric", "val_best_checkpoint_metric",
+                         "val_checkpoint_thresholds",
                          "val_zeta_checkpoint_thresholds",
                          "val_s_checkpoint_thresholds",
                          "checkpoint_every_epochs"],

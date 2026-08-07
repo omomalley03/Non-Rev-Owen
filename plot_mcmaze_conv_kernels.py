@@ -40,7 +40,18 @@ MIXED_PARITY_FRONTENDS = {
     "mixed_sym_anti",
     "sym_anti",
 }
-MULTISCALE_FRONTENDS = SYMMETRIC_FRONTENDS | ANTISYMMETRIC_FRONTENDS | MIXED_PARITY_FRONTENDS
+DUAL_SYMMETRIC_FRONTENDS = {
+    "dual_symmetric",
+    "even_even",
+    "symmetric_symmetric",
+    "double_symmetric",
+}
+MULTISCALE_FRONTENDS = (
+    SYMMETRIC_FRONTENDS
+    | ANTISYMMETRIC_FRONTENDS
+    | MIXED_PARITY_FRONTENDS
+    | DUAL_SYMMETRIC_FRONTENDS
+)
 
 
 def _unique_existing(paths: list[str]) -> list[str]:
@@ -264,9 +275,20 @@ def _collect_kernels(temporal_conv, max_panels: int, kernel_mode: str) -> tuple[
                 layer_weights = [(transform_kernel_weight(branch.conv.weight, kernel_mode), f"b{branch_idx}")]
             for weights_tensor, branch_label in layer_weights:
                 weights = weights_tensor.detach().cpu().numpy().mean(axis=1)
-                for dim_idx, weight in enumerate(weights[:n_per_branch]):
-                    kernels.append(weight)
-                    titles.append(f"{branch_label}:{dim_idx}")
+                groups = int(getattr(branch, "groups", 0) or 0)
+                if groups > 0:
+                    filters_per_channel = max(1, weights.shape[0] // groups)
+                    n_channels = min(n_per_branch, groups)
+                    channel_indices = np.linspace(0, groups - 1, n_channels, dtype=int)
+                    for channel_idx in channel_indices:
+                        weight_idx = int(channel_idx) * filters_per_channel
+                        kernels.append(weights[weight_idx])
+                        titles.append(f"{branch_label}:{int(channel_idx)}")
+                else:
+                    indices = np.linspace(0, len(weights) - 1, min(n_per_branch, len(weights)), dtype=int)
+                    for dim_idx in indices:
+                        kernels.append(weights[int(dim_idx)])
+                        titles.append(f"{branch_label}:{int(dim_idx)}")
         return kernels[:max_panels], titles[:max_panels]
 
     weights = temporal_conv.weight.detach().cpu().numpy()[:, 0, :]
@@ -278,6 +300,28 @@ def _collect_kernels(temporal_conv, max_panels: int, kernel_mode: str) -> tuple[
         raise ValueError(f"Unknown kernel mode: {kernel_mode!r}")
     n_show = min(len(weights), max_panels)
     return [weights[i] for i in range(n_show)], [str(i) for i in range(n_show)]
+
+
+def _kernel_grid_labels(title: str, bin_ms: float) -> tuple[str, str]:
+    """Convert collector titles like ``sym:k7:l1:0`` into row/column labels."""
+    parts = str(title).split(":")
+    col_label = ""
+    if parts and parts[-1].isdigit():
+        col_label = f"input\nchannel {int(parts[-1])}"
+
+    row_parts = []
+    for part in parts[:-1]:
+        if part in {"sym", "anti"}:
+            row_parts.append(part)
+        elif part.startswith("k") and part[1:].isdigit():
+            kernel_ms = int(part[1:]) * float(bin_ms)
+            row_parts.append(f"L={kernel_ms:g}ms")
+        elif part.startswith("l") and part[1:].isdigit():
+            if part != "l1":
+                row_parts.append(part)
+        else:
+            row_parts.append(part)
+    return " ".join(row_parts), col_label
 
 
 def plot_conv_kernels(
@@ -304,6 +348,10 @@ def plot_conv_kernels(
     cols = int(np.ceil(np.sqrt(n_show)))
     rows = int(np.ceil(n_show / cols))
     fig, axes = plt.subplots(rows, cols, squeeze=False, figsize=(2.0 * cols, 1.5 * rows))
+    title_fs = 10.5
+    label_fs = 10.5
+    tick_fs = 9
+    supxlabel_fs = 13.5
     for i in range(rows):
         for j in range(cols):
             idx = i * cols + j
@@ -312,21 +360,25 @@ def plot_conv_kernels(
                 kernel = kernels[idx]
                 t_ms = (np.arange(len(kernel)) - (len(kernel) - 1) / 2.0) * float(bin_ms)
                 ax.plot(t_ms, kernel)
-                # ax.set_title(titles[idx], fontsize=6)
+                row_label, col_label = _kernel_grid_labels(titles[idx], bin_ms)
+                if i == 0 and col_label:
+                    ax.set_title(col_label, fontsize=title_fs, pad=3)
+                if j == 0 and row_label:
+                    ax.set_ylabel(row_label, fontsize=label_fs, rotation=0, ha="right", va="center", labelpad=20)
                 ax.axhline(0, color="0.8", linewidth=0.5)
                 ax.set_xlim(*xlim)
                 if ylim is not None:
                     ax.set_ylim(*ylim)
                 ax.locator_params(axis="y", nbins=3)
-                ax.tick_params(axis="y", labelsize=6, length=2)
-                ax.tick_params(axis="x", labelsize=6, length=2)
+                ax.tick_params(axis="y", labelsize=tick_fs, length=2)
+                ax.tick_params(axis="x", labelsize=tick_fs, length=2)
             else:
                 ax.set_visible(False)
             if i < rows - 1:
                 ax.set_xticklabels([])
             else:
                 ax.locator_params(axis="x", nbins=3)
-    fig.supxlabel("time from kernel centre (ms)", fontsize=9)
+    fig.supxlabel("time from kernel centre (ms)", fontsize=supxlabel_fs)
     fig.tight_layout()
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")

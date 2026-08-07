@@ -67,6 +67,13 @@ def _resolve_threshold_checkpoints(cfg: Config):
     return metric, sorted(set(float(x) for x in thresholds))
 
 
+def _resolve_best_checkpoint_metric(cfg: Config, threshold_metric: str) -> str:
+    metric = getattr(cfg, "val_best_checkpoint_metric", "")
+    if metric in (None, ""):
+        return threshold_metric
+    return _normalize_checkpoint_metric(metric)
+
+
 def _metric_value(
     metric: str,
     mean_val_s: float,
@@ -145,6 +152,7 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
     min_val_loss = float("inf")
     min_val_loss_epoch = None
     threshold_metric, checkpoint_thresholds = _resolve_threshold_checkpoints(cfg)
+    best_checkpoint_metric = _resolve_best_checkpoint_metric(cfg, threshold_metric)
     epoch_checkpoint_interval = int(getattr(cfg, "checkpoint_every_epochs", 0) or 0)
     saved_checkpoint_thresholds = set()
     checkpoint_records = []
@@ -311,7 +319,7 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
             min_val_loss_epoch = epoch
 
         best_candidate_score = _metric_value(
-            threshold_metric,
+            best_checkpoint_metric,
             mean_val_s,
             mean_val_zeta,
             mean_val_mean_plane_zeta,
@@ -327,8 +335,9 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                     model,
                     cfg,
                     epoch,
-                    checkpoint_selection=f"best_val_{threshold_metric}",
+                    checkpoint_selection=f"best_val_{best_checkpoint_metric}",
                     val_checkpoint_metric=threshold_metric,
+                    val_best_checkpoint_metric=best_checkpoint_metric,
                     val_checkpoint_score=best_candidate_score,
                     val_loss=mean_val_loss,
                     val_s=mean_val_s,
@@ -470,7 +479,7 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
 
     history["best_val_zeta"] = best_val_zeta
     history["best_val_mean_plane_zeta"] = best_val_mean_plane_zeta
-    history["best_checkpoint_metric"] = threshold_metric
+    history["best_checkpoint_metric"] = best_checkpoint_metric
     history["best_checkpoint_score"] = best_checkpoint_score
     history["best_val_epoch"] = best_val_epoch
     history["best_checkpoint_val_loss"] = best_checkpoint_val_loss
@@ -509,21 +518,20 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         for i in range(len(ep))
     ] if active_regs else [0.0] * len(ep)
     fig, ax = plt.subplots(figsize=(5.6, 4))
-    ax.plot(ep, history["val_s"],     label="S mean/plane (↑)",  color="steelblue")
+    ax.plot(ep, history["val_s"], label=r"$S$ ($\uparrow$)", color="steelblue")
     ax.plot(
         ep,
         history["val_c_plus"],
-        label=r"$\|C^{(+)}\|_F^2$",
+        label=r"$S^{(+)}$",
         color="mediumpurple",
         alpha=0.35,
     )
-    ax.plot(ep, total_raw_reg,        label="raw reg",   color="tomato")
+    ax.plot(ep, total_raw_reg, label=r"raw reg. ($\downarrow$)", color="tomato")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Embedding validation loss components")
     ax.spines[["top", "right"]].set_visible(False)
 
     ax_zeta = ax.twinx()
-    ax_zeta.plot(ep, history["val_zeta"], label="ζ", color="seagreen", alpha=0.6)
     ax_zeta.plot(
         ep,
         history["val_mean_plane_zeta"],
@@ -538,12 +546,12 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
         idx = best_val_epoch - 1
         marker_series = (
             history["val_s"]
-            if threshold_metric == "s"
+            if best_checkpoint_metric == "s"
             else history["val_mean_plane_zeta"]
-            if threshold_metric == "mean_plane_zeta"
-            else history["val_zeta"]
+            if best_checkpoint_metric == "mean_plane_zeta"
+            else history["val_s"]
         )
-        marker_ax = ax if threshold_metric == "s" else ax_zeta
+        marker_ax = ax_zeta if best_checkpoint_metric == "mean_plane_zeta" else ax
         if 0 <= idx < len(marker_series):
             y = marker_series[idx]
             marker_ax.scatter(
@@ -555,8 +563,13 @@ def train(model, train_ds, val_ds, cfg: Config, loss_function=loss_fn) -> dict:
                 linewidths=0.7,
                 zorder=6,
             )
+            marker_label = (
+                f"best val {_threshold_metric_label(best_checkpoint_metric)}"
+                if best_checkpoint_metric != "zeta"
+                else "best checkpoint"
+            )
             marker_ax.annotate(
-                f"best val {_threshold_metric_label(threshold_metric)}",
+                marker_label,
                 xy=(best_val_epoch, y),
                 xytext=(5, -10),
                 textcoords="offset points",

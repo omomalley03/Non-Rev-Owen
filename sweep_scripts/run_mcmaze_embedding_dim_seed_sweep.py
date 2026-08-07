@@ -23,9 +23,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from mcmaze_train_finetune_common import compute_whole_validation_mean_plane_zeta
 
-DEFAULT_DIMS = (16, 32, 64, 128, 256, 512)
+DEFAULT_DIMS = (128,)
 DEFAULT_SEEDS = (0, 1, 2, 3, 4)
-OUT_DIR = ROOT / "mcmaze" / "embedding_dim_seed_sweep"
+OUT_DIR = ROOT / "mcmaze" / "embedding_dim_seed_sweep_dataset_split"
 LOG_DIR = OUT_DIR / "logs"
 SUMMARY_CSV = OUT_DIR / "results.csv"
 

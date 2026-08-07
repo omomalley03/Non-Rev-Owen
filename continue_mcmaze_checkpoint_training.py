@@ -18,6 +18,7 @@ from train import (
     _checkpoint_payload,
     _mean_plane_zeta,
     _metric_value,
+    _resolve_best_checkpoint_metric,
     _resolve_threshold_checkpoints,
     _threshold_metric_label,
 )
@@ -240,6 +241,7 @@ def main():
     )
 
     threshold_metric, checkpoint_thresholds = _resolve_threshold_checkpoints(cfg)
+    best_checkpoint_metric = _resolve_best_checkpoint_metric(cfg, threshold_metric)
     epoch_interval = int(getattr(cfg, "checkpoint_every_epochs", 0) or 0)
     threshold_manifest = os.path.join(cfg.ckpt_dir, f"val_{threshold_metric}_checkpoints.csv")
     epoch_manifest = os.path.join(cfg.ckpt_dir, "epoch_checkpoints.csv")
@@ -248,7 +250,7 @@ def main():
     saved_thresholds = existing_thresholds(threshold_manifest)
 
     best_score = _metric_value(
-        threshold_metric,
+        best_checkpoint_metric,
         float(ckpt.get("val_s", float("-inf"))),
         float(ckpt.get("val_zeta", float("-inf"))),
         float(ckpt.get("val_mean_plane_zeta", float("-inf"))),
@@ -307,9 +309,9 @@ def main():
             "continued_from": ckpt_path,
         }
 
-        score = _metric_value(threshold_metric, val_s, val_zeta, val_mean_plane_zeta)
-        if score > best_score:
-            best_score = score
+        best_score_candidate = _metric_value(best_checkpoint_metric, val_s, val_zeta, val_mean_plane_zeta)
+        if best_score_candidate > best_score:
+            best_score = best_score_candidate
             save_payload(
                 model,
                 cfg,
@@ -317,12 +319,14 @@ def main():
                 os.path.join(cfg.ckpt_dir, "best.pt"),
                 {
                     **payload,
-                    "checkpoint_selection": f"best_val_{threshold_metric}",
+                    "checkpoint_selection": f"best_val_{best_checkpoint_metric}",
                     "val_checkpoint_metric": threshold_metric,
-                    "val_checkpoint_score": score,
+                    "val_best_checkpoint_metric": best_checkpoint_metric,
+                    "val_checkpoint_score": best_score_candidate,
                 },
             )
 
+        score = _metric_value(threshold_metric, val_s, val_zeta, val_mean_plane_zeta)
         for threshold in checkpoint_thresholds:
             if threshold in saved_thresholds:
                 continue

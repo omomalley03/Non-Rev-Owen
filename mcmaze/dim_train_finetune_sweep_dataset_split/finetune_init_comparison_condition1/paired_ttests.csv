@@ -1,0 +1,12 @@
+source_condition,model,metric,n,paired_seeds,pretrained_mean,random_mean,mean_delta_pretrained_minus_random,delta_ci95_low,delta_ci95_high,delta_ci95_half_width,t_stat,p_value
+,finetuned_mlp,mse_x,1,0,4607.165527,5781.783203,-1174.617676,,,,,
+,finetuned_mlp,mse_y,1,0,5100.098145,6379.890625,-1279.79248,,,,,
+,finetuned_mlp,rmse_x,1,0,67.87610626,76.03804016,-8.161933899,,,,,
+,finetuned_mlp,rmse_y,1,0,71.4149704,79.87421417,-8.459243774,,,,,
+,finetuned_mlp,rmse_mean,1,0,69.66861725,77.98082733,-8.312210083,,,,,
+,finetuned_mlp,r2_x,1,0,0.9289384484,0.910820961,0.01811748743,,,,,
+,finetuned_mlp,r2_y,1,0,0.9031095505,0.878796339,0.02431321144,,,,,
+,finetuned_mlp,r2_mean,1,0,0.9160239697,0.89480865,0.02121531963,,,,,
+,finetuned_mlp,corr_x,1,0,0.9644553271,0.9544827417,0.009972585337,,,,,
+,finetuned_mlp,corr_y,1,0,0.9507278384,0.9374532297,0.01327460871,,,,,
+,finetuned_mlp,best_val_mse_z,1,0,0.08348207341,0.1045825432,-0.02110046976,,,,,

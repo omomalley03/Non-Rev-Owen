@@ -1,16 +1,16 @@
-"""Run MC Maze all-even vs 50/50 even/odd sweeps with matched decoder inputs.
+"""Run MC Maze even/even vs 50/50 even/odd two-branch seed sweeps.
 
 The script sources ``mcmaze_config.sh`` as the baseline and changes only:
 
 * ``SEED`` for each seed,
-* ``ANTISYMMETRIC_PLANES`` for all-even vs 50/50 even/odd,
-* ``HIDDEN_DIM`` for all-even, doubled so the hidden-feature decoder input
-  width matches the 50/50 mixed-parity model.
+* ``TEMPORAL_FRONTEND`` for even/even vs mixed even/odd,
+* ``ANTISYMMETRIC_PLANES`` for the mixed even/odd condition.
 
-With the default hidden decoder, a 50/50 mixed-parity model exposes one hidden
-feature stack from the even branch and one from the odd branch. The all-even
-model has only the even branch, so doubling its hidden layer size keeps the
-decoder feature dimension comparable.
+Both conditions use the same two-branch architecture. Each branch has hidden
+layers of size ``HIDDEN_DIM`` from ``mcmaze_config.sh`` and emits half the total
+embedding planes. In the even/even condition, the lower branch is symmetric
+instead of antisymmetric; the two branch outputs are concatenated and trained
+with the normal loss and cross-plane regularisation.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from mcmaze_train_finetune_common import (
 
 
 DEFAULT_SEEDS = (0, 1, 2, 3, 4)
-OUT_DIR = REPO_ROOT / "mcmaze" / "even_vs_50_50_parity_hidden_matched_sweep"
+OUT_DIR = REPO_ROOT / "mcmaze" / "even_even_vs_50_50_parity_sweep"
 LOG_DIR = OUT_DIR / "logs"
 SUMMARY_CSV = OUT_DIR / "results.csv"
 CI_CSV = OUT_DIR / "results_ci95.csv"
@@ -43,9 +43,12 @@ TTEST_CSV = OUT_DIR / "paired_ttests.csv"
 
 FIELDNAMES = [
     "condition",
+    "temporal_frontend",
     "odd_plane_fraction",
     "antisymmetric_planes",
     "symmetric_planes",
+    "first_symmetric_planes",
+    "second_symmetric_planes",
     "n_planes",
     "dimension",
     "seed",
@@ -85,15 +88,18 @@ FIELDNAMES = [
 
 GROUP_FIELDS = (
     "condition",
+    "temporal_frontend",
     "odd_plane_fraction",
     "antisymmetric_planes",
     "symmetric_planes",
+    "first_symmetric_planes",
+    "second_symmetric_planes",
     "dimension",
     "hidden_dim",
     "lambda_start_frac",
     "lambda_block_cca",
 )
-COMPLETED_KEY_FIELDS = ("condition", "dimension", "hidden_dim", "antisymmetric_planes", "seed")
+COMPLETED_KEY_FIELDS = ("condition", "temporal_frontend", "dimension", "hidden_dim", "antisymmetric_planes", "seed")
 
 
 def experiment_conditions(dim: int, base_hidden_dim: int) -> list[dict[str, object]]:
@@ -106,18 +112,24 @@ def experiment_conditions(dim: int, base_hidden_dim: int) -> list[dict[str, obje
     half_odd = n_planes // 2
     return [
         {
-            "condition": "all_even",
+            "condition": "even_even",
+            "temporal_frontend": "dual_symmetric",
             "odd_plane_fraction": 0.0,
             "antisymmetric_planes": 0,
             "symmetric_planes": n_planes,
-            "hidden_dim": 2 * base_hidden_dim,
+            "first_symmetric_planes": n_planes // 2,
+            "second_symmetric_planes": n_planes - n_planes // 2,
+            "hidden_dim": base_hidden_dim,
             "expected_hidden_decoder_feature_dim": 2 * base_hidden_dim,
         },
         {
             "condition": "even_odd_50_50",
+            "temporal_frontend": "mixed_parity",
             "odd_plane_fraction": half_odd / n_planes,
             "antisymmetric_planes": half_odd,
             "symmetric_planes": n_planes - half_odd,
+            "first_symmetric_planes": n_planes - half_odd,
+            "second_symmetric_planes": 0,
             "hidden_dim": base_hidden_dim,
             "expected_hidden_decoder_feature_dim": 2 * base_hidden_dim,
         },
@@ -138,9 +150,12 @@ def baseline_group(base_env: dict[str, str], dim: int, base_hidden_dim: int) -> 
     all_even = experiment_conditions(dim, base_hidden_dim)[0]
     return {
         "condition": all_even["condition"],
+        "temporal_frontend": all_even["temporal_frontend"],
         "odd_plane_fraction": all_even["odd_plane_fraction"],
         "antisymmetric_planes": all_even["antisymmetric_planes"],
         "symmetric_planes": all_even["symmetric_planes"],
+        "first_symmetric_planes": all_even["first_symmetric_planes"],
+        "second_symmetric_planes": all_even["second_symmetric_planes"],
         "dimension": dim,
         "hidden_dim": all_even["hidden_dim"],
         "lambda_start_frac": base_env.get("LAMBDA_START_FRAC", ""),
@@ -220,7 +235,8 @@ def main() -> None:
     print(
         "Conditions: "
         + ", ".join(
-            f"{c['condition']} ap={c['antisymmetric_planes']} hidden={c['hidden_dim']}"
+            f"{c['condition']} frontend={c['temporal_frontend']} "
+            f"ap={c['antisymmetric_planes']} hidden={c['hidden_dim']}"
             for c in conditions
         )
     )
@@ -243,6 +259,7 @@ def main() -> None:
         env = base_env.copy()
         env["D"] = str(dim)
         env["SEED"] = str(seed)
+        env["TEMPORAL_FRONTEND"] = str(condition["temporal_frontend"])
         env["ANTISYMMETRIC_PLANES"] = str(condition["antisymmetric_planes"])
         env["HIDDEN_DIM"] = str(condition["hidden_dim"])
         env["PYTHONUNBUFFERED"] = "1"

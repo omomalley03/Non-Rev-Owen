@@ -45,7 +45,9 @@ def plot_loss_curve(run_dir: str, cfg=None) -> None:
         print(f"  [loss curve] no log.csv found at {log_path!r} - skipping.")
         return
 
-    epochs, val_s, val_c_plus, val_zeta, val_losses, val_reg = [], [], [], [], [], []
+    epochs = []
+    val_s, val_c_plus, val_losses, val_reg = [], [], [], []
+    val_mean_plane_zeta = []
     with open(log_path, newline="") as f:
         for row in csv.DictReader(f):
             epoch = _read_float(row, "epoch")
@@ -54,7 +56,7 @@ def plot_loss_curve(run_dir: str, cfg=None) -> None:
             epochs.append(int(epoch))
             val_s.append(_read_float(row, "val_s"))
             val_c_plus.append(_read_float(row, "val_c_plus"))
-            val_zeta.append(_read_float(row, "val_zeta"))
+            val_mean_plane_zeta.append(_read_float(row, "val_mean_plane_zeta"))
             val_losses.append(_read_float(row, "val_loss"))
             val_reg.append(_read_float(row, "val_reg"))
 
@@ -67,7 +69,7 @@ def plot_loss_curve(run_dir: str, cfg=None) -> None:
 
     has_s = full_series(val_s)
     has_c_plus = full_series(val_c_plus)
-    has_zeta = full_series(val_zeta)
+    has_mean_plane_zeta = full_series(val_mean_plane_zeta)
     has_val_reg = full_series(val_reg)
 
     reg_raw: dict[str, list[float]] = {}
@@ -100,12 +102,12 @@ def plot_loss_curve(run_dir: str, cfg=None) -> None:
 
     fig, ax = plt.subplots(figsize=(5.6, 4))
     if has_s:
-        ax.plot(epochs, val_s, label="S mean/plane (up)", color="steelblue")
+        ax.plot(epochs, val_s, label=r"$S$ ($\uparrow$)", color="steelblue")
     if has_c_plus:
         ax.plot(
             epochs,
             val_c_plus,
-            label=r"$\|C^{(+)}\|_F^2$",
+            label=r"$S^{(+)}$",
             color="mediumpurple",
             alpha=0.35,
         )
@@ -118,9 +120,9 @@ def plot_loss_curve(run_dir: str, cfg=None) -> None:
             )
             for i in range(len(epochs))
         ]
-        ax.plot(epochs, total_raw, label="raw reg", color="tomato")
+        ax.plot(epochs, total_raw, label=r"raw reg. ($\downarrow$)", color="tomato")
     elif has_val_reg:
-        ax.plot(epochs, val_reg, label="val reg from log.csv (down)", color="tomato")
+        ax.plot(epochs, val_reg, label=r"raw reg. ($\downarrow$)", color="tomato")
     if not (has_s or has_c_plus or reg_raw or has_val_reg):
         plotted = [v if v is not None else float("nan") for v in val_losses]
         ax.plot(epochs, plotted, label="val loss (down)", color="steelblue")
@@ -130,10 +132,16 @@ def plot_loss_curve(run_dir: str, cfg=None) -> None:
     ax.spines[["top", "right"]].set_visible(False)
 
     ax_zeta = None
-    if has_zeta:
+    if has_mean_plane_zeta:
         ax_zeta = ax.twinx()
-        ax_zeta.plot(epochs, val_zeta, label="zeta", color="seagreen", alpha=0.6)
-        ax_zeta.set_ylabel("Validation zeta")
+        ax_zeta.plot(
+            epochs,
+            val_mean_plane_zeta,
+            label="mean plane ζ",
+            color="darkgreen",
+            alpha=0.85,
+        )
+        ax_zeta.set_ylabel("Validation ζ")
         ax_zeta.spines["top"].set_visible(False)
 
     best_epoch = None
@@ -143,13 +151,15 @@ def plot_loss_curve(run_dir: str, cfg=None) -> None:
         try:
             ckpt = torch.load(best_ckpt_path, map_location="cpu", weights_only=False)
             best_epoch = int(ckpt["epoch"])
-            if ckpt.get("checkpoint_selection") == "best_val_zeta":
-                best_label = "best val zeta"
+            selection = str(ckpt.get("checkpoint_selection", ""))
+            if selection == "best_val_mean_plane_zeta":
+                best_label = "best mean plane ζ"
+            elif selection == "best_val_s":
+                best_label = "best val S"
+            elif selection == "best_val_zeta":
+                best_label = "best checkpoint"
         except Exception as exc:
             print(f"  [loss curve] could not read best.pt ({exc}); falling back to log.csv.")
-    if has_zeta and best_label != "best val zeta":
-        best_epoch = max(range(1, len(val_zeta) + 1), key=lambda i: val_zeta[i - 1])
-        best_label = "best val zeta"
     if best_epoch is None and any(v is not None for v in val_losses):
         valid_loss_epochs = [
             (i, v) for i, v in enumerate(val_losses, start=1) if v is not None
@@ -158,15 +168,15 @@ def plot_loss_curve(run_dir: str, cfg=None) -> None:
 
     if best_epoch is not None:
         idx = best_epoch - 1
-        best_on_zeta = (
-            best_label == "best val zeta"
+        best_on_mean_plane_zeta = (
+            best_label == "best mean plane ζ"
             and ax_zeta is not None
-            and 0 <= idx < len(val_zeta)
-            and val_zeta[idx] is not None
+            and 0 <= idx < len(val_mean_plane_zeta)
+            and val_mean_plane_zeta[idx] is not None
         )
         if 0 <= idx < len(val_s):
-            target_ax = ax_zeta if best_on_zeta else ax
-            series = val_zeta if best_on_zeta else val_s
+            target_ax = ax_zeta if best_on_mean_plane_zeta else ax
+            series = val_mean_plane_zeta if best_on_mean_plane_zeta else val_s
             y = series[idx]
             if y is not None:
                 target_ax.scatter(

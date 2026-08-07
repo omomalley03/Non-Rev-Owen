@@ -7,9 +7,10 @@ The intended workflow is:
 
 With no --run, this trains a new embedder using the current MC Maze config, but
 saves validation-S threshold checkpoints every 0.1 increase and periodic
-embedder checkpoints every 10 epochs. The script then trains the same frozen
-hand-velocity decoders on all of those checkpoints and plots downstream MLP R^2
-against validation mean-plane zeta, embedding zeta, and validation S.
+embedder checkpoints every 10 epochs, while saving ``best.pt`` by validation
+mean-plane zeta. The script then trains the same frozen hand-velocity decoders
+on all of those checkpoints and plots downstream MLP R^2 against validation
+mean-plane zeta, weighted plane zeta, and validation loss.
 
 To reuse an existing run that already has checkpoints/val_s_checkpoints.csv
 and checkpoints/epoch_checkpoints.csv:
@@ -47,6 +48,7 @@ def _threshold_sequence(step: float, max_value: float) -> str:
 # affected.
 os.environ["CHECKPOINT_EVERY_EPOCHS"] = str(EPOCH_CHECKPOINT_INTERVAL)
 os.environ["VAL_CHECKPOINT_METRIC"] = CHECKPOINT_METRIC
+os.environ["VAL_BEST_CHECKPOINT_METRIC"] = "mean_plane_zeta"
 os.environ["VAL_CHECKPOINTS"] = _threshold_sequence(S_CHECKPOINT_STEP, S_CHECKPOINT_MAX)
 
 import matplotlib
@@ -251,6 +253,9 @@ def load_best_checkpoint_record(run_dir: str):
     if selection == "best_val_s":
         label = "best val S"
         output_name = "best_val_s"
+    elif selection == "best_val_mean_plane_zeta":
+        label = "best val mean-plane zeta"
+        output_name = "best_val_mean_plane_zeta"
     elif selection == "best_val_zeta":
         label = "best val zeta"
         output_name = "best_val_zeta"
@@ -590,15 +595,15 @@ def plot_checkpoint_scatters(out_dir: str, rows):
         ),
         (
             "embedding_val_zeta",
-            r"Embedding $\zeta$: validation $S / \|C^{(+)}\|$",
-            r"MC Maze embedding $\zeta$ vs frozen decoder",
+            r"Validation weighted plane zeta $\zeta_{\mathrm{weighted}}$",
+            r"MC Maze weighted plane $\zeta$ vs frozen decoder",
             "embedding_zeta_vs_frozen_velocity_r2",
         ),
         (
-            "embedding_val_s",
-            r"Validation $S$",
-            r"MC Maze validation $S$ vs frozen decoder",
-            "embedding_val_s_vs_frozen_velocity_r2",
+            "embedding_val_loss",
+            r"Validation loss ($-S + \mathrm{regularisation}$)",
+            r"MC Maze validation loss vs frozen decoder",
+            "embedding_val_loss_vs_frozen_velocity_r2",
         ),
     ]
     for x_key, xlabel, title, filename in specs:
@@ -763,18 +768,18 @@ def main():
         [row["embedding_val_mean_plane_zeta"] for row in rows],
         [row["mlp_r2_mean"] for row in rows],
     )
-    r_embedding_zeta = _pearson(
+    r_weighted_plane_zeta = _pearson(
         [row["embedding_val_zeta"] for row in rows],
         [row["mlp_r2_mean"] for row in rows],
     )
-    r_val_s = _pearson(
-        [row["embedding_val_s"] for row in rows],
+    r_val_loss = _pearson(
+        [row["embedding_val_loss"] for row in rows],
         [row["mlp_r2_mean"] for row in rows],
     )
     print()
     print(f"Pearson r(mean-plane zeta, frozen MLP velocity R2): {r_mean_plane_zeta:.4f}")
-    print(f"Pearson r(embedding zeta, frozen MLP velocity R2): {r_embedding_zeta:.4f}")
-    print(f"Pearson r(validation S, frozen MLP velocity R2): {r_val_s:.4f}")
+    print(f"Pearson r(weighted plane zeta, frozen MLP velocity R2): {r_weighted_plane_zeta:.4f}")
+    print(f"Pearson r(validation loss, frozen MLP velocity R2): {r_val_loss:.4f}")
 
 
 if __name__ == "__main__":

@@ -462,7 +462,6 @@ def plot_plane_zeta_bars(
 ):
     """Bar chart of validation ζ for all planes, coloured by mixed-parity branch."""
     rows = _plane_zeta_ranking_rows(F_hat, cfg, reg_thresh=reg_thresh)
-    planes = [row["plane"] for row in rows]
     zeta = [row["validation_zeta"] for row in rows]
     colors = [
         "tab:blue" if row["branch"] == "even"
@@ -482,7 +481,7 @@ def plot_plane_zeta_bars(
     tick_step = max(1, len(rows) // 16)
     ticks = x[::tick_step]
     ax.set_xticks(ticks)
-    ax.set_xticklabels([str(planes[i]) for i in ticks], rotation=45, ha="right")
+    ax.set_xticklabels([str(i + 1) for i in ticks], rotation=45, ha="right")
     ax.tick_params(labelsize=8)
     ax.spines[["top", "right"]].set_visible(False)
 
@@ -599,10 +598,10 @@ def _plot_planes_time_coded(
         ax.axhline(0, color="k", lw=0.4, alpha=0.25)
         ax.axvline(0, color="k", lw=0.4, alpha=0.25)
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_title(_simple_plane_zeta_title(p, plane_zeta[p]), fontsize=9)
-        ax.set_xlabel(f"dim {2*p}", fontsize=8)
-        ax.set_ylabel(f"dim {2*p+1}", fontsize=8)
-        ax.tick_params(labelsize=7)
+        ax.set_title(_simple_plane_zeta_title(p, plane_zeta[p]), fontsize=18)
+        ax.set_xlabel(f"dim {2*p}", fontsize=12)
+        ax.set_ylabel(f"dim {2*p+1}", fontsize=12)
+        ax.tick_params(labelsize=10.5)
         ax.set_aspect("equal", adjustable="datalim")
 
     for panel_idx in range(len(plane_indices), nrows * ncols):
@@ -697,10 +696,10 @@ def _plot_planes_condition_hsv(
         # ax.set_xlim(-6,6)
         # ax.set_ylim(-6,6)
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_title(_simple_plane_zeta_title(p, plane_zeta[p]), fontsize=12)
-        ax.set_xlabel(f"dim {2*p}", fontsize=12)
-        ax.set_ylabel(f"dim {2*p+1}", fontsize=12)
-        ax.tick_params(labelsize=7)
+        ax.set_title(_simple_plane_zeta_title(p, plane_zeta[p]), fontsize=24)
+        ax.set_xlabel(f"dim {2*p}", fontsize=18)
+        ax.set_ylabel(f"dim {2*p+1}", fontsize=18)
+        ax.tick_params(labelsize=10.5)
         ax.set_aspect("equal", adjustable="datalim")
 
     for i in range(n_panels, nrows * ncols):

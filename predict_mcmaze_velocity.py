@@ -494,7 +494,7 @@ def save_decoder_loss_curve(
             label="best val",
         )
     ax.set_xlabel("Epoch")
-    ax.set_ylabel("MSE on standardized velocity")
+    ax.set_ylabel("MSE on standardised velocity")
     ax.set_title(title)
     ax.spines[["top", "right"]].set_visible(False)
     ax.legend()
