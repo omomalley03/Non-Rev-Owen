@@ -20,9 +20,9 @@ from pathlib import Path
 from finetune_init_comparison_common import (
     append_summary_rows,
     copied_source_fields,
-    existing_completed,
     metrics_complete,
     metric_row,
+    read_rows,
     print_condition_listing,
     run_logged,
     select_condition_rows,
@@ -68,6 +68,23 @@ FIELDNAMES = [
 ]
 
 
+def existing_summary_models(summary_csv: Path) -> set[tuple[str, str, str, str]]:
+    if not summary_csv.is_file():
+        return set()
+    completed = set()
+    for row in read_rows(summary_csv):
+        metrics_path = Path(row.get("metrics_path", ""))
+        model = row.get("model", "")
+        if metrics_complete(metrics_path, model):
+            completed.add((
+                row.get("source_run_dir", ""),
+                row.get("seed", ""),
+                row.get("embedder_init", ""),
+                model,
+            ))
+    return completed
+
+
 def metrics_path_for(run_dir: Path, suffix: str, init: str, feature_layer: str) -> Path:
     out_name = f"condition_prediction_finetune_{suffix}"
     if init == "random":
@@ -97,10 +114,10 @@ def main() -> None:
     parser.add_argument("--mlp-hidden-dim", type=int, default=256)
     parser.add_argument("--mlp-depth", type=int, default=2)
     parser.add_argument("--mlp-dropout", type=float, default=0.2)
-    parser.add_argument("--conv-hidden-dim", type=int, default=32)
+    parser.add_argument("--conv-hidden-dim", type=int, default=64)
     parser.add_argument("--conv-depth", type=int, default=2)
     parser.add_argument("--conv-kernel-size", type=int, default=31)
-    parser.add_argument("--conv-dropout", type=float, default=0.6)
+    parser.add_argument("--conv-dropout", type=float, default=0.4)
     parser.add_argument("--decoder-lr", type=float, default=1e-3)
     parser.add_argument("--embedder-lr", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-3)
@@ -136,7 +153,7 @@ def main() -> None:
         return
 
     source_rows = select_condition_rows(source_csv, args.condition)
-    completed = existing_completed(summary_csv) if args.resume else set()
+    completed = existing_summary_models(summary_csv) if args.resume else set()
     print(f"Selected condition {args.condition}: {source_rows[0].get('condition', '')}")
     print(f"Seed runs: {len(source_rows)}")
 
@@ -152,12 +169,18 @@ def main() -> None:
                 else f"initcmp_c{args.condition}_s{seed}_e2e"
             )
             metrics_path = metrics_path_for(run_dir, suffix, init, args.feature_layer)
-            expected_model = f"finetuned_{args.decoder_type}"
-            key = (str(run_dir), str(seed), init)
+            expected_models = (
+                [f"frozen_{args.decoder_type}", f"finetuned_{args.decoder_type}"]
+                if init == "pretrained"
+                else [f"finetuned_{args.decoder_type}"]
+            )
             log_path = log_dir / f"{run_dir.name}_{suffix}_{init}.log"
 
-            if not (args.resume and key in completed):
-                if not metrics_complete(metrics_path, expected_model):
+            missing_models = [
+                model for model in expected_models if not metrics_complete(metrics_path, model)
+            ]
+            if not (args.resume and not missing_models):
+                if missing_models:
                     cmd = [
                         sys.executable,
                         "-u",
@@ -219,23 +242,25 @@ def main() -> None:
 
             if args.dry_run:
                 continue
-            row = metric_row(metrics_path, expected_model, init)
-            summary_row = {
-                **copied_source_fields(source_row),
-                "seed": seed,
-                "source_run_dir": str(run_dir),
-                "embedder_init": init,
-                "model": row.get("model", ""),
-                "feature_layer": row.get("feature_layer", ""),
-                "feature_dim": row.get("feature_dim", ""),
-                "flat_feature_dim": row.get("flat_feature_dim", ""),
-                "decoder_type": row.get("decoder_type", ""),
-                "metrics_path": str(metrics_path),
-                "log_path": str(log_path),
-                **{metric: row.get(metric, "") for metric in METRIC_FIELDS},
-            }
-            if not (args.resume and key in completed):
-                append_summary_rows(summary_csv, FIELDNAMES, [summary_row])
+            for expected_model in expected_models:
+                row = metric_row(metrics_path, expected_model, init)
+                summary_key = (str(run_dir), str(seed), init, expected_model)
+                summary_row = {
+                    **copied_source_fields(source_row),
+                    "seed": seed,
+                    "source_run_dir": str(run_dir),
+                    "embedder_init": init,
+                    "model": row.get("model", ""),
+                    "feature_layer": row.get("feature_layer", ""),
+                    "feature_dim": row.get("feature_dim", ""),
+                    "flat_feature_dim": row.get("flat_feature_dim", ""),
+                    "decoder_type": row.get("decoder_type", ""),
+                    "metrics_path": str(metrics_path),
+                    "log_path": str(log_path),
+                    **{metric: row.get(metric, "") for metric in METRIC_FIELDS},
+                }
+                if not (args.resume and summary_key in completed):
+                    append_summary_rows(summary_csv, FIELDNAMES, [summary_row])
 
     if not args.dry_run:
         write_ci95_summary(summary_csv, ci_csv, METRIC_FIELDS)

@@ -10,7 +10,7 @@ saves validation-S threshold checkpoints every 0.1 increase and periodic
 embedder checkpoints every 10 epochs, while saving ``best.pt`` by validation
 mean-plane zeta. The script then trains the same frozen hand-velocity decoders
 on all of those checkpoints and plots downstream MLP R^2 against validation
-mean-plane zeta, weighted plane zeta, and validation loss.
+mean-plane zeta and validation loss.
 
 To reuse an existing run that already has checkpoints/val_s_checkpoints.csv
 and checkpoints/epoch_checkpoints.csv:
@@ -594,12 +594,6 @@ def plot_checkpoint_scatters(out_dir: str, rows):
             "embedding_mean_plane_zeta_vs_frozen_velocity_r2",
         ),
         (
-            "embedding_val_zeta",
-            r"Validation weighted plane zeta $\zeta_{\mathrm{weighted}}$",
-            r"MC Maze weighted plane $\zeta$ vs frozen decoder",
-            "embedding_zeta_vs_frozen_velocity_r2",
-        ),
-        (
             "embedding_val_loss",
             r"Validation loss ($-S + \mathrm{regularisation}$)",
             r"MC Maze validation loss vs frozen decoder",
@@ -609,7 +603,7 @@ def plot_checkpoint_scatters(out_dir: str, rows):
     for x_key, xlabel, title, filename in specs:
         save_r2_scatter(out_dir, rows, x_key, xlabel, title, filename)
 
-    fig, axes = plt.subplots(1, 3, figsize=(16.2, 4.8), sharey=True, constrained_layout=True)
+    fig, axes = plt.subplots(1, len(specs), figsize=(10.8, 4.8), sharey=True, constrained_layout=True)
     epoch_all = np.asarray([row["checkpoint_epoch"] for row in rows], dtype=float)
     vmin = float(np.nanmin(epoch_all)) if np.any(np.isfinite(epoch_all)) else None
     vmax = float(np.nanmax(epoch_all)) if np.any(np.isfinite(epoch_all)) else None
