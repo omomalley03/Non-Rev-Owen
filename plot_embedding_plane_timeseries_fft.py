@@ -9,7 +9,7 @@ averaging trajectories before the FFT.
 Examples
 --------
     python plot_embedding_plane_timeseries_fft.py --run mcmaze/runs/...
-    python plot_embedding_plane_timeseries_fft.py --run physionetmi/synth_runs/...
+    python plot_embedding_plane_timeseries_fft.py --run physionetmi/synth_runs/... --participants 59,44,108,79 --planes 30,19,47,39
     python plot_embedding_plane_timeseries_fft.py --checkpoint mcmaze/runs/.../checkpoints/best.pt
     python plot_embedding_plane_timeseries_fft.py --run 1 --trial-index 0
 """
@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib_nonrev")
 os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
@@ -41,11 +42,17 @@ from plot_mcmaze_plane_spectral_redundancy import (
     load_source,
     load_windows_for_run,
 )
+from synth_data import load_synthetic_labels, load_synthetic_subjects
 from visualize import (
     _get_condition_groups,
     _mixed_parity_plane_split,
     _plane_indices_for_ranked_branch_plot,
     _plane_zeta_values,
+)
+from visualize_synth import (
+    _condition_color as physionet_condition_color,
+    _condition_name as physionet_condition_name,
+    _dataset_source_indices,
 )
 
 
@@ -179,6 +186,10 @@ def parse_condition_indices(spec: str) -> list[int]:
     return out
 
 
+def _cfg_namespace(cfg):
+    return SimpleNamespace(**cfg) if isinstance(cfg, dict) else cfg
+
+
 def parse_plane_indices(spec: str | None) -> list[int]:
     spec = str(spec or "").strip()
     if not spec:
@@ -189,6 +200,10 @@ def parse_plane_indices(spec: str | None) -> list[int]:
         if item:
             out.append(int(item))
     return out
+
+
+def parse_participant_ids(spec: str | None) -> list[int]:
+    return parse_plane_indices(spec)
 
 
 def mcmaze_condition_groups(cfg, dataset, condition_indices: list[int]):
@@ -224,11 +239,100 @@ def mcmaze_condition_groups(cfg, dataset, condition_indices: list[int]):
     return selected
 
 
+def physionet_condition_groups(
+    cfg,
+    dataset,
+    condition_labels: list[int],
+    participant_ids: list[int],
+):
+    cfg_obj = _cfg_namespace(cfg)
+    labels = load_synthetic_labels(cfg_obj)
+    if labels is None:
+        raise ValueError("PhysioNet condition plotting requires SYNTH_LABELS_PATH.")
+    subjects = load_synthetic_subjects(cfg_obj)
+
+    source_indices = _dataset_source_indices(dataset)
+    if np.max(source_indices, initial=-1) >= len(labels):
+        raise ValueError(
+            f"Loaded labels length ({len(labels)}) does not cover split source indices "
+            f"up to {int(np.max(source_indices))}."
+        )
+    split_labels = labels[source_indices]
+    mask = np.ones(len(source_indices), dtype=bool)
+
+    selected_participants = np.asarray(participant_ids, dtype=np.int64)
+    split_subjects = None
+    if subjects is not None:
+        if np.max(source_indices, initial=-1) >= len(subjects):
+            raise ValueError(
+                f"Loaded subject length ({len(subjects)}) does not cover split source indices "
+                f"up to {int(np.max(source_indices))}."
+            )
+        split_subjects = subjects[source_indices]
+    if selected_participants.size:
+        if split_subjects is None:
+            raise ValueError("--participants requires SYNTH_SUBJECTS_PATH for PhysioNet runs.")
+        missing = np.setdiff1d(selected_participants, np.unique(split_subjects))
+        if missing.size:
+            raise ValueError(
+                f"--participants contains IDs not present in the selected {len(dataset)}-trial split: "
+                f"{missing.tolist()}"
+            )
+        mask &= np.isin(split_subjects, selected_participants)
+    elif split_subjects is not None:
+        selected_participants = np.unique(split_subjects)
+
+    available_labels = np.unique(split_labels[mask])
+    selected_labels = np.asarray(condition_labels, dtype=np.int64)
+    if selected_labels.size:
+        missing = np.setdiff1d(selected_labels, available_labels)
+        if missing.size:
+            raise ValueError(
+                f"--conditions contains labels not present after participant filtering: {missing.tolist()}. "
+                f"Available labels: {available_labels.tolist()}"
+            )
+    else:
+        selected_labels = available_labels
+
+    groups = []
+    for label in selected_labels:
+        idx = np.flatnonzero(mask & (split_labels == label))
+        if idx.size == 0:
+            continue
+        participant_local_indices = []
+        if split_subjects is not None:
+            present_participants = (
+                [p for p in selected_participants if np.any(split_subjects[idx] == p)]
+                if selected_participants.size
+                else np.unique(split_subjects[idx])
+            )
+            for participant in present_participants:
+                p_idx = np.flatnonzero(
+                    mask & (split_labels == label) & (split_subjects == participant)
+                )
+                if p_idx.size:
+                    participant_local_indices.append(p_idx.astype(int, copy=False))
+        groups.append(
+            {
+                "condition_index": int(label),
+                "condition_key": int(label),
+                "local_indices": idx.astype(int, copy=False),
+                "participant_local_indices": participant_local_indices,
+                "color": physionet_condition_color(label),
+                "label": physionet_condition_name(label),
+                "participant_ids": selected_participants.copy(),
+            }
+        )
+    if not groups:
+        raise ValueError("No PhysioNet trials matched the requested participants/conditions.")
+    return groups
+
+
 def select_traces(
     F: np.ndarray,
     trial_index: int | None,
     condition_groups=None,
-) -> tuple[np.ndarray, list[np.ndarray], list[str], list, str]:
+) -> tuple[np.ndarray, list[np.ndarray | list[np.ndarray]], list[str], list, str]:
     if condition_groups:
         traces = []
         fft_source_indices = []
@@ -239,9 +343,21 @@ def select_traces(
             idx = group["local_indices"]
             if len(idx) == 0:
                 continue
-            traces.append(F[idx].mean(axis=0))
-            fft_source_indices.append(idx)
-            labels.append(f"{group['label']} mean (n={len(idx)})")
+            participant_groups = [
+                np.asarray(part_idx, dtype=int)
+                for part_idx in group.get("participant_local_indices", [])
+                if len(part_idx) > 0
+            ]
+            if participant_groups:
+                traces.append(
+                    np.stack([F[part_idx].mean(axis=0) for part_idx in participant_groups], axis=0).mean(axis=0)
+                )
+                fft_source_indices.append(participant_groups)
+                labels.append(f"{group['label']} (p={len(participant_groups)}, n={len(idx)})")
+            else:
+                traces.append(F[idx].mean(axis=0))
+                fft_source_indices.append(idx)
+                labels.append(f"{group['label']} (n={len(idx)})")
             colors.append(group["color"])
             total_trials += len(idx)
         if not traces:
@@ -341,7 +457,7 @@ def explicit_plane_metadata(
 def save_plot(
     F: np.ndarray,
     traces: np.ndarray,
-    fft_source_indices: list[np.ndarray],
+    fft_source_indices: list[np.ndarray | list[np.ndarray]],
     trace_labels: list[str],
     trace_colors: list,
     sample_rate_hz: float,
@@ -371,16 +487,29 @@ def save_plot(
     )
     t_axis = np.arange(T) / sample_rate_hz
     freqs = np.fft.rfftfreq(T, d=1.0 / sample_rate_hz) # get frequency axis
+
+    def source_fft_mag(idx_or_groups: np.ndarray | list[np.ndarray]) -> np.ndarray:
+        groups = idx_or_groups if isinstance(idx_or_groups, list) else [idx_or_groups]
+        group_mags = []
+        for idx in groups:
+            idx = np.asarray(idx, dtype=int)
+            if idx.size == 0:
+                continue
+            source_planes = np.stack(
+                [F[idx, 2 * p : 2 * p + 2, :] for p in plane_indices],
+                axis=1,
+            )
+            trial_fft_mag = np.abs(
+                np.fft.rfft(source_planes, axis=-1, norm="ortho")
+            )
+            group_mags.append(trial_fft_mag.mean(axis=0))
+        if not group_mags:
+            raise ValueError("No trajectories were available for FFT averaging.")
+        return np.stack(group_mags, axis=0).mean(axis=0)
+
     fft_mag = []
     for idx in fft_source_indices:
-        source_planes = np.stack(
-            [F[idx, 2 * p : 2 * p + 2, :] for p in plane_indices],
-            axis=1,
-        )
-        trial_fft_mag = np.abs(
-            np.fft.rfft(source_planes, axis=-1, norm="ortho")
-        )
-        fft_mag.append(trial_fft_mag.mean(axis=0))
+        fft_mag.append(source_fft_mag(idx))
     fft_mag = np.stack(fft_mag, axis=0)
     f_start = 0 if include_dc else 1
     fft_values = np.maximum(fft_mag[:, :, :, f_start:], 1e-12)
@@ -502,14 +631,14 @@ def save_plot(
             legend_loc = "upper right"
         else:
             legend_loc = "best"
-        # axes[0, 0].legend(
-        #     handles=condition_handles,
-        #     title="condition",
-        #     fontsize=legend_fs,
-        #     title_fontsize=legend_fs,
-        #     frameon=False,
-        #     loc=legend_loc,
-        # )
+        axes[0, 0].legend(
+            handles=condition_handles,
+            title="condition",
+            fontsize=legend_fs,
+            title_fontsize=legend_fs,
+            frameon=False,
+            loc=legend_loc,
+        )
 
     fig.suptitle(title, fontsize=suptitle_fs)
     fig.tight_layout()
@@ -740,17 +869,28 @@ def main() -> None:
         type=int,
         default=None,
         help=(
-            "Plot one local trial from the selected split. Default: for MC Maze, "
-            "plot condition means; otherwise plot the split-mean trace."
+            "Plot one local trial from the selected split. Default: plot condition "
+            "means for MC Maze and labelled PhysioNet/synth runs; otherwise plot "
+            "the split-mean trace."
         ),
     )
     parser.add_argument(
         "--conditions",
         default=None,
         help=(
-            "Comma-separated sorted MC Maze condition indices. Each condition is "
-            "averaged separately and plotted as its own trace. Default for MC Maze: "
-            "0,25,50,75,100. Pass an empty string to plot one split mean instead."
+            "Comma-separated sorted MC Maze condition indices, or PhysioNet condition "
+            "label IDs. Each condition is averaged separately and plotted as its own "
+            "trace. Default: MC Maze uses 0,25,50,75,100; PhysioNet uses all labels "
+            "present after participant filtering."
+        ),
+    )
+    parser.add_argument(
+        "--participants",
+        default=None,
+        help=(
+            "Comma-separated PhysioNet participant IDs to average over. Default: "
+            "SYNTH_VIZ_PARTICIPANT_IDS from the environment/config when present, "
+            "otherwise all participants in the selected split."
         ),
     )
     parser.add_argument(
@@ -787,6 +927,8 @@ def main() -> None:
         parser.error("--filter-individual-count must be non-negative")
     if args.trial_index is not None and args.conditions:
         parser.error("--trial-index and --conditions are mutually exclusive")
+    if args.trial_index is not None and args.participants:
+        parser.error("--trial-index and --participants are mutually exclusive")
 
     source = load_source(args)
     cfg = source["cfg"]
@@ -801,14 +943,34 @@ def main() -> None:
     )
     F = collect_embeddings(model, dataset, cfg, args.batch_size, device)
 
+    participant_spec = (
+        args.participants
+        if args.participants is not None
+        else os.environ.get("SYNTH_VIZ_PARTICIPANT_IDS")
+        or str(_cfg_get(cfg, "synth_viz_participant_ids", "") or "")
+    )
+    participant_ids = parse_participant_ids(participant_spec)
+
     condition_spec = args.conditions
     if args.trial_index is None and condition_spec is None and dataset_label == "MC Maze":
         condition_spec = "0,25,50,75,100"
     condition_indices = parse_condition_indices(condition_spec)
     condition_groups = None
-    if condition_indices:
+    if args.trial_index is None and dataset_label == "PhysioNet/synth":
+        condition_groups = physionet_condition_groups(
+            cfg,
+            dataset,
+            condition_indices,
+            participant_ids,
+        )
+        counts = [(group["label"], len(group["local_indices"])) for group in condition_groups]
+        participant_text = (
+            ",".join(str(p) for p in participant_ids) if participant_ids else "all split participants"
+        )
+        print(f"Averaging PhysioNet conditions separately over participants={participant_text}: {counts}")
+    elif condition_indices:
         if dataset_label != "MC Maze":
-            raise ValueError("--conditions is currently supported for MC Maze runs only.")
+            raise ValueError("--conditions is supported only for MC Maze and labelled PhysioNet/synth runs.")
         condition_groups = mcmaze_condition_groups(cfg, dataset, condition_indices)
         counts = [len(group["local_indices"]) for group in condition_groups]
         print(f"Averaging condition indices separately: {list(zip(condition_indices, counts))}")
@@ -817,7 +979,12 @@ def main() -> None:
         args.trial_index,
         condition_groups=condition_groups,
     )
-    explicit_planes = parse_plane_indices(args.planes)
+    plane_spec = (
+        args.planes
+        or os.environ.get("SYNTH_VIZ_PLANE_INDICES", "")
+        or str(_cfg_get(cfg, "synth_viz_plane_indices", "") or "")
+    )
+    explicit_planes = parse_plane_indices(plane_spec)
     if explicit_planes:
         plane_indices = explicit_planes
         plane_zeta, plane_branch = explicit_plane_metadata(F, cfg, plane_indices)

@@ -301,7 +301,7 @@ def run_one(attempt: int, candidate_json: str) -> dict[str, Any]:
         train_temporal_conv_classifier,
         transform_sequence_features,
     )
-    from synth_data import load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
+    from synth_data import apply_train_zscore, load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
     from train import train
     from visualize_synth import train_val_split_synth
 
@@ -359,9 +359,16 @@ def run_one(attempt: int, candidate_json: str) -> dict[str, Any]:
             subjects=subjects_for_split,
             subject_count=getattr(cfg, "synth_subject_count", 0),
             subject_ids=getattr(cfg, "synth_subject_ids", ""),
+            val_subject_count=getattr(cfg, "synth_val_subject_count", 0),
+            val_subject_ids=getattr(cfg, "synth_val_subject_ids", ""),
             holdout_subject_count=getattr(cfg, "synth_holdout_subject_count", 0),
             holdout_subject_ids=getattr(cfg, "synth_holdout_subject_ids", ""),
             return_holdout=True,
+        )
+        apply_train_zscore(
+            windows_for_shape,
+            _dataset_source_indices(train_ds_embed),
+            getattr(cfg, "synth_normalize", "none"),
         )
         model = MLP(
             in_channels=windows_for_shape.shape[1],
@@ -403,6 +410,8 @@ def run_one(attempt: int, candidate_json: str) -> dict[str, Any]:
         subjects=subjects,
         subject_count=getattr(cfg, "synth_subject_count", 0),
         subject_ids=getattr(cfg, "synth_subject_ids", ""),
+        val_subject_count=getattr(cfg, "synth_val_subject_count", 0),
+        val_subject_ids=getattr(cfg, "synth_val_subject_ids", ""),
         holdout_subject_count=getattr(cfg, "synth_holdout_subject_count", 0),
         holdout_subject_ids=getattr(cfg, "synth_holdout_subject_ids", ""),
         return_holdout=True,
@@ -411,6 +420,7 @@ def run_one(attempt: int, candidate_json: str) -> dict[str, Any]:
     train_idx = _dataset_source_indices(train_ds)
     val_idx = _dataset_source_indices(val_ds)
     holdout_idx = _dataset_source_indices(holdout_ds) if holdout_ds is not None else None
+    apply_train_zscore(windows, train_idx, getattr(cfg, "synth_normalize", "none"))
     y_train_raw = labels[train_idx]
     y_val_raw = labels[val_idx]
     y_test_raw = labels[holdout_idx] if holdout_idx is not None else None

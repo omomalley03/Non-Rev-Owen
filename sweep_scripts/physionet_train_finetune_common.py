@@ -34,6 +34,14 @@ CONDITION_METRIC_FIELDS = (
     "frozen_decoder_test_accuracy",
     "frozen_decoder_test_balanced_accuracy",
     "frozen_decoder_test_macro_f1",
+    "finetuned_decoder_accuracy",
+    "finetuned_decoder_balanced_accuracy",
+    "finetuned_decoder_macro_f1",
+    "finetuned_decoder_best_val_acc",
+    "finetuned_decoder_best_val_ce",
+    "finetuned_decoder_test_accuracy",
+    "finetuned_decoder_test_balanced_accuracy",
+    "finetuned_decoder_test_macro_f1",
 )
 
 T_CRITICAL_95 = {
@@ -153,23 +161,30 @@ def default_finetune_metrics_path(
     return finetune_output_dir(run_dir, output_suffix, feature_layer) / "metrics.csv"
 
 
-def finetune_complete(metrics_path: Path) -> bool:
+def finetune_complete(metrics_path: Path, require_finetuned: bool = False) -> bool:
     if not metrics_path.is_file():
         return False
     with metrics_path.open(newline="") as f:
         rows = list(csv.DictReader(f))
     models = {row.get("model") for row in rows}
-    return "frozen_temporal_conv" in models
+    required = {"frozen_temporal_conv"}
+    if require_finetuned:
+        required.add("finetuned_temporal_conv")
+    return required.issubset(models)
 
 
-def load_completed(summary_csv: Path, key_fields: tuple[str, ...]) -> set[tuple[str, ...]]:
+def load_completed(
+    summary_csv: Path,
+    key_fields: tuple[str, ...],
+    require_finetuned: bool = False,
+) -> set[tuple[str, ...]]:
     if not summary_csv.is_file():
         return set()
     completed = set()
     with summary_csv.open(newline="") as f:
         for row in csv.DictReader(f):
             metrics_path = Path(row.get("finetune_metrics", ""))
-            if not finetune_complete(metrics_path):
+            if not finetune_complete(metrics_path, require_finetuned=require_finetuned):
                 continue
             try:
                 completed.add(tuple(row[field] for field in key_fields))
@@ -181,6 +196,21 @@ def load_completed(summary_csv: Path, key_fields: tuple[str, ...]) -> set[tuple[
 def append_rows(summary_csv: Path, fieldnames: list[str], rows: list[dict[str, object]]) -> None:
     summary_csv.parent.mkdir(parents=True, exist_ok=True)
     exists = summary_csv.is_file()
+    if exists:
+        with summary_csv.open(newline="") as f:
+            reader = csv.DictReader(f)
+            existing_fieldnames = list(reader.fieldnames or [])
+            if existing_fieldnames and existing_fieldnames != fieldnames:
+                merged_fieldnames = [
+                    *existing_fieldnames,
+                    *[field for field in fieldnames if field not in existing_fieldnames],
+                ]
+                existing_rows = list(reader)
+                with summary_csv.open("w", newline="") as out:
+                    writer = csv.DictWriter(out, fieldnames=merged_fieldnames, extrasaction="ignore")
+                    writer.writeheader()
+                    writer.writerows(existing_rows)
+                fieldnames = merged_fieldnames
     with summary_csv.open("a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         if not exists:
@@ -539,6 +569,7 @@ def decoder_summary_metrics(metric_rows: list[dict[str, str]]) -> dict[str, str]
     summary: dict[str, str] = {}
     prefixes = {
         "frozen_temporal_conv": "frozen_decoder",
+        "finetuned_temporal_conv": "finetuned_decoder",
     }
     copied = (
         "embedder_init",
@@ -572,6 +603,7 @@ def run_main_synth_then_finetune(
     seed: int,
     decoder_args: list[str] | None = None,
     dry_run: bool = False,
+    frozen_only: bool = True,
 ) -> Optional[Path]:
     train_output = run_logged(
         [sys.executable, "-u", "main_synth.py"],
@@ -592,10 +624,11 @@ def run_main_synth_then_finetune(
         "hidden",
         "--decoder-type",
         "temporal_conv",
-        "--frozen-only",
         "--output-suffix",
         output_suffix,
     ]
+    if frozen_only:
+        cmd.append("--frozen-only")
     if decoder_args:
         cmd.extend(decoder_args)
     run_logged(cmd, env, finetune_log, dry_run=dry_run)

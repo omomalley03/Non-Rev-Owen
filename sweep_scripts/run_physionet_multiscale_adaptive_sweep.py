@@ -138,9 +138,9 @@ def run_one(attempt: int, candidate_json: str) -> dict[str, Any]:
 
     from config import Config
     from main_synth import set_seed as set_train_seed
-    from main_synth import train_val_split_synth
+    from main_synth import _dataset_source_indices, train_val_split_synth
     from model import MLP
-    from synth_data import load_synthetic_subjects, load_synthetic_windows
+    from synth_data import apply_train_zscore, load_synthetic_subjects, load_synthetic_windows
     from train import train
 
     candidate = json.loads(candidate_json)
@@ -172,9 +172,12 @@ def run_one(attempt: int, candidate_json: str) -> dict[str, Any]:
         subjects=subjects,
         subject_count=getattr(cfg, "synth_subject_count", 0),
         subject_ids=getattr(cfg, "synth_subject_ids", ""),
+        val_subject_count=getattr(cfg, "synth_val_subject_count", 0),
+        val_subject_ids=getattr(cfg, "synth_val_subject_ids", ""),
         holdout_subject_count=getattr(cfg, "synth_holdout_subject_count", 0),
         holdout_subject_ids=getattr(cfg, "synth_holdout_subject_ids", ""),
     )
+    apply_train_zscore(windows, _dataset_source_indices(train_ds), getattr(cfg, "synth_normalize", "none"))
 
     model = MLP(
         in_channels=windows.shape[1],

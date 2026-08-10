@@ -4,8 +4,9 @@ Visualise non-reversibility quality for synthetic rotation data.
 Each diagnostic plot is saved as its own PNG in the run's `outputs/` dir:
 
   01_raw_time_coded.png           — raw input, time-coded (top-2 input PCA)
-  02_embed_planes_time_coded.png  — one subplot per 2D rotation plane, time-coded
-  04_embed_planes_participant_hsv.png — participant-avg embedding, HSV by participant ID
+  02_embed_planes_time_coded.png  — participant/condition mean trajectories by ranked planes
+  03_embed_planes_first_condition_sample_time_coded.png — first sample per condition, time-coded
+  04_embed_planes_participant_hsv.png — participant/condition mean trajectories by ranked planes
   05_embed_planes_condition_time.png — per plane, dims vs time, class means
   06_plane_validation_zeta_ranking.csv — all planes ranked by validation ζ
   06_plane_validation_zeta_bars.png — bar chart of ranked plane validation ζ
@@ -14,9 +15,7 @@ Each diagnostic plot is saved as its own PNG in the run's `outputs/` dir:
   07_block_cca_plane_heatmap.png  — cross-plane regularisation metric
   08_between_within_variance.png  — trial-discriminability over time
   09_embedding_norm_distribution.png — embedding norm distribution
-  14/15_*_participant_conditions.png — selected participants, colour-coded by class label
-  16/17_*_participant_condition_means.png — selected participants, condition-avg trajectories
-  18_val_condition_means_all_trials.png — all validation trials, condition-avg trajectories
+  12-18_*                         — disabled by default; expensive participant/all-trial plots
 
 Usage
 -----
@@ -56,7 +55,7 @@ from loss import (
     loss_fn,
     non_reversibility_components,
 )
-from synth_data import load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
+from synth_data import apply_train_zscore, load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
 from visualize_loss import plot_loss_curve
 from visualize import (
     plot_block_cca_plane_heatmap as plot_regularisation_block_cca_plane_heatmap,
@@ -65,6 +64,17 @@ from visualize import (
     plot_zeta_sorted_correlation_heatmap,
     write_plane_zeta_ranking,
 )
+
+
+_SUBJECT_RANDOM_SPLITS = {"subject_random", "participant_random"}
+_SUBJECT_HOLDOUT_SPLITS = {
+    "subject_holdout",
+    "participant_holdout",
+    "subject_disjoint",
+    "participant_disjoint",
+    "subject_disjoint_holdout",
+    "participant_disjoint_holdout",
+}
 
 
 def _fit_pca2(X):
@@ -273,6 +283,42 @@ def _select_subject_sets(
     return selected_subjects, trainval_subjects, holdout_subjects
 
 
+def _select_validation_subjects(
+    trainval_subjects: np.ndarray,
+    rng: np.random.Generator,
+    val_frac: float,
+    val_subject_count: int = 0,
+    val_subject_ids: str = "",
+) -> tuple[np.ndarray, np.ndarray]:
+    explicit_val = _parse_subject_ids(val_subject_ids)
+    if explicit_val.size:
+        if len(np.unique(explicit_val)) != len(explicit_val):
+            raise ValueError("SYNTH_VAL_SUBJECT_IDS must not contain duplicate subjects")
+        missing = np.setdiff1d(explicit_val, trainval_subjects)
+        if missing.size:
+            raise ValueError(
+                "SYNTH_VAL_SUBJECT_IDS must be within the selected non-test subject pool; "
+                f"unknown, unselected, or test-overlapping subjects: {missing.tolist()}"
+            )
+        val_subjects = np.sort(explicit_val)
+    else:
+        if val_subject_count and val_subject_count > 0:
+            n_val_subjects = int(val_subject_count)
+        else:
+            n_val_subjects = max(1, int(len(trainval_subjects) * val_frac))
+        if n_val_subjects >= len(trainval_subjects):
+            raise ValueError(
+                "subject_holdout validation subjects must leave at least one training subject; "
+                f"got val={n_val_subjects}, trainval_pool={len(trainval_subjects)}"
+            )
+        val_subjects = np.sort(rng.choice(trainval_subjects, size=n_val_subjects, replace=False))
+
+    train_subjects = np.setdiff1d(trainval_subjects, val_subjects)
+    if len(train_subjects) < 1:
+        raise ValueError("subject_holdout split leaves no training subjects")
+    return train_subjects, val_subjects
+
+
 def train_val_split_synth(
     windows: np.ndarray,
     val_frac: float,
@@ -281,6 +327,8 @@ def train_val_split_synth(
     subjects: np.ndarray | None = None,
     subject_count: int = 0,
     subject_ids: str = "",
+    val_subject_count: int = 0,
+    val_subject_ids: str = "",
     holdout_subject_count: int = 0,
     holdout_subject_ids: str = "",
     return_holdout: bool = False,
@@ -291,10 +339,18 @@ def train_val_split_synth(
     full_ds = TensorDataset(tensor)
 
     split = split.lower()
-    if split not in {"subject_random", "participant_random"} and (
-        holdout_subject_count or _parse_subject_ids(holdout_subject_ids).size
+    subject_split_modes = _SUBJECT_RANDOM_SPLITS | _SUBJECT_HOLDOUT_SPLITS
+    if split not in subject_split_modes and (
+        holdout_subject_count
+        or _parse_subject_ids(holdout_subject_ids).size
+        or val_subject_count
+        or _parse_subject_ids(val_subject_ids).size
     ):
-        raise ValueError("Subject holdout requires SYNTH_SPLIT=subject_random")
+        raise ValueError("Subject holdout settings require SYNTH_SPLIT=subject_random or subject_holdout")
+    if split in _SUBJECT_RANDOM_SPLITS and (
+        val_subject_count or _parse_subject_ids(val_subject_ids).size
+    ):
+        raise ValueError("SYNTH_VAL_SUBJECT_COUNT/IDS require SYNTH_SPLIT=subject_holdout")
 
     if split in {"train_eq_val", "train_equals_val", "all", "none"}:
         if return_holdout:
@@ -315,9 +371,9 @@ def train_val_split_synth(
         if return_holdout:
             return train_ds, val_ds, None, None, np.array([], dtype=np.int64)
         return train_ds, val_ds
-    if split in {"subject_random", "participant_random"}:
+    if split in subject_split_modes:
         if subjects is None:
-            raise ValueError("SYNTH_SPLIT=subject_random requires SYNTH_SUBJECTS_PATH")
+            raise ValueError(f"SYNTH_SPLIT={split} requires SYNTH_SUBJECTS_PATH")
         if len(subjects) != len(tensor):
             raise ValueError(
                 f"subject IDs length ({len(subjects)}) must match windows length ({len(tensor)})"
@@ -332,6 +388,28 @@ def train_val_split_synth(
             holdout_subject_count=holdout_subject_count,
             holdout_subject_ids=holdout_subject_ids,
         )
+
+        if split in _SUBJECT_HOLDOUT_SPLITS:
+            train_subjects, val_subjects = _select_validation_subjects(
+                trainval_subjects,
+                rng,
+                val_frac,
+                val_subject_count=val_subject_count,
+                val_subject_ids=val_subject_ids,
+            )
+            train_idx = np.flatnonzero(np.isin(subjects, train_subjects))
+            val_idx = np.flatnonzero(np.isin(subjects, val_subjects))
+            if len(train_idx) < 1 or len(val_idx) < 1:
+                raise ValueError(
+                    f"subject_holdout split produced train={len(train_idx)} val={len(val_idx)} trials"
+                )
+            train_ds = Subset(full_ds, train_idx.tolist())
+            val_ds = Subset(full_ds, val_idx.tolist())
+            if return_holdout:
+                holdout_idx = np.flatnonzero(np.isin(subjects, holdout_subjects))
+                holdout_ds = Subset(full_ds, holdout_idx.tolist()) if len(holdout_idx) else None
+                return train_ds, val_ds, holdout_ds, trainval_subjects, holdout_subjects
+            return train_ds, val_ds
 
         eligible = np.flatnonzero(np.isin(subjects, trainval_subjects))
         if len(eligible) < 2:
@@ -349,7 +427,7 @@ def train_val_split_synth(
             return train_ds, val_ds, holdout_ds, trainval_subjects, holdout_subjects
         return train_ds, val_ds
     if split != "random":
-        raise ValueError("SYNTH_SPLIT must be one of: random, train_eq_val, subject_random, dataset")
+        raise ValueError("SYNTH_SPLIT must be one of: random, train_eq_val, subject_random, subject_holdout, dataset")
 
     n_val = max(1, int(len(tensor) * val_frac))
     n_train = len(tensor) - n_val
@@ -560,8 +638,8 @@ def _plot_planes_time_coded(F_hat, s_ratio, out_path,
         ax.spines[["top", "right"]].set_visible(False)
         # ax.set_title("Linear embedding")
         # ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})  ζ={zeta[p,p]:.2f}", fontsize=9)
-        ax.set_xlabel(f"dim {2*p}", fontsize=8)
-        ax.set_ylabel(f"dim {2*p+1}", fontsize=8)
+        ax.set_xlabel(f"dim {2*p}", fontsize=12)
+        ax.set_ylabel(f"dim {2*p+1}", fontsize=12)
         ax.tick_params(labelsize=7)
         ax.set_aspect("equal", adjustable="datalim")
 
@@ -673,9 +751,9 @@ def _plot_planes_participant_hsv(F_hat, participant_ids, s_ratio, out_path):
             ax.scatter(mean_traj[0, 0], mean_traj[1, 0], color=color, s=25, zorder=5)
 
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})", fontsize=12)
-        ax.set_xlabel(f"dim {2*p}", fontsize=12)
-        ax.set_ylabel(f"dim {2*p+1}", fontsize=12)
+        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})", fontsize=18)
+        ax.set_xlabel(f"dim {2*p}", fontsize=18)
+        ax.set_ylabel(f"dim {2*p+1}", fontsize=18)
         ax.tick_params(labelsize=7)
         ax.set_aspect("equal", adjustable="datalim")
 
@@ -685,7 +763,7 @@ def _plot_planes_participant_hsv(F_hat, participant_ids, s_ratio, out_path):
     sm = plt.cm.ScalarMappable(cmap=participant_cmap, norm=participant_norm)
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=axes.ravel().tolist(), fraction=0.035, pad=0.03)
-    cbar.set_label("participant ID", fontsize=9)
+    cbar.set_label("participant ID", fontsize=13.5)
     cbar.set_ticks(np.arange(len(participants)))
     cbar.set_ticklabels([str(int(participant)) for participant in participants])
     cbar.ax.tick_params(labelsize=7)
@@ -695,6 +773,415 @@ def _plot_planes_participant_hsv(F_hat, participant_ids, s_ratio, out_path):
         f"Participant-averaged embedding trajectories  (ζ = {s_ratio:.2f})\n"
         f"{len(participants)} participants, {np.mean(counts):.1f} trials/participant avg",
         fontsize=11,
+    )
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
+def _native_plane_zeta(F_hat: np.ndarray) -> np.ndarray:
+    """Compute validation ζ for each native 2D embedding plane."""
+    K, d, _ = F_hat.shape
+    D = d // 2
+    out = np.full(D, np.nan, dtype=float)
+    for p in range(D):
+        plane = torch.from_numpy(F_hat[:, 2 * p : 2 * p + 2, :])
+        out[p] = compute_S_ratio(_batch_rms_normalize(plane)).item()
+    return out
+
+
+def _plane_type_groups(cfg: Config, D: int) -> tuple[list[int], list[int]]:
+    """Return symmetric/even and antisymmetric/odd native plane indices."""
+    frontend = str(getattr(cfg, "temporal_frontend", "") or "").lower()
+    mixed_frontends = {
+        "mixed_parity",
+        "mixed_symmetric_antisymmetric",
+        "mixed_sym_anti",
+        "sym_anti",
+    }
+    if frontend in mixed_frontends:
+        odd_count = int(getattr(cfg, "antisymmetric_planes", 0))
+        if odd_count < 0:
+            odd_count = max(1, D // 2)
+        odd_count = max(0, min(D, odd_count))
+        even_count = D - odd_count
+        return list(range(even_count)), list(range(even_count, D))
+
+    dual_symmetric_frontends = {
+        "dual_symmetric",
+        "even_even",
+        "symmetric_symmetric",
+        "double_symmetric",
+    }
+    if frontend in dual_symmetric_frontends:
+        return list(range(D)), []
+
+    return list(range(D)), []
+
+
+def _rank_planes(planes: list[int], zeta_by_plane: np.ndarray, limit: int) -> list[int]:
+    ranked = sorted(
+        planes,
+        key=lambda p: (-np.nan_to_num(zeta_by_plane[p], nan=-np.inf), p),
+    )
+    return ranked[: max(0, int(limit))]
+
+
+def _participant_nonrev_scores(
+    F_hat: np.ndarray,
+    participant_ids: np.ndarray,
+    selected_planes: list[int],
+) -> dict:
+    scores = {}
+    for participant in np.unique(participant_ids):
+        idx = np.flatnonzero(participant_ids == participant)
+        if len(idx) < 2:
+            continue
+        if selected_planes:
+            dims = []
+            for p in selected_planes:
+                dims.extend([2 * p, 2 * p + 1])
+            participant_F = F_hat[idx][:, dims, :]
+        else:
+            participant_F = F_hat[idx]
+        scores[participant] = compute_S_ratio(
+            _batch_rms_normalize(torch.from_numpy(participant_F))
+        ).item()
+    return scores
+
+
+def _select_participants_for_condition_means(
+    F_hat: np.ndarray,
+    participant_ids: np.ndarray,
+    selected_planes: list[int],
+    count: int,
+    mode: str,
+    seed: int,
+) -> np.ndarray:
+    participants = np.unique(participant_ids)
+    count = min(max(1, int(count)), len(participants))
+    if count == 0:
+        return np.array([], dtype=participant_ids.dtype)
+
+    mode = str(mode or "top_zeta").strip().lower()
+    if mode == "random":
+        rng = np.random.default_rng(seed)
+        return np.sort(rng.choice(participants, size=count, replace=False))
+    if mode != "top_zeta":
+        raise ValueError("SYNTH_VIZ_PARTICIPANT_MODE must be one of: top_zeta, random")
+
+    scores = _participant_nonrev_scores(F_hat, participant_ids, selected_planes)
+    ranked = [(score, participant) for participant, score in scores.items()]
+    if not ranked:
+        return participants[:count]
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return np.array([participant for _, participant in ranked[:count]], dtype=participants.dtype)
+
+
+def _select_participant_condition_plot_items(
+    F_hat_rank: np.ndarray,
+    participant_ids: np.ndarray,
+    cfg: Config,
+    even_plane_count: int = 4,
+    odd_plane_count: int = 4,
+) -> tuple[list[int], np.ndarray, np.ndarray, set[int], set[int], str, str]:
+    """Select the native planes and participants used by participant-condition grids."""
+    _, d, _ = F_hat_rank.shape
+    D = d // 2
+    zeta_by_plane = _native_plane_zeta(F_hat_rank)
+    even_planes, odd_planes = _plane_type_groups(cfg, D)
+    even_plane_set = set(even_planes)
+    odd_plane_set = set(odd_planes)
+    explicit_planes = _parse_subject_ids(getattr(cfg, "synth_viz_plane_indices", ""))
+    if explicit_planes.size:
+        invalid_planes = [int(p) for p in explicit_planes if p < 0 or p >= D]
+        if invalid_planes:
+            raise ValueError(
+                f"SYNTH_VIZ_PLANE_INDICES contains invalid planes for D={D}: {invalid_planes}"
+            )
+        if len(np.unique(explicit_planes)) != len(explicit_planes):
+            raise ValueError("SYNTH_VIZ_PLANE_INDICES must not contain duplicate planes")
+        selected_planes = [int(p) for p in explicit_planes]
+        selected_even = [p for p in selected_planes if p in even_plane_set]
+        selected_odd = [p for p in selected_planes if p in odd_plane_set]
+        row_label = "Rows: selected planes"
+    else:
+        selected_even = _rank_planes(even_planes, zeta_by_plane, even_plane_count)
+        selected_odd = _rank_planes(odd_planes, zeta_by_plane, odd_plane_count)
+        selected_planes = selected_even + selected_odd
+        row_label = (
+            f"Rows: top {len(selected_even)} even + top {len(selected_odd)} odd planes"
+        )
+
+    explicit_participants = _parse_subject_ids(getattr(cfg, "synth_viz_participant_ids", ""))
+    if explicit_participants.size:
+        missing = np.setdiff1d(explicit_participants, np.unique(participant_ids))
+        if missing.size:
+            raise ValueError(
+                f"SYNTH_VIZ_PARTICIPANT_IDS contains unknown participants: {missing.tolist()}"
+            )
+        selected_participants = explicit_participants
+        selection_label = "selected participants"
+    else:
+        participant_count = int(getattr(cfg, "synth_viz_participant_count", 4))
+        selected_participants = _select_participants_for_condition_means(
+            F_hat_rank,
+            participant_ids,
+            selected_planes,
+            participant_count,
+            getattr(cfg, "synth_viz_participant_mode", "top_zeta"),
+            int(getattr(cfg, "seed", 0)) + 404,
+        )
+        selection_label = (
+            "random participants"
+            if str(getattr(cfg, "synth_viz_participant_mode", "top_zeta")).strip().lower() == "random"
+            else "ranked participants"
+        )
+    return (
+        selected_planes,
+        selected_participants,
+        zeta_by_plane,
+        even_plane_set,
+        odd_plane_set,
+        row_label,
+        selection_label,
+    )
+
+
+def _participant_plane_kind(plane_idx: int, even_plane_set: set[int], odd_plane_set: set[int]) -> str:
+    if plane_idx in even_plane_set:
+        return "even"
+    if plane_idx in odd_plane_set:
+        return "odd"
+    return "plane"
+
+
+def _plot_participant_condition_plane_means(
+    F_hat_plot: np.ndarray,
+    F_hat_rank: np.ndarray,
+    participant_ids: np.ndarray | None,
+    labels: np.ndarray | None,
+    cfg: Config,
+    s_ratio: float,
+    out_path: str,
+    even_plane_count: int = 4,
+    odd_plane_count: int = 4,
+):
+    """Plot participant x ranked-plane grid with condition-average trajectories."""
+    if participant_ids is None or labels is None:
+        return
+    participant_ids = np.asarray(participant_ids)
+    labels = np.asarray(labels)
+    if len(participant_ids) != F_hat_plot.shape[0] or len(labels) != F_hat_plot.shape[0]:
+        raise ValueError("participant_ids and labels must align with plotted embeddings")
+    if F_hat_rank.shape[:2] != F_hat_plot.shape[:2]:
+        raise ValueError("F_hat_rank and F_hat_plot must contain the same trials/dimensions")
+
+    K, d, T = F_hat_plot.shape
+    D = d // 2
+    if D < 1:
+        return
+
+    (
+        selected_planes,
+        selected_participants,
+        zeta_by_plane,
+        even_plane_set,
+        odd_plane_set,
+        row_label,
+        selection_label,
+    ) = _select_participant_condition_plot_items(
+        F_hat_rank,
+        participant_ids,
+        cfg,
+        even_plane_count=even_plane_count,
+        odd_plane_count=odd_plane_count,
+    )
+    if not selected_planes:
+        return
+    if len(selected_participants) == 0:
+        return
+
+    planes = F_hat_plot.reshape(K, D, 2, T)
+    present_labels = np.array(sorted(np.unique(labels).tolist()))
+    fig, axes = plt.subplots(
+        len(selected_planes),
+        len(selected_participants),
+        figsize=(4.0 * len(selected_participants), 3.25 * len(selected_planes)),
+        squeeze=False,
+    )
+
+    for row, plane_idx in enumerate(selected_planes):
+        plane_kind = _participant_plane_kind(plane_idx, even_plane_set, odd_plane_set)
+        for col, participant in enumerate(selected_participants):
+            ax = axes[row, col]
+            if row == 0:
+                ax.set_title(f"Participant {int(participant)}", fontsize=15)
+            if col == 0:
+                ax.set_ylabel(
+                    f"{plane_kind} plane {plane_idx}\n"
+                    f"dims {2 * plane_idx},{2 * plane_idx + 1}",
+                    fontsize=13.5,
+                )
+
+            base_idx = np.flatnonzero(participant_ids == participant)
+            for label in present_labels:
+                idx = base_idx[labels[base_idx] == label]
+                if len(idx) == 0:
+                    continue
+                mean_traj = planes[idx, plane_idx].mean(axis=0)
+                color = _condition_color(label)
+                ax.plot(mean_traj[0], mean_traj[1], lw=1.35, color=color, alpha=0.72)
+                ax.scatter(mean_traj[0, 0], mean_traj[1, 0], color=color, s=18, alpha=0.85, zorder=5)
+
+            ax.axhline(0, color="k", lw=0.35, alpha=0.22)
+            ax.axvline(0, color="k", lw=0.35, alpha=0.22)
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.set_xlabel(f"dim {2 * plane_idx}", fontsize=12)
+            ax.tick_params(labelsize=7)
+            ax.set_aspect("equal", adjustable="datalim")
+
+    handles = _condition_legend_handles(present_labels)
+    if handles:
+        fig.legend(
+            handles=handles,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.015),
+            ncol=min(4, len(handles)),
+            fontsize=12,
+            frameon=False,
+        )
+
+    fig.suptitle(
+        "Participant/condition mean embedding trajectories\n"
+        f"{row_label}; columns: {selection_label}",
+        fontsize=11,
+    )
+    fig.tight_layout(rect=(0, 0.06 if handles else 0.02, 1, 0.95))
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
+def _plot_participant_condition_first_samples_time_coded(
+    F_hat_plot: np.ndarray,
+    F_hat_rank: np.ndarray,
+    participant_ids: np.ndarray | None,
+    labels: np.ndarray | None,
+    cfg: Config,
+    s_ratio: float,
+    out_path: str,
+    even_plane_count: int = 4,
+    odd_plane_count: int = 4,
+    cmap_name: str = "coolwarm",
+):
+    """Plot the first trial per condition for the same participant/plane grid as figure 02."""
+    if participant_ids is None or labels is None:
+        return
+    participant_ids = np.asarray(participant_ids)
+    labels = np.asarray(labels)
+    if len(participant_ids) != F_hat_plot.shape[0] or len(labels) != F_hat_plot.shape[0]:
+        raise ValueError("participant_ids and labels must align with plotted embeddings")
+    if F_hat_rank.shape[:2] != F_hat_plot.shape[:2]:
+        raise ValueError("F_hat_rank and F_hat_plot must contain the same trials/dimensions")
+
+    K, d, T = F_hat_plot.shape
+    D = d // 2
+    if D < 1:
+        return
+
+    (
+        selected_planes,
+        selected_participants,
+        _zeta_by_plane,
+        even_plane_set,
+        odd_plane_set,
+        row_label,
+        selection_label,
+    ) = _select_participant_condition_plot_items(
+        F_hat_rank,
+        participant_ids,
+        cfg,
+        even_plane_count=even_plane_count,
+        odd_plane_count=odd_plane_count,
+    )
+    if not selected_planes or len(selected_participants) == 0:
+        return
+
+    planes = F_hat_plot.reshape(K, D, 2, T)
+    present_labels = np.array(sorted(np.unique(labels).tolist()))
+    fig, axes = plt.subplots(
+        len(selected_planes),
+        len(selected_participants),
+        figsize=(4.0 * len(selected_participants), 3.25 * len(selected_planes)),
+        squeeze=False,
+    )
+
+    for row, plane_idx in enumerate(selected_planes):
+        plane_kind = _participant_plane_kind(plane_idx, even_plane_set, odd_plane_set)
+        for col, participant in enumerate(selected_participants):
+            ax = axes[row, col]
+            if row == 0:
+                ax.set_title(f"Participant {int(participant)}", fontsize=15)
+            if col == 0:
+                ax.set_ylabel(
+                    f"{plane_kind} plane {plane_idx}\n"
+                    f"dims {2 * plane_idx},{2 * plane_idx + 1}",
+                    fontsize=13.5,
+                )
+
+            base_idx = np.flatnonzero(participant_ids == participant)
+            for label in present_labels:
+                label_idx = base_idx[labels[base_idx] == label]
+                if len(label_idx) == 0:
+                    continue
+                sample_idx = int(label_idx[0])
+                xy = planes[sample_idx : sample_idx + 1, plane_idx].transpose(0, 2, 1)
+                _add_timecoded_lines(ax, xy, cmap_name, linewidth=1.2, alpha=0.88)
+                start_xy = xy[0, 0]
+                ax.scatter(
+                    start_xy[0],
+                    start_xy[1],
+                    color=_condition_color(label),
+                    s=20,
+                    alpha=0.9,
+                    zorder=5,
+                )
+
+            ax.axhline(0, color="k", lw=0.35, alpha=0.22)
+            ax.axvline(0, color="k", lw=0.35, alpha=0.22)
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.set_xlabel(f"dim {2 * plane_idx}", fontsize=12)
+            ax.tick_params(labelsize=7)
+            ax.set_aspect("equal", adjustable="datalim")
+
+    handles = _condition_legend_handles(present_labels)
+    if handles:
+        fig.legend(
+            handles=handles,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.015),
+            ncol=min(4, len(handles)),
+            fontsize=12,
+            frameon=False,
+        )
+    sm = plt.cm.ScalarMappable(cmap=plt.get_cmap(cmap_name), norm=plt.Normalize(0, T - 1))
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=axes.ravel().tolist(), fraction=0.014, pad=0.018)
+    cbar.set_label("time (bins)", fontsize=12)
+
+    fig.suptitle(
+        "First sample per condition, time-coded\n"
+        f"{row_label}; columns: {selection_label}",
+        fontsize=11,
+    )
+    fig.subplots_adjust(
+        left=0.06,
+        right=0.88,
+        bottom=0.08 if handles else 0.04,
+        top=0.90,
+        hspace=0.45,
+        wspace=0.25,
     )
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -782,9 +1269,9 @@ def _plot_planes_condition_time(
             ax.plot(t_axis, mean_traj[1], lw=1.2, color=color, alpha=0.9, ls="--")
 
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})", fontsize=10)
-        ax.set_xlabel("time (bins)", fontsize=8)
-        ax.set_ylabel("embedding value", fontsize=8)
+        ax.set_title(f"Plane {p}  (dims {2*p}, {2*p+1})", fontsize=15)
+        ax.set_xlabel("time (bins)", fontsize=12)
+        ax.set_ylabel("embedding value", fontsize=12)
         ax.tick_params(labelsize=7)
 
     for p in range(D, nrows * ncols):
@@ -806,13 +1293,117 @@ def _plot_planes_condition_time(
         loc="lower center",
         bbox_to_anchor=(0.5, 0.01),
         ncol=min(6, len(legend_handles)),
-        fontsize=8,
+        fontsize=12,
         frameon=False,
     )
 
-    zeta_text = f"  (ζ = {s_ratio:.2f})" if np.isfinite(s_ratio) else ""
-    fig.suptitle(f"Embedding coordinates over time{zeta_text}", fontsize=11)
+    fig.suptitle("Embedding coordinates over time", fontsize=11)
     fig.tight_layout(rect=(0, 0.08, 1, 0.96))
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved → {out_path}")
+
+
+def _plot_participant_condition_time_grid(
+    F_hat_plot: np.ndarray,
+    F_hat_rank: np.ndarray,
+    participant_ids: np.ndarray | None,
+    labels: np.ndarray | None,
+    cfg: Config,
+    out_path: str,
+    even_plane_count: int = 4,
+    odd_plane_count: int = 4,
+):
+    """Plot condition mean coordinates over time using the same grid as figure 02."""
+    if participant_ids is None or labels is None:
+        return
+    participant_ids = np.asarray(participant_ids)
+    labels = np.asarray(labels)
+    if len(participant_ids) != F_hat_plot.shape[0] or len(labels) != F_hat_plot.shape[0]:
+        raise ValueError("participant_ids and labels must align with plotted embeddings")
+    if F_hat_rank.shape[:2] != F_hat_plot.shape[:2]:
+        raise ValueError("F_hat_rank and F_hat_plot must contain the same trials/dimensions")
+
+    K, d, T = F_hat_plot.shape
+    D = d // 2
+    if D < 1:
+        return
+
+    (
+        selected_planes,
+        selected_participants,
+        _zeta_by_plane,
+        even_plane_set,
+        odd_plane_set,
+        row_label,
+        selection_label,
+    ) = _select_participant_condition_plot_items(
+        F_hat_rank,
+        participant_ids,
+        cfg,
+        even_plane_count=even_plane_count,
+        odd_plane_count=odd_plane_count,
+    )
+    if not selected_planes or len(selected_participants) == 0:
+        return
+
+    planes = F_hat_plot.reshape(K, D, 2, T)
+    t_axis = np.arange(T)
+    present_labels = np.array(sorted(np.unique(labels).tolist()))
+    fig, axes = plt.subplots(
+        len(selected_planes),
+        len(selected_participants),
+        figsize=(4.0 * len(selected_participants), 2.8 * len(selected_planes)),
+        squeeze=False,
+    )
+
+    for row, plane_idx in enumerate(selected_planes):
+        plane_kind = _participant_plane_kind(plane_idx, even_plane_set, odd_plane_set)
+        for col, participant in enumerate(selected_participants):
+            ax = axes[row, col]
+            if row == 0:
+                ax.set_title(f"Participant {int(participant)}", fontsize=15)
+            if col == 0:
+                ax.set_ylabel(
+                    f"{plane_kind} plane {plane_idx}\n"
+                    f"dims {2 * plane_idx},{2 * plane_idx + 1}",
+                    fontsize=13.5,
+                )
+
+            base_idx = np.flatnonzero(participant_ids == participant)
+            for label in present_labels:
+                idx = base_idx[labels[base_idx] == label]
+                if len(idx) == 0:
+                    continue
+                mean_traj = planes[idx, plane_idx].mean(axis=0)
+                color = _condition_color(label)
+                ax.plot(t_axis, mean_traj[0], lw=1.05, color=color, alpha=0.9, ls="-")
+                ax.plot(t_axis, mean_traj[1], lw=1.05, color=color, alpha=0.9, ls="--")
+
+            ax.axhline(0, color="0.2", lw=0.35, alpha=0.25)
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.set_xlabel("time (bins)", fontsize=12)
+            ax.tick_params(labelsize=7)
+
+    style_handles = [
+        plt.Line2D([0], [0], color="0.3", lw=1.4, ls="-", label="first dim"),
+        plt.Line2D([0], [0], color="0.3", lw=1.4, ls="--", label="second dim"),
+    ]
+    handles = style_handles + _condition_legend_handles(present_labels)
+    fig.legend(
+        handles=handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.015),
+        ncol=min(6, len(handles)),
+        fontsize=12,
+        frameon=False,
+    )
+    fig.suptitle(
+        "Participant/condition mean embedding coordinates over time\n"
+        f"{row_label}; columns: {selection_label}",
+        fontsize=11,
+    )
+    fig.tight_layout(rect=(0, 0.07, 1, 0.95))
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"Saved → {out_path}")
@@ -1277,29 +1868,36 @@ def make_diagnostic_plots_synth(
     model = model.to(device).eval()
 
     loader = DataLoader(val_ds, batch_size=len(val_ds), shuffle=False)
-    (val_tensor,) = next(iter(loader))
-    val_source_idx = _dataset_source_indices(val_ds) if subjects is not None else None
+    (val_tensor_full,) = next(iter(loader))
+    val_source_idx = _dataset_source_indices(val_ds)
     if labels is not None:
-        source_idx = _dataset_source_indices(val_ds)
-        if len(source_idx) and int(source_idx.max()) >= len(labels):
+        if len(val_source_idx) and int(val_source_idx.max()) >= len(labels):
             raise ValueError("labels length must cover the validation dataset source indices")
-        val_labels_plot = labels[source_idx]
+        val_labels_full = labels[val_source_idx]
     else:
-        val_labels_plot = None
+        val_labels_full = None
+    val_participant_ids_full = (
+        subjects[val_source_idx]
+        if subjects is not None and len(val_source_idx) and int(val_source_idx.max()) < len(subjects)
+        else None
+    )
     max_trials = getattr(cfg, "synth_viz_max_trials", 0)
-    if max_trials and val_tensor.shape[0] > max_trials:
+    plot_trial_count = val_tensor_full.shape[0]
+    if max_trials and val_tensor_full.shape[0] > max_trials:
         print(f"Using first {max_trials} validation trials for diagnostics "
-              f"(of {val_tensor.shape[0]})")
-        val_tensor = val_tensor[:max_trials]
-        if val_source_idx is not None:
-            val_source_idx = val_source_idx[:max_trials]
-        if val_labels_plot is not None:
-            val_labels_plot = val_labels_plot[:max_trials]
-    val_participant_ids = subjects[val_source_idx] if val_source_idx is not None else None
-    val_np = val_tensor.numpy()          # (K, N_in, T)  N_in = N or 2N with velocity
+              f"(of {val_tensor_full.shape[0]})")
+        plot_trial_count = max_trials
+    val_tensor_plot = val_tensor_full[:plot_trial_count]
+    val_labels_plot = val_labels_full[:plot_trial_count] if val_labels_full is not None else None
+    val_participant_ids_plot = (
+        val_participant_ids_full[:plot_trial_count] if val_participant_ids_full is not None else None
+    )
+    val_np = val_tensor_plot.numpy()          # (K, N_in, T)  N_in = N or 2N with velocity
     K = val_np.shape[0]
 
-    print(f"Val set: {K} trials  |  input shape: {val_np.shape}")
+    print(f"Val set: {len(val_tensor_full)} trials  |  input shape: {tuple(val_tensor_full.shape)}")
+    if K != len(val_tensor_full):
+        print(f"Trajectory detail plots use {K} validation trials after cap.")
 
     # ── embeddings ───────────────────────────────────────────────────────────
     # Run the forward + S_ratio on GPU when available: at T=2000 the per-timepoint
@@ -1307,16 +1905,17 @@ def make_diagnostic_plots_synth(
     # on CPU. Bring F_hat_t back to CPU for the NumPy-based plotting below.
     print(f"Computing embeddings… (device={device})")
     with torch.no_grad():
-        F_hat_t = model(val_tensor.to(device))
+        F_hat_t = model(val_tensor_full.to(device))
         F_hat_t = F_hat_t - F_hat_t.mean(dim=cfg.F_mean_axis, keepdim=True)
         s_ratio_val = compute_S_ratio(_batch_rms_normalize(F_hat_t)).item()
         F_hat_t = F_hat_t.cpu()
         F_hat = F_hat_t.numpy()          # (K, d, T)
 
     max_timepoints = getattr(cfg, "synth_viz_max_timepoints", 0)
-    F_hat_plot = _time_downsample(F_hat, max_timepoints)
-    if F_hat_plot.shape[-1] != F_hat.shape[-1]:
-        print(f"Using {F_hat_plot.shape[-1]} time bins for trajectory plots "
+    F_hat_full_plot = _time_downsample(F_hat, max_timepoints)
+    F_hat_plot = F_hat_full_plot[:plot_trial_count]
+    if F_hat_full_plot.shape[-1] != F_hat.shape[-1]:
+        print(f"Using {F_hat_full_plot.shape[-1]} time bins for trajectory plots "
               f"(of {F_hat.shape[-1]})")
 
     # ── raw input PCA ──────────────────────────────────────────────────────────
@@ -1335,31 +1934,74 @@ def make_diagnostic_plots_synth(
     #     xlabel="PC 1", ylabel="PC 2",
     #     out_path=os.path.join(out_dir, "01_raw_time_coded.png"),
     # )
-    _plot_planes_time_coded(
-        F_hat_plot, s_ratio_val,
-        out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
-    )
+    has_participant_condition_metadata = val_participant_ids_full is not None and val_labels_full is not None
+    if has_participant_condition_metadata:
+        _plot_participant_condition_plane_means(
+            F_hat_full_plot,
+            F_hat,
+            val_participant_ids_full,
+            val_labels_full,
+            cfg,
+            s_ratio_val,
+            out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
+        )
+        _plot_participant_condition_first_samples_time_coded(
+            F_hat_full_plot,
+            F_hat,
+            val_participant_ids_full,
+            val_labels_full,
+            cfg,
+            s_ratio_val,
+            out_path=os.path.join(out_dir, "03_embed_planes_first_condition_sample_time_coded.png"),
+        )
+    else:
+        _plot_planes_time_coded(
+            F_hat_plot, s_ratio_val,
+            out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
+        )
     # _plot_dim_grid(
     #     F_hat_plot, s_ratio_val,
     #     out_path=os.path.join(out_dir, "03_dim_grid_time_coded.png"),
     # )
-    _plot_planes_participant_hsv(
-        F_hat_plot, val_participant_ids, s_ratio_val,
-        out_path=os.path.join(out_dir, "04_embed_planes_participant_hsv.png"),
-    )
-    if val_labels_plot is not None:
-        plot_condition_means_all_trials(
+    if has_participant_condition_metadata:
+        _plot_participant_condition_plane_means(
+            F_hat_full_plot,
+            F_hat,
+            val_participant_ids_full,
+            val_labels_full,
+            cfg,
+            s_ratio_val,
+            out_path=os.path.join(out_dir, "04_embed_planes_participant_hsv.png"),
+        )
+    else:
+        _plot_planes_participant_hsv(
+            F_hat_plot, val_participant_ids_plot, s_ratio_val,
+            out_path=os.path.join(out_dir, "04_embed_planes_participant_hsv.png"),
+        )
+    # Plot 18 is disabled by default because it is slow on large PhysioNet runs.
+    # if val_labels_plot is not None:
+    #     plot_condition_means_all_trials(
+    #         F_hat_plot,
+    #         val_labels_plot,
+    #         s_ratio_val,
+    #         out_path=os.path.join(out_dir, "18_val_condition_means_all_trials.png"),
+    #     )
+    if has_participant_condition_metadata:
+        _plot_participant_condition_time_grid(
+            F_hat_full_plot,
+            F_hat,
+            val_participant_ids_full,
+            val_labels_full,
+            cfg,
+            out_path=os.path.join(out_dir, "05_embed_planes_condition_time.png"),
+        )
+    else:
+        _plot_planes_condition_time(
             F_hat_plot,
             val_labels_plot,
             s_ratio_val,
-            out_path=os.path.join(out_dir, "18_val_condition_means_all_trials.png"),
+            out_path=os.path.join(out_dir, "05_embed_planes_condition_time.png"),
         )
-    _plot_planes_condition_time(
-        F_hat_plot,
-        val_labels_plot,
-        s_ratio_val,
-        out_path=os.path.join(out_dir, "05_embed_planes_condition_time.png"),
-    )
     write_plane_zeta_ranking(
         F_hat,
         out_path=os.path.join(out_dir, "06_plane_validation_zeta_ranking.csv"),
@@ -1391,23 +2033,24 @@ def make_diagnostic_plots_synth(
     )
 
     # plot_conv_kernels(model=model, out_path=os.path.join(out_dir, "11_conv_kernels.png"))
-    if train_ds is not None and subjects is not None:
-        plot_participant_split_embedding(
-            model=model,
-            train_ds=train_ds,
-            val_ds=val_ds,
-            subjects=subjects,
-            cfg=cfg,
-            out_dir=out_dir,
-            labels=labels,
-        )
+    # Plots 12-17 are disabled by default because they dominate runtime on PhysioNet.
+    # if train_ds is not None and subjects is not None:
+    #     plot_participant_split_embedding(
+    #         model=model,
+    #         train_ds=train_ds,
+    #         val_ds=val_ds,
+    #         subjects=subjects,
+    #         cfg=cfg,
+    #         out_dir=out_dir,
+    #         labels=labels,
+    #     )
     
 
     try:
         from visualize_pairwise_s import plot_pairwise_s
     except ModuleNotFoundError:
         from obsolete.visualize_pairwise_s import plot_pairwise_s
-    F_hat_rms = _batch_rms_normalize(F_hat_t)
+    F_hat_rms = _batch_rms_normalize(F_hat_t[:plot_trial_count])
     plot_pairwise_s(
         run_dir,
         out_path=os.path.join(out_dir, "pairwise_s.png"),
@@ -1467,6 +2110,10 @@ def main():
                         help="Override SYNTH_VIZ_PARTICIPANT_COUNT saved in the checkpoint.")
     parser.add_argument("--participant-mode", choices=["top_zeta", "random"], default=None,
                         help="Override SYNTH_VIZ_PARTICIPANT_MODE saved in the checkpoint.")
+    parser.add_argument("--participant-ids", default=None,
+                        help="Comma-separated participant IDs for participant-condition plots 02/03/04.")
+    parser.add_argument("--plane-indices", default=None,
+                        help="Comma-separated embedding plane indices for participant-condition plots 02/03/04.")
     parser.add_argument("--max-trials", type=int, default=None,
                         help="Override SYNTH_VIZ_MAX_TRIALS saved in the checkpoint; 0 uses all validation trials.")
     parser.add_argument("--max-timepoints", type=int, default=None,
@@ -1500,6 +2147,18 @@ def main():
     elif env_participant_mode not in {None, ""}:
         cfg.synth_viz_participant_mode = env_participant_mode
 
+    env_participant_ids = os.environ.get("SYNTH_VIZ_PARTICIPANT_IDS")
+    if args.participant_ids is not None:
+        cfg.synth_viz_participant_ids = args.participant_ids
+    elif env_participant_ids not in {None, ""}:
+        cfg.synth_viz_participant_ids = env_participant_ids
+
+    env_plane_indices = os.environ.get("SYNTH_VIZ_PLANE_INDICES")
+    if args.plane_indices is not None:
+        cfg.synth_viz_plane_indices = args.plane_indices
+    elif env_plane_indices not in {None, ""}:
+        cfg.synth_viz_plane_indices = env_plane_indices
+
     env_max_trials = os.environ.get("SYNTH_VIZ_MAX_TRIALS")
     if args.max_trials is not None:
         cfg.synth_viz_max_trials = args.max_trials
@@ -1515,7 +2174,9 @@ def main():
     print(
         "Participant plots: "
         f"count={getattr(cfg, 'synth_viz_participant_count', 4)} "
-        f"mode={getattr(cfg, 'synth_viz_participant_mode', 'top_zeta')}"
+        f"mode={getattr(cfg, 'synth_viz_participant_mode', 'top_zeta')} "
+        f"ids={getattr(cfg, 'synth_viz_participant_ids', '') or 'auto'} "
+        f"planes={getattr(cfg, 'synth_viz_plane_indices', '') or 'auto'}"
     )
     print(
         "Validation plot caps: "
@@ -1555,11 +2216,19 @@ def main():
         subjects=subjects,
         subject_count=getattr(cfg, "synth_subject_count", 0),
         subject_ids=getattr(cfg, "synth_subject_ids", ""),
+        val_subject_count=getattr(cfg, "synth_val_subject_count", 0),
+        val_subject_ids=getattr(cfg, "synth_val_subject_ids", ""),
         holdout_subject_count=getattr(cfg, "synth_holdout_subject_count", 0),
         holdout_subject_ids=getattr(cfg, "synth_holdout_subject_ids", ""),
         return_holdout=True,
         dataset_split_counts=dataset_split_counts,
     )
+    norm_info = apply_train_zscore(windows, _dataset_source_indices(train_ds), getattr(cfg, "synth_normalize", "none"))
+    if norm_info is not None:
+        print(
+            "  Applied train-only z-score: "
+            f"train_trials={norm_info['train_trials']} channels={norm_info['channels']}"
+        )
 
     model = MLP(
         in_channels=N_in, d=cfg.d, hidden_dim=cfg.hidden_dim, depth=cfg.depth, dropout=cfg.dropout,

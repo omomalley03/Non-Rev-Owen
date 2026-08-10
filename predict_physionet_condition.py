@@ -44,7 +44,7 @@ from torch.utils.data import DataLoader
 from config import Config
 from model import MLP, infer_multiscale_symmetric_conv_layers
 from paths import RUNS_BASE, SYNTH_RUNS_DIR
-from synth_data import load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
+from synth_data import apply_train_zscore, load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
 from visualize_synth import _dataset_source_indices, train_val_split_synth
 
 
@@ -586,8 +586,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", default=None, help="Integer rank, explicit run dir, or omit for newest.")
     parser.add_argument("--data", default=None, help="Override synthetic data .npy path from checkpoint config.")
-    parser.add_argument("--decoder-split", choices=["checkpoint", "random", "subject_random"], default="checkpoint",
-                        help="Split for the decoder. 'checkpoint' uses cfg.synth_split.")
+    parser.add_argument(
+        "--decoder-split",
+        choices=[
+            "checkpoint",
+            "random",
+            "subject_random",
+            "participant_random",
+            "subject_holdout",
+            "participant_holdout",
+            "subject_disjoint",
+            "participant_disjoint",
+        ],
+        default="checkpoint",
+        help="Split for the decoder. 'checkpoint' uses cfg.synth_split.",
+    )
     parser.add_argument("--embedder-init", choices=["pretrained", "random"], default="pretrained",
                         help="Initialize the frozen embedder from checkpoint weights or random weights with the same architecture.")
     parser.add_argument("--decoder-type", choices=["all", "linear", "mlp", "temporal_conv"], default="all",
@@ -639,6 +652,10 @@ def main():
         cfg.synth_holdout_subject_count = 0
     if not hasattr(cfg, "synth_holdout_subject_ids"):
         cfg.synth_holdout_subject_ids = ""
+    if not hasattr(cfg, "synth_val_subject_count"):
+        cfg.synth_val_subject_count = 0
+    if not hasattr(cfg, "synth_val_subject_ids"):
+        cfg.synth_val_subject_ids = ""
     print(f"Loaded checkpoint from epoch {ckpt.get('epoch')}")
 
     data_path = args.data or getattr(cfg, "synth_data_path", "")
@@ -670,6 +687,8 @@ def main():
         subjects=subjects,
         subject_count=getattr(cfg, "synth_subject_count", 0),
         subject_ids=getattr(cfg, "synth_subject_ids", ""),
+        val_subject_count=getattr(cfg, "synth_val_subject_count", 0),
+        val_subject_ids=getattr(cfg, "synth_val_subject_ids", ""),
         holdout_subject_count=getattr(cfg, "synth_holdout_subject_count", 0),
         holdout_subject_ids=getattr(cfg, "synth_holdout_subject_ids", ""),
         return_holdout=True,
@@ -677,6 +696,12 @@ def main():
     train_idx = _dataset_source_indices(train_ds)
     val_idx = _dataset_source_indices(val_ds)
     holdout_idx = _dataset_source_indices(holdout_ds) if holdout_ds is not None else None
+    norm_info = apply_train_zscore(windows, train_idx, getattr(cfg, "synth_normalize", "none"))
+    if norm_info is not None:
+        print(
+            "Applied train-only z-score: "
+            f"train_trials={norm_info['train_trials']} channels={norm_info['channels']}"
+        )
     y_train_raw = labels[train_idx]
     y_val_raw = labels[val_idx]
     y_test_raw = labels[holdout_idx] if holdout_idx is not None else None
@@ -708,6 +733,16 @@ def main():
     )
     if trainval_subjects is not None:
         print(f"Decoder train/val subjects: {np.asarray(trainval_subjects).tolist()}")
+        if subjects is not None and str(split).lower() in {
+            "subject_holdout",
+            "participant_holdout",
+            "subject_disjoint",
+            "participant_disjoint",
+            "subject_disjoint_holdout",
+            "participant_disjoint_holdout",
+        }:
+            print(f"Decoder train subjects: {np.unique(subjects[train_idx]).tolist()}")
+            print(f"Decoder validation held-out subjects: {np.unique(subjects[val_idx]).tolist()}")
     if holdout_subjects is not None and len(holdout_subjects):
         print(f"Decoder held-out subjects: {np.asarray(holdout_subjects).tolist()}")
     print(f"Classes: {dict(zip(label_names, np.bincount(y_train, minlength=len(classes)).tolist()))} train")

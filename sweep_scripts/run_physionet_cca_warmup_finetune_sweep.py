@@ -1,9 +1,10 @@
-"""Run PhysioNetMI train + frozen condition-decoder sweeps over CCA strength.
+"""Run PhysioNetMI train + frozen/fine-tuned condition-decoder sweeps over CCA strength.
 
 Each job sources ``physionetmi_config.sh`` as the baseline, overrides ``SEED``,
 ``LAMBDA_START_FRAC``, and ``LAMBDA_BLOCK_CCA``, runs ``main_synth.py``, then
-runs a frozen-only ``predict_physionet_condition_finetune.py`` decoder pass on
-the newly created run.
+runs ``predict_physionet_condition_finetune.py`` on the newly created run. The
+decoder pass first trains a frozen temporal-conv baseline, then fine-tunes the
+embedding model and decoder jointly.
 
 Usage:
     source /home/omo26/Non-Rev-Owen/.venv/bin/activate
@@ -31,23 +32,42 @@ from physionet_train_finetune_common import (
     write_ci95_summary,
     write_paired_ttest_summary,
 )
-from run_physionet_dim_train_finetune_sweep import FIELDNAMES, decoder_args
+from run_physionet_dim_train_finetune_sweep import FIELDNAMES as BASE_FIELDNAMES, decoder_args
 
 
 SWEEP_POINTS = (
+    # (1.0, 1.0),
+    # (0.1, 10.0),
     (1.0, 1.0),
-    (0.1, 10.0),
-    (1.0, 2.0),
-    (1.0, 5.0),
-    (1.0, 10.0),
-    (1.0, 0.5),
+    # (1.0, 5.0),
+    # (1.0, 10.0),
+    # (1.0, 0.5),
 )
 DEFAULT_SEEDS = (0, 1, 2, 3, 4)
-OUT_DIR = REPO_ROOT / "physionetmi" / "cca_warmup_finetune_sweep_v3"
+OUT_DIR = REPO_ROOT / "physionetmi" / "heldout_val"
 LOG_DIR = OUT_DIR / "logs"
 SUMMARY_CSV = OUT_DIR / "results.csv"
 CI_CSV = OUT_DIR / "results_ci95.csv"
 TTEST_CSV = OUT_DIR / "paired_ttests.csv"
+FINETUNED_FIELDNAMES = [
+    "finetuned_decoder_embedder_init",
+    "finetuned_decoder_feature_layer",
+    "finetuned_decoder_feature_dim",
+    "finetuned_decoder_flat_feature_dim",
+    "finetuned_decoder_decoder_type",
+    "finetuned_decoder_accuracy",
+    "finetuned_decoder_balanced_accuracy",
+    "finetuned_decoder_macro_f1",
+    "finetuned_decoder_best_val_acc",
+    "finetuned_decoder_best_val_ce",
+    "finetuned_decoder_test_accuracy",
+    "finetuned_decoder_test_balanced_accuracy",
+    "finetuned_decoder_test_macro_f1",
+]
+FIELDNAMES = [
+    *BASE_FIELDNAMES,
+    *[field for field in FINETUNED_FIELDNAMES if field not in BASE_FIELDNAMES],
+]
 
 
 def main() -> None:
@@ -97,7 +117,11 @@ def main() -> None:
         return
 
     completed = (
-        load_completed(args.results, ("lambda_start_frac", "lambda_block_cca", "seed"))
+        load_completed(
+            args.results,
+            ("lambda_start_frac", "lambda_block_cca", "seed"),
+            require_finetuned=True,
+        )
         if args.resume
         else set()
     )
@@ -136,6 +160,7 @@ def main() -> None:
             seed=seed,
             decoder_args=decoder_args(args),
             dry_run=args.dry_run,
+            frozen_only=False,
         )
         if args.dry_run or run_dir is None:
             continue

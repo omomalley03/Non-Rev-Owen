@@ -26,10 +26,17 @@ export FACED_IDS_NPY="$FACED_PROCESSED_DIR/faced_ids.npy"
 # main_synth.py data settings.
 export SYNTH_DATA_PATH="$FACED_NPY"
 export SYNTH_DATA_LAYOUT="auto"
-export SYNTH_NORMALIZE="zscore"
+export SYNTH_NORMALIZE="zscore"  # zscore or train_zscore
 export SYNTH_PREPROCESS="none"
 export SYNTH_NOISE_STD="0"
 export SYNTH_MAX_TRIALS="2048"
+export SYNTH_SUBJECTS_PATH="$FACED_IDS_NPY"
+export SYNTH_SUBJECT_COUNT="0"
+export SYNTH_SUBJECT_IDS=""
+export SYNTH_VAL_SUBJECT_COUNT="0"  # subject_holdout only: 0 infers from VAL_SPLIT
+export SYNTH_VAL_SUBJECT_IDS=""
+export SYNTH_HOLDOUT_SUBJECT_COUNT="0"
+export SYNTH_HOLDOUT_SUBJECT_IDS=""
 export SYNTH_VIZ_MAX_TRIALS="64"
 export SYNTH_VIZ_MAX_TIMEPOINTS="400"
 

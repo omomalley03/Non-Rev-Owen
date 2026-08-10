@@ -31,17 +31,83 @@ def _as_knt(windows: np.ndarray, layout: str) -> np.ndarray:
     return np.transpose(windows, (0, 2, 1))
 
 
+_TRAIN_ZSCORE_METHODS = {"train_zscore", "train-zscore", "train_only_zscore", "train-only-zscore"}
+
+
 def _normalize_channels(windows: np.ndarray, method: str) -> np.ndarray:
     method = method.lower()
     if method in {"none", ""}:
         return windows
+    if method in _TRAIN_ZSCORE_METHODS:
+        return windows
     if method != "zscore":
-        raise ValueError("synth_normalize must be one of: none, zscore")
+        raise ValueError("synth_normalize must be one of: none, zscore, train_zscore")
 
     mean = windows.mean(axis=(0, 2), keepdims=True)
     std = windows.std(axis=(0, 2), keepdims=True)
     return (windows - mean) / (std + 1e-6)
     # 
+
+
+def _is_train_zscore(method: str) -> bool:
+    return str(method or "").strip().lower() in _TRAIN_ZSCORE_METHODS
+
+
+def _fit_channel_zscore_for_indices(
+    windows: np.ndarray,
+    train_indices: np.ndarray,
+    chunk_size: int = 1024,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fit per-channel z-score stats on selected trials without copying all trials."""
+    train_indices = np.asarray(train_indices, dtype=np.int64)
+    if train_indices.ndim != 1 or train_indices.size == 0:
+        raise ValueError("train_zscore requires at least one training trial index")
+    if np.any(train_indices < 0) or np.any(train_indices >= len(windows)):
+        raise ValueError("train_zscore received train indices outside the windows array")
+
+    n_channels = windows.shape[1]
+    total = 0
+    channel_sum = np.zeros(n_channels, dtype=np.float64)
+    channel_sumsq = np.zeros(n_channels, dtype=np.float64)
+
+    for start in range(0, len(train_indices), chunk_size):
+        idx = train_indices[start : start + chunk_size]
+        chunk = windows[idx]
+        channel_sum += chunk.sum(axis=(0, 2), dtype=np.float64)
+        channel_sumsq += np.square(chunk, dtype=np.float64).sum(axis=(0, 2), dtype=np.float64)
+        total += chunk.shape[0] * chunk.shape[2]
+
+    mean = channel_sum / max(total, 1)
+    var = np.maximum(channel_sumsq / max(total, 1) - mean * mean, 0.0)
+    std = np.sqrt(var)
+    return mean.reshape(1, n_channels, 1).astype(np.float32), std.reshape(1, n_channels, 1).astype(np.float32)
+
+
+def apply_train_zscore(
+    windows: np.ndarray,
+    train_indices: np.ndarray,
+    method: str,
+    chunk_size: int = 1024,
+) -> dict[str, int | str] | None:
+    """Apply train-only per-channel z-score in place when requested.
+
+    This is intentionally separate from ``load_synthetic_windows`` because the
+    train indices are only known after the split is constructed.
+    """
+    if not _is_train_zscore(method):
+        return None
+
+    mean, std = _fit_channel_zscore_for_indices(windows, train_indices, chunk_size=chunk_size)
+    denom = std + 1e-6
+    for start in range(0, len(windows), chunk_size):
+        stop = min(start + chunk_size, len(windows))
+        windows[start:stop] -= mean
+        windows[start:stop] /= denom
+    return {
+        "method": "train_zscore",
+        "train_trials": int(np.asarray(train_indices).size),
+        "channels": int(windows.shape[1]),
+    }
 
 
 def _add_temporal_reflect_context(windows: np.ndarray, context_bins: int) -> np.ndarray:

@@ -14,6 +14,30 @@ are copied exactly from the old LMDB-derived cache, 30 samples of raw EDF
 context are added on each side, and end-of-run trials without full real context
 are removed. The default Physionet training split is `SYNTH_SPLIT=subject_random`
 over the exported subjects.
+Set `SYNTH_NORMALIZE=train_zscore` to fit per-channel z-score statistics on the
+embedding training split only, then apply those statistics to validation/test.
+
+To hold out test subjects only while mixing the remaining participants between
+train and validation trials:
+
+```bash
+export SYNTH_SPLIT="subject_random"
+export SYNTH_HOLDOUT_SUBJECT_COUNT="10"
+export VAL_SPLIT="0.2"
+```
+
+To use distinct train, validation, and test participants:
+
+```bash
+export SYNTH_SPLIT="subject_holdout"
+export SYNTH_VAL_SUBJECT_COUNT="19"
+export SYNTH_HOLDOUT_SUBJECT_COUNT="20"
+```
+
+In `subject_holdout`, all loaded trials from the selected validation subjects
+go to validation, and all loaded trials from the selected held-out subjects go
+to the test-only split. `SYNTH_MAX_TRIALS` and cache construction still determine
+which trials are loaded before splitting.
 
 To regenerate the padded Physionet cache after unpacking the PhysioNet ZIP into
 `physionetmi_raw/files`:

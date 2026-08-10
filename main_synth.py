@@ -14,7 +14,18 @@ from model import MLP
 from train import train
 from visualize_synth import make_diagnostic_plots_synth
 from best_metrics import append_best_model_metrics
-from synth_data import load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
+from synth_data import apply_train_zscore, load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
+
+
+_SUBJECT_RANDOM_SPLITS = {"subject_random", "participant_random"}
+_SUBJECT_HOLDOUT_SPLITS = {
+    "subject_holdout",
+    "participant_holdout",
+    "subject_disjoint",
+    "participant_disjoint",
+    "subject_disjoint_holdout",
+    "participant_disjoint_holdout",
+}
 
 
 def set_seed(seed: int):
@@ -46,6 +57,14 @@ def _parse_subject_ids(spec: str) -> np.ndarray:
     if not spec or spec.lower() in {"all", "none"}:
         return np.array([], dtype=np.int64)
     return np.array([int(item.strip()) for item in spec.split(",") if item.strip()], dtype=np.int64)
+
+
+def _dataset_source_indices(ds) -> np.ndarray:
+    """Return source-window indices for TensorDataset/Subset split objects."""
+    if isinstance(ds, Subset):
+        parent = _dataset_source_indices(ds.dataset)
+        return parent[np.asarray(ds.indices, dtype=int)]
+    return np.arange(len(ds), dtype=int)
 
 
 def _load_dataset_split_counts(data_path: str, n_windows: int) -> dict[str, int]:
@@ -128,6 +147,42 @@ def _select_subject_sets(
     return selected_subjects, trainval_subjects, holdout_subjects
 
 
+def _select_validation_subjects(
+    trainval_subjects: np.ndarray,
+    rng: np.random.Generator,
+    val_frac: float,
+    val_subject_count: int = 0,
+    val_subject_ids: str = "",
+) -> tuple[np.ndarray, np.ndarray]:
+    explicit_val = _parse_subject_ids(val_subject_ids)
+    if explicit_val.size:
+        if len(np.unique(explicit_val)) != len(explicit_val):
+            raise ValueError("SYNTH_VAL_SUBJECT_IDS must not contain duplicate subjects")
+        missing = np.setdiff1d(explicit_val, trainval_subjects)
+        if missing.size:
+            raise ValueError(
+                "SYNTH_VAL_SUBJECT_IDS must be within the selected non-test subject pool; "
+                f"unknown, unselected, or test-overlapping subjects: {missing.tolist()}"
+            )
+        val_subjects = np.sort(explicit_val)
+    else:
+        if val_subject_count and val_subject_count > 0:
+            n_val_subjects = int(val_subject_count)
+        else:
+            n_val_subjects = max(1, int(len(trainval_subjects) * val_frac))
+        if n_val_subjects >= len(trainval_subjects):
+            raise ValueError(
+                "subject_holdout validation subjects must leave at least one training subject; "
+                f"got val={n_val_subjects}, trainval_pool={len(trainval_subjects)}"
+            )
+        val_subjects = np.sort(rng.choice(trainval_subjects, size=n_val_subjects, replace=False))
+
+    train_subjects = np.setdiff1d(trainval_subjects, val_subjects)
+    if len(train_subjects) < 1:
+        raise ValueError("subject_holdout split leaves no training subjects")
+    return train_subjects, val_subjects
+
+
 def train_val_split_synth(
     windows: np.ndarray,
     val_frac: float,
@@ -136,6 +191,8 @@ def train_val_split_synth(
     subjects: Optional[np.ndarray] = None,
     subject_count: int = 0,
     subject_ids: str = "",
+    val_subject_count: int = 0,
+    val_subject_ids: str = "",
     holdout_subject_count: int = 0,
     holdout_subject_ids: str = "",
     dataset_split_counts: Optional[dict[str, int]] = None,
@@ -145,10 +202,18 @@ def train_val_split_synth(
     full_ds = TensorDataset(tensor)
 
     split = split.lower()
-    if split not in {"subject_random", "participant_random"} and (
-        holdout_subject_count or _parse_subject_ids(holdout_subject_ids).size
+    subject_split_modes = _SUBJECT_RANDOM_SPLITS | _SUBJECT_HOLDOUT_SPLITS
+    if split not in subject_split_modes and (
+        holdout_subject_count
+        or _parse_subject_ids(holdout_subject_ids).size
+        or val_subject_count
+        or _parse_subject_ids(val_subject_ids).size
     ):
-        raise ValueError("Subject holdout requires SYNTH_SPLIT=subject_random")
+        raise ValueError("Subject holdout settings require SYNTH_SPLIT=subject_random or subject_holdout")
+    if split in _SUBJECT_RANDOM_SPLITS and (
+        val_subject_count or _parse_subject_ids(val_subject_ids).size
+    ):
+        raise ValueError("SYNTH_VAL_SUBJECT_COUNT/IDS require SYNTH_SPLIT=subject_holdout")
 
     if split in {"train_eq_val", "train_equals_val", "all", "none"}:
         return full_ds, full_ds, None, len(tensor), np.array([], dtype=np.int64), 0
@@ -170,9 +235,9 @@ def train_val_split_synth(
             np.array([], dtype=np.int64),
             0,
         )
-    if split in {"subject_random", "participant_random"}:
+    if split in subject_split_modes:
         if subjects is None:
-            raise ValueError("SYNTH_SPLIT=subject_random requires SYNTH_SUBJECTS_PATH")
+            raise ValueError(f"SYNTH_SPLIT={split} requires SYNTH_SUBJECTS_PATH")
         if len(subjects) != len(tensor):
             raise ValueError(
                 f"subject IDs length ({len(subjects)}) must match windows length ({len(tensor)})"
@@ -187,6 +252,30 @@ def train_val_split_synth(
             holdout_subject_count=holdout_subject_count,
             holdout_subject_ids=holdout_subject_ids,
         )
+
+        if split in _SUBJECT_HOLDOUT_SPLITS:
+            train_subjects, val_subjects = _select_validation_subjects(
+                trainval_subjects,
+                rng,
+                val_frac,
+                val_subject_count=val_subject_count,
+                val_subject_ids=val_subject_ids,
+            )
+            train_idx = np.flatnonzero(np.isin(subjects, train_subjects))
+            val_idx = np.flatnonzero(np.isin(subjects, val_subjects))
+            holdout_idx = np.flatnonzero(np.isin(subjects, holdout_subjects))
+            if len(train_idx) < 1 or len(val_idx) < 1:
+                raise ValueError(
+                    f"subject_holdout split produced train={len(train_idx)} val={len(val_idx)} trials"
+                )
+            return (
+                Subset(full_ds, train_idx.tolist()),
+                Subset(full_ds, val_idx.tolist()),
+                trainval_subjects,
+                len(train_idx) + len(val_idx),
+                holdout_subjects,
+                len(holdout_idx),
+            )
 
         eligible = np.flatnonzero(np.isin(subjects, trainval_subjects))
         if len(eligible) < 2:
@@ -206,7 +295,7 @@ def train_val_split_synth(
             len(holdout_idx),
         )
     if split != "random":
-        raise ValueError("SYNTH_SPLIT must be one of: random, train_eq_val, subject_random, dataset")
+        raise ValueError("SYNTH_SPLIT must be one of: random, train_eq_val, subject_random, subject_holdout, dataset")
 
     n_val = max(1, int(len(tensor) * val_frac))
     n_train = len(tensor) - n_val
@@ -267,16 +356,29 @@ def main():
         subjects=subjects,
         subject_count=getattr(cfg, "synth_subject_count", 0),
         subject_ids=getattr(cfg, "synth_subject_ids", ""),
+        val_subject_count=getattr(cfg, "synth_val_subject_count", 0),
+        val_subject_ids=getattr(cfg, "synth_val_subject_ids", ""),
         holdout_subject_count=getattr(cfg, "synth_holdout_subject_count", 0),
         holdout_subject_ids=getattr(cfg, "synth_holdout_subject_ids", ""),
         dataset_split_counts=dataset_split_counts,
     )
+    norm_info = apply_train_zscore(windows, _dataset_source_indices(train_ds), cfg.synth_normalize)
+    if norm_info is not None:
+        print(
+            "  Applied train-only z-score: "
+            f"train_trials={norm_info['train_trials']} channels={norm_info['channels']}"
+        )
     if trainval_subjects is not None:
         print(
             f"  Train/val subject subset: {len(trainval_subjects)} subjects, "
             f"{eligible_trials} eligible trials"
         )
         print(f"  Train/val subjects: {trainval_subjects.tolist()}")
+        if subjects is not None and str(cfg.synth_split).lower() in _SUBJECT_HOLDOUT_SPLITS:
+            train_subjects = np.unique(subjects[_dataset_source_indices(train_ds)])
+            val_subjects = np.unique(subjects[_dataset_source_indices(val_ds)])
+            print(f"  Train subjects: {train_subjects.tolist()}")
+            print(f"  Validation held-out subjects: {val_subjects.tolist()}")
         if len(holdout_subjects):
             print(
                 f"  Held-out subjects: {holdout_subjects.tolist()} "

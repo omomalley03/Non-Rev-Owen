@@ -41,8 +41,8 @@ from torch.utils.data import DataLoader
 from data import gaussian_smooth, load_mcmaze_cached, make_windows, soft_normalize, train_val_split
 from model import MLP, infer_multiscale_symmetric_conv_layers
 from paths import RUNS_BASE, RUNS_DIR
-from synth_data import load_synthetic_subjects, load_synthetic_windows
-from visualize_synth import _load_dataset_split_counts, train_val_split_synth
+from synth_data import apply_train_zscore, load_synthetic_subjects, load_synthetic_windows
+from visualize_synth import _dataset_source_indices, _load_dataset_split_counts, train_val_split_synth
 
 
 ROOT = REPO_ROOT
@@ -235,11 +235,14 @@ def load_physionet_windows(cfg):
         subjects=subjects,
         subject_count=int(_cfg_get(cfg, "synth_subject_count", 0)),
         subject_ids=_cfg_get(cfg, "synth_subject_ids", ""),
+        val_subject_count=int(_cfg_get(cfg, "synth_val_subject_count", 0)),
+        val_subject_ids=_cfg_get(cfg, "synth_val_subject_ids", ""),
         holdout_subject_count=int(_cfg_get(cfg, "synth_holdout_subject_count", 0)),
         holdout_subject_ids=_cfg_get(cfg, "synth_holdout_subject_ids", ""),
         return_holdout=True,
         dataset_split_counts=dataset_split_counts,
     )
+    apply_train_zscore(windows, _dataset_source_indices(train_ds), _cfg_get(cfg, "synth_normalize", "none"))
     return windows, train_ds, val_ds
 
 

@@ -289,6 +289,23 @@ def _select_nonredundant_ranked_planes(
     return selected
 
 
+def _select_nonredundant_ordered_planes(
+    candidate_indices: list[int],
+    redundancy: np.ndarray,
+    max_planes: int,
+    reg_thresh: float,
+) -> list[int]:
+    """Keep planes in the provided order and skip redundant planes."""
+    selected: list[int] = []
+    for p in candidate_indices:
+        if any(float(redundancy[p, q]) >= reg_thresh for q in selected):
+            continue
+        selected.append(p)
+        if len(selected) >= max_planes:
+            break
+    return selected
+
+
 def _mixed_parity_plane_split(d: int, cfg: Config | None) -> tuple[int, int] | None:
     """Return (even/symmetric planes, odd/anti-symmetric planes) for mixed parity."""
     if cfg is None:
@@ -318,20 +335,31 @@ def _plane_indices_for_ranked_branch_plot(
     cfg: Config | None,
     per_branch: int = 8,
     reg_thresh: float = 1.0,
+    plane_order: str = "zeta",
 ) -> tuple[list[int], dict[int, float], dict[int, str]]:
-    """Select high-ζ nonredundant planes for plots 02, 04, and 05."""
+    """Select nonredundant planes for plots 02, 04, and 05."""
+    if plane_order not in {"zeta", "number"}:
+        raise ValueError(f"unknown plane_order={plane_order!r}; expected 'zeta' or 'number'")
     D = d // 2
     all_plane_indices = list(range(D))
     plane_zeta = _plane_zeta_values(planes, all_plane_indices)
     redundancy = _plane_redundancy_matrix(planes, cfg)
     max_planes = min(D, 2 * per_branch if d > 32 else D)
-    plane_indices = _select_nonredundant_ranked_planes(
-        all_plane_indices,
-        plane_zeta,
-        redundancy,
-        max_planes=max_planes,
-        reg_thresh=reg_thresh,
-    )
+    if plane_order == "zeta":
+        plane_indices = _select_nonredundant_ranked_planes(
+            all_plane_indices,
+            plane_zeta,
+            redundancy,
+            max_planes=max_planes,
+            reg_thresh=reg_thresh,
+        )
+    else:
+        plane_indices = _select_nonredundant_ordered_planes(
+            all_plane_indices,
+            redundancy,
+            max_planes=max_planes,
+            reg_thresh=reg_thresh,
+        )
 
     split = _mixed_parity_plane_split(d, cfg)
     if split is None:
@@ -340,20 +368,34 @@ def _plane_indices_for_ranked_branch_plot(
     even_planes, odd_planes = split
     even_indices = list(range(even_planes))
     odd_indices = list(range(even_planes, even_planes + odd_planes))
-    top_even = _select_nonredundant_ranked_planes(
-        even_indices,
-        plane_zeta,
-        redundancy,
-        max_planes=min(per_branch, len(even_indices)),
-        reg_thresh=reg_thresh,
-    )
-    top_odd = _select_nonredundant_ranked_planes(
-        odd_indices,
-        plane_zeta,
-        redundancy,
-        max_planes=min(per_branch, len(odd_indices)),
-        reg_thresh=reg_thresh,
-    )
+    if plane_order == "zeta":
+        top_even = _select_nonredundant_ranked_planes(
+            even_indices,
+            plane_zeta,
+            redundancy,
+            max_planes=min(per_branch, len(even_indices)),
+            reg_thresh=reg_thresh,
+        )
+        top_odd = _select_nonredundant_ranked_planes(
+            odd_indices,
+            plane_zeta,
+            redundancy,
+            max_planes=min(per_branch, len(odd_indices)),
+            reg_thresh=reg_thresh,
+        )
+    else:
+        top_even = _select_nonredundant_ordered_planes(
+            even_indices,
+            redundancy,
+            max_planes=min(per_branch, len(even_indices)),
+            reg_thresh=reg_thresh,
+        )
+        top_odd = _select_nonredundant_ordered_planes(
+            odd_indices,
+            redundancy,
+            max_planes=min(per_branch, len(odd_indices)),
+            reg_thresh=reg_thresh,
+        )
     plane_branch = {p: "even" for p in top_even}
     plane_branch.update({p: "odd" for p in top_odd})
     return top_even + top_odd, plane_zeta, plane_branch
@@ -372,6 +414,7 @@ def _plane_zeta_ranking_rows(
     F_hat: np.ndarray,
     cfg: Config | None = None,
     reg_thresh: float = 1.0,
+    plane_order: str = "zeta",
 ) -> list[dict]:
     """Return all native planes ranked by validation ζ."""
     K, d, T = F_hat.shape
@@ -383,6 +426,7 @@ def _plane_zeta_ranking_rows(
         d,
         cfg,
         reg_thresh=reg_thresh,
+        plane_order=plane_order,
     )
     ranked_branch_plotted_planes = set(ranked_branch_plotted_planes)
     split = _mixed_parity_plane_split(d, cfg)
@@ -433,9 +477,15 @@ def write_plane_zeta_ranking(
     out_path: str,
     cfg: Config | None = None,
     reg_thresh: float = 1.0,
+    plane_order: str = "zeta",
 ):
     """Write all native planes ranked by validation ζ."""
-    rows = _plane_zeta_ranking_rows(F_hat, cfg, reg_thresh=reg_thresh)
+    rows = _plane_zeta_ranking_rows(
+        F_hat,
+        cfg,
+        reg_thresh=reg_thresh,
+        plane_order=plane_order,
+    )
     with open(out_path, "w", newline="") as f:
         writer = csv.DictWriter(
             f,
@@ -553,6 +603,7 @@ def _plot_planes_time_coded(
     individual_trials_per_condition: int = 0,
     trial_sample_seed: int = 0,
     reg_thresh: float = 1.0,
+    plane_order: str = "zeta",
 ):
     """Subplot grid: one panel per 2D rotation plane, time-coded."""
     K, d, T = F_hat.shape
@@ -563,6 +614,7 @@ def _plot_planes_time_coded(
         d,
         cfg,
         reg_thresh=reg_thresh,
+        plane_order=plane_order,
     )
     plot_groups = _sample_trials_per_condition(
         groups,
@@ -624,6 +676,7 @@ def _plot_planes_condition_hsv(
     trial_sample_seed: int = 0,
     cfg: Config | None = None,
     reg_thresh: float = 1.0,
+    plane_order: str = "zeta",
 ):
     """Subplot grid: hand trajectories (if available) + one panel per 2D rotation plane.
 
@@ -639,6 +692,7 @@ def _plot_planes_condition_hsv(
         d,
         cfg,
         reg_thresh=reg_thresh,
+        plane_order=plane_order,
     )
     plot_groups = _sample_trials_per_condition(
         groups,
@@ -725,6 +779,7 @@ def _plot_planes_condition_time(
     cfg: Config | None = None,
     condition_labels: dict | None = None,
     reg_thresh: float = 1.0,
+    plane_order: str = "zeta",
 ):
     """Subplot grid: one panel per 2D rotation plane, condition-avg, dims vs time.
 
@@ -741,6 +796,7 @@ def _plot_planes_condition_time(
         d,
         cfg,
         reg_thresh=reg_thresh,
+        plane_order=plane_order,
     )
     t_axis = np.arange(T)
 
@@ -760,7 +816,7 @@ def _plot_planes_condition_time(
             ax.plot(t_axis, mean_traj[1], lw=1.4, color=color, alpha=0.9,
                     ls="--")
         ax.spines[["top", "right"]].set_visible(False)
-        ax.set_title(_plane_title(p, plane_zeta[p], plane_branch[p]), fontsize=12)
+        ax.set_title(_simple_plane_zeta_title(p, plane_zeta[p]), fontsize=18)
         ax.set_xlabel("time (bins)", fontsize=12)
         ax.set_ylabel("embedding value", fontsize=12)
         ax.tick_params(labelsize=7)
@@ -973,9 +1029,6 @@ def _plot_dim_grid(F_hat, s_ratio, out_path,
             ax.set_ylabel(f"dim {y_dim}", fontsize=7)
             ax.set_title(f"({x_dim},{y_dim})  ζ={zeta[i,j]:.2f}", fontsize=7, pad=2)
 
-    fig.suptitle(f"Dim grid — time-coded  (ζ = {s_ratio:.2f})\n",
-                #  f"cell (i,j): dim 2i vs dim 2j+1   [diagonal = native planes]",
-                 fontsize=10)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -1452,6 +1505,7 @@ def make_diagnostic_plots(
     hsv04_condition_count: int = 0,
     hsv04_trial_seed: int = 0,
     reg_thresh: float = 1.0,
+    plane_order: str = "zeta",
 ):
     """Compute embeddings on val_ds and write all diagnostic PNGs to run_dir/outputs/.
 
@@ -1470,7 +1524,10 @@ def make_diagnostic_plots(
     cond_stop     : one-past-last condition index to plot
     cond_skip     : step size for condition selection
     reg_thresh    : skip a ranked plane if ‖C_pq‖_F² >= this for any kept plane
+    plane_order   : "zeta" for ranked plots, "number" for native plane-number order
     """
+    if plane_order not in {"zeta", "number"}:
+        raise ValueError(f"unknown plane_order={plane_order!r}; expected 'zeta' or 'number'")
 
     out_dir = os.path.join(run_dir, "outputs")
     os.makedirs(out_dir, exist_ok=True)
@@ -1592,6 +1649,7 @@ def make_diagnostic_plots(
         out_path=os.path.join(out_dir, "06_plane_validation_zeta_ranking.csv"),
         cfg=cfg,
         reg_thresh=reg_thresh,
+        plane_order=plane_order,
     )
     plot_plane_zeta_bars(
         F_hat,
@@ -1620,6 +1678,7 @@ def make_diagnostic_plots(
         out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
         cfg=cfg,
         reg_thresh=reg_thresh,
+        plane_order=plane_order,
     )
     if selected_trial_groups:
         _plot_planes_time_coded(
@@ -1631,6 +1690,7 @@ def make_diagnostic_plots(
             individual_trials_per_condition=3,
             trial_sample_seed=hsv04_trial_seed,
             reg_thresh=reg_thresh,
+            plane_order=plane_order,
         )
     _plot_condition_hsv(
         phasors_raw, cond_groups, cond_colors,
@@ -1646,6 +1706,7 @@ def make_diagnostic_plots(
         trial_sample_seed=hsv04_trial_seed,
         cfg=cfg,
         reg_thresh=reg_thresh,
+        plane_order=plane_order,
     )
     if selected_trial_groups:
         _plot_planes_condition_hsv(
@@ -1659,6 +1720,7 @@ def make_diagnostic_plots(
             trial_sample_seed=hsv04_trial_seed,
             cfg=cfg,
             reg_thresh=reg_thresh,
+            plane_order=plane_order,
         )
     _plot_planes_condition_time(
         F_hat, plot05_groups, plot05_colors, s_ratio_val,
@@ -1666,6 +1728,7 @@ def make_diagnostic_plots(
         cfg=cfg,
         condition_labels=plot05_labels,
         reg_thresh=reg_thresh,
+        plane_order=plane_order,
     )
     plot_covariance_heatmap(
         F_hat, out_path=os.path.join(out_dir, "07_covariance_heatmap.png"),
@@ -1718,6 +1781,8 @@ def main():
     parser.add_argument("--reg-thresh", type=float, default=1.0,
                         help="Skip a zeta-ranked embedding plane if its cross-plane regularisation score "
                              "with any already selected plane is at least this value. Default: 1.0.")
+    parser.add_argument("--plane-order", choices=("zeta", "number"), default="zeta",
+                        help="Order/select plotted embedding planes by validation zeta rank or native plane number. Default: zeta.")
     parser.add_argument("--only-loss", action="store_true",
                         help="Only regenerate outputs/loss_curve.png from outputs/log.csv.")
     args = parser.parse_args()
@@ -1814,6 +1879,7 @@ def main():
         hsv04_condition_count=args.hsv04_condition_count,
         hsv04_trial_seed=args.seed,
         reg_thresh=args.reg_thresh,
+        plane_order=args.plane_order,
     )
     plot_loss_curve(run_dir, cfg)
 
