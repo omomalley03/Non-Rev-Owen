@@ -425,7 +425,7 @@ def plot_checkpoint(
         max_panels=max_panels,
         dpi=dpi,
         kernel_mode=kernel_mode,
-        bin_ms=bin_ms,
+        bin_ms=6.25,
     )
     plot_conv_kernels(
         model,
@@ -434,7 +434,7 @@ def plot_checkpoint(
         dpi=dpi,
         ylim=(-1.0, 1.0),
         kernel_mode=kernel_mode,
-        bin_ms=bin_ms,
+        bin_ms=6.25,
     )
 
 

@@ -353,7 +353,7 @@ def select_traces(
                     np.stack([F[part_idx].mean(axis=0) for part_idx in participant_groups], axis=0).mean(axis=0)
                 )
                 fft_source_indices.append(participant_groups)
-                labels.append(f"{group['label']} (p={len(participant_groups)}, n={len(idx)})")
+                labels.append(f"{group['label']} n={len(idx)})")
             else:
                 traces.append(F[idx].mean(axis=0))
                 fft_source_indices.append(idx)
@@ -452,6 +452,19 @@ def explicit_plane_metadata(
         else:
             plane_branch[p] = "plane"
     return plane_zeta, plane_branch
+
+
+EEG_BAND_REFERENCE_HZ = (8.0, 13.0, 30.0)
+
+
+def _add_frequency_reference_lines(ax, freqs: np.ndarray) -> None:
+    if freqs.size == 0:
+        return
+    f_min = float(np.nanmin(freqs))
+    f_max = float(np.nanmax(freqs))
+    for hz in EEG_BAND_REFERENCE_HZ:
+        if f_min <= hz <= f_max:
+            ax.axvline(hz, color="0.25", lw=1.2, ls=":", alpha=0.62, zorder=0)
 
 
 def save_plot(
@@ -600,6 +613,7 @@ def save_plot(
         ax_fft.set_ylabel("|FFT| (log)", fontsize=label_fs)
         ax_fft.set_yscale("log")
         ax_fft.set_ylim(*fft_ylim)
+        _add_frequency_reference_lines(ax_fft, freqs[f_start:])
         ax_fft.spines[["top", "right"]].set_visible(False)
         ax_fft.tick_params(labelsize=tick_fs)
         if not any(color is not None for color in trace_colors) and p == 0:

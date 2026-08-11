@@ -51,3 +51,5 @@ machine.file.*
 physionet.org/
 physionetmi_raw/
 eeg-motor-movementimagery-dataset-*.zip
+
+misc_figures/

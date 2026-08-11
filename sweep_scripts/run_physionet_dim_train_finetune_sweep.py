@@ -33,7 +33,7 @@ from physionet_train_finetune_common import (
 
 
 DEFAULT_DIMS = (64, 128, 256, 512)
-DEFAULT_SEEDS = (0, 1, 2, 3)
+DEFAULT_SEEDS = (0, 1, 2, 3, 4)
 OUT_DIR = REPO_ROOT / "physionetmi" / "dim_train_finetune_sweep_v2"
 LOG_DIR = OUT_DIR / "logs"
 SUMMARY_CSV = OUT_DIR / "results.csv"

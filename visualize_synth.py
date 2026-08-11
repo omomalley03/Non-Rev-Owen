@@ -58,6 +58,8 @@ from loss import (
 from synth_data import apply_train_zscore, load_synthetic_labels, load_synthetic_subjects, load_synthetic_windows
 from visualize_loss import plot_loss_curve
 from visualize import (
+    _plot_planes_condition_time as plot_reference_planes_condition_time,
+    _plot_planes_time_coded as plot_reference_planes_time_coded,
     plot_block_cca_plane_heatmap as plot_regularisation_block_cca_plane_heatmap,
     plot_embedding_norm_distribution,
     plot_plane_zeta_bars,
@@ -175,6 +177,33 @@ def _condition_legend_handles(labels: np.ndarray):
         plt.Line2D([0], [0], color=_condition_color(label), lw=2, label=_condition_name(label))
         for label in np.unique(labels)
     ]
+
+
+def _labels_to_reference_plot_groups(
+    labels: np.ndarray | None,
+    n_items: int,
+) -> tuple[dict, dict, dict]:
+    """Adapt synthetic labels to the condition groups used by visualize.py plots."""
+    if labels is None:
+        key = "validation"
+        return (
+            {key: list(range(n_items))},
+            {key: "steelblue"},
+            {key: "validation mean"},
+        )
+
+    labels = np.asarray(labels)
+    if len(labels) != n_items:
+        raise ValueError(f"labels length ({len(labels)}) must match plotted trials ({n_items})")
+
+    groups = {}
+    colors = {}
+    names = {}
+    for label in sorted(np.unique(labels).tolist()):
+        groups[label] = np.flatnonzero(labels == label).tolist()
+        colors[label] = _condition_color(label)
+        names[label] = _condition_name(label)
+    return groups, colors, names
 
 
 def _dataset_source_indices(ds) -> np.ndarray:
@@ -956,6 +985,20 @@ def _participant_plane_kind(plane_idx: int, even_plane_set: set[int], odd_plane_
     return "plane"
 
 
+def _participant_plane_row_label(
+    plane_idx: int,
+    plane_kind: str,
+    zeta_by_plane: np.ndarray,
+) -> str:
+    zeta = zeta_by_plane[plane_idx] if plane_idx < len(zeta_by_plane) else np.nan
+    zeta_text = f"\nval \u03b6={zeta:.2f}" if np.isfinite(zeta) else ""
+    return (
+        f"{plane_kind} plane {plane_idx}\n"
+        f"dims {2 * plane_idx},{2 * plane_idx + 1}"
+        f"{zeta_text}"
+    )
+
+
 def _plot_participant_condition_plane_means(
     F_hat_plot: np.ndarray,
     F_hat_rank: np.ndarray,
@@ -1019,8 +1062,7 @@ def _plot_participant_condition_plane_means(
                 ax.set_title(f"Participant {int(participant)}", fontsize=15)
             if col == 0:
                 ax.set_ylabel(
-                    f"{plane_kind} plane {plane_idx}\n"
-                    f"dims {2 * plane_idx},{2 * plane_idx + 1}",
+                    _participant_plane_row_label(plane_idx, plane_kind, zeta_by_plane),
                     fontsize=13.5,
                 )
 
@@ -1093,7 +1135,7 @@ def _plot_participant_condition_first_samples_time_coded(
     (
         selected_planes,
         selected_participants,
-        _zeta_by_plane,
+        zeta_by_plane,
         even_plane_set,
         odd_plane_set,
         row_label,
@@ -1125,8 +1167,7 @@ def _plot_participant_condition_first_samples_time_coded(
                 ax.set_title(f"Participant {int(participant)}", fontsize=15)
             if col == 0:
                 ax.set_ylabel(
-                    f"{plane_kind} plane {plane_idx}\n"
-                    f"dims {2 * plane_idx},{2 * plane_idx + 1}",
+                    _participant_plane_row_label(plane_idx, plane_kind, zeta_by_plane),
                     fontsize=13.5,
                 )
 
@@ -1332,7 +1373,7 @@ def _plot_participant_condition_time_grid(
     (
         selected_planes,
         selected_participants,
-        _zeta_by_plane,
+        zeta_by_plane,
         even_plane_set,
         odd_plane_set,
         row_label,
@@ -1365,8 +1406,7 @@ def _plot_participant_condition_time_grid(
                 ax.set_title(f"Participant {int(participant)}", fontsize=15)
             if col == 0:
                 ax.set_ylabel(
-                    f"{plane_kind} plane {plane_idx}\n"
-                    f"dims {2 * plane_idx},{2 * plane_idx + 1}",
+                    _participant_plane_row_label(plane_idx, plane_kind, zeta_by_plane),
                     fontsize=13.5,
                 )
 
@@ -1935,6 +1975,10 @@ def make_diagnostic_plots_synth(
     #     out_path=os.path.join(out_dir, "01_raw_time_coded.png"),
     # )
     has_participant_condition_metadata = val_participant_ids_full is not None and val_labels_full is not None
+    reference_plot_groups, reference_plot_colors, reference_plot_labels = _labels_to_reference_plot_groups(
+        val_labels_plot,
+        len(F_hat_plot),
+    )
     if has_participant_condition_metadata:
         _plot_participant_condition_plane_means(
             F_hat_full_plot,
@@ -1955,9 +1999,12 @@ def make_diagnostic_plots_synth(
             out_path=os.path.join(out_dir, "03_embed_planes_first_condition_sample_time_coded.png"),
         )
     else:
-        _plot_planes_time_coded(
-            F_hat_plot, s_ratio_val,
+        plot_reference_planes_time_coded(
+            F_hat_plot,
+            reference_plot_groups,
+            s_ratio_val,
             out_path=os.path.join(out_dir, "02_embed_planes_time_coded.png"),
+            cfg=cfg,
         )
     # _plot_dim_grid(
     #     F_hat_plot, s_ratio_val,
@@ -1996,11 +2043,14 @@ def make_diagnostic_plots_synth(
             out_path=os.path.join(out_dir, "05_embed_planes_condition_time.png"),
         )
     else:
-        _plot_planes_condition_time(
+        plot_reference_planes_condition_time(
             F_hat_plot,
-            val_labels_plot,
+            reference_plot_groups,
+            reference_plot_colors,
             s_ratio_val,
             out_path=os.path.join(out_dir, "05_embed_planes_condition_time.png"),
+            cfg=cfg,
+            condition_labels=reference_plot_labels,
         )
     write_plane_zeta_ranking(
         F_hat,
