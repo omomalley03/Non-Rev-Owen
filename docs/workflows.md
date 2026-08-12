@@ -19,6 +19,7 @@ python visualize_synth.py --run physionetmi/synth_runs/<run>
 ```
 
 ## PhysioNetMI Cache
+To build a PhysioNetMI .npy cache for main_synth.py / visualize_synth.py
 
 ```bash
 python data_prep/prepare_physionetmi_context.py \

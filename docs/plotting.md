@@ -12,7 +12,6 @@ Additional report plots:
 ```bash
 python plotting/embedding/plot_embedding_plane_timeseries_fft.py --run mcmaze/runs/<run>
 python plotting/mcmaze/plot_mcmaze_conv_kernels.py --run mcmaze/runs/<run>
-python plotting/physionet/visualize_physionet_participant_split.py --run physionetmi/synth_runs/<run>
 ```
 
 Sweep-summary plots are grouped in `plotting/summary/`.

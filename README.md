@@ -1,12 +1,12 @@
 # Non-Reversibility as a Pretraining Objective for Spatio-Temporal Foundation Models
 
-This repository trains maximally non-reversible embeddings of neural data (embedding), then evaluates whether those embeddings preserve behaviourally useful information (decoding). The main report datasets are MC Maze neural activity and PhysioNet motor-imagery EEG. 
+This repository trains maximally non-reversible embeddings of neural data (encoding), then evaluates whether those embeddings preserve behaviourally useful information (decoding). The main report datasets are MC Maze neural activity and PhysioNet Motor Movement/Imagery EEG. 
 
 The core training entry points remain at the repository root:
 
 - `main.py`: MC Maze embedding pretraining.
-- `main_synth.py`: `.npy` window pretraining, used for PhysioNetMI and synthetic data which are saved as shape (K,N,T) arrays.
-- `visualize.py` and `visualize_synth.py`: standard diagnostic plots.
+- `main_synth.py`: For data saved as `.npy`, used for PhysioNetMI and synthetic data which are saved as shape (K,N,T) arrays.
+- `visualize.py` and `visualize_synth.py`: standard plots.
 
 Supporting scripts are grouped by role:
 
@@ -26,7 +26,7 @@ Install the project dependencies in your Python environment. `requirements.txt` 
 
 ## MC Maze
 
-MC Maze data should be cached before repeated runs:
+MC Maze data can be cached before repeated runs to speed up loading:
 
 ```bash
 python data_prep/cache_data.py
