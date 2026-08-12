@@ -1241,24 +1241,28 @@ def plot_covariance_heatmap(F_hat, out_path):
     K, d, T = F_hat.shape
     Z = F_hat.transpose(0, 2, 1).reshape(K * T, d)
     Z = Z - Z.mean(axis=0)
-
     Z = Z / (Z.std(axis=0) + 1e-6)
 
     Corr = (Z.T @ Z) / Z.shape[0]
 
-    n_show = min(d, 32)
-    fig, ax = plt.subplots(figsize=(6, 5))
-    im = ax.imshow(Corr[:n_show, :n_show], cmap="RdBu_r", # vmin=-1, vmax=1,
-                   interpolation="nearest", aspect="auto")
+    fig_size = min(max(d / 16, 6), 10)
+    fig, ax = plt.subplots(figsize=(fig_size, fig_size))
+    im = ax.imshow(Corr, cmap="RdBu_r", vmin=-1, vmax=1,
+                   interpolation="nearest", aspect="equal")
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     off_diag_mean = float(np.abs(Corr - np.eye(d)).mean())
     ax.set_title(
-        f"Embedding correlation  (top {n_show} of {d} dims)\n"
+        f"Embedding correlation  ({d} dims)\n"
         f"mean |Corr − I| = {off_diag_mean:.4f}  (0 = identity)",
         fontsize=10,
     )
     ax.set_xlabel("Embedding dim", fontsize=9)
     ax.set_ylabel("Embedding dim", fontsize=9)
+    if d > 32:
+        tick_step = max(1, d // 8)
+        ticks = np.arange(0, d, tick_step)
+        ax.set_xticks(ticks)
+        ax.set_yticks(ticks)
     ax.tick_params(labelsize=8)
 
     fig.tight_layout()

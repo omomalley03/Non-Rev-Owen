@@ -169,7 +169,7 @@ def load_mcmaze(nwb_path: str, bin_ms: int = 5):
 def load_mcmaze_cached(nwb_path: str, bin_ms: int = 5):
     """Load MC_Maze data from a pickle cache if available, else fall back to NWB.
 
-    The cache is created by running ``python cache_data.py``. Cache files live
+    The cache is created by running ``python data_prep/cache_data.py``. Cache files live
     in ``CACHE_DIR/mcmaze_bin{bin_ms}ms.pkl``.
     """
     cache_file = os.path.join(CACHE_DIR, f"mcmaze_bin{bin_ms}ms.pkl")
@@ -190,7 +190,7 @@ def load_mcmaze_cached(nwb_path: str, bin_ms: int = 5):
 
     warnings.warn(
         f"No cache found at {cache_file}. Falling back to NWB "
-        f"(run `python cache_data.py` to speed up future loads).",
+        f"(run `python data_prep/cache_data.py` to speed up future loads).",
         stacklevel=2,
     )
     return load_mcmaze(nwb_path, bin_ms)

@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = next(p for p in Path(__file__).resolve().parents if (p / "model.py").is_file())
 RUNS = {
     32: "20260713_093518_d32_h256_dep2_bs64_ep200_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1",
     64: "20260713_093604_d64_h256_dep2_bs64_ep100_lr1e-03_lxp0.0_lbt0.0_lcca1.0_sig10.0_s1",
@@ -60,7 +60,7 @@ def run_jobs(args: argparse.Namespace) -> None:
         cmd = [
             sys.executable,
             "-u",
-            str(REPO_ROOT / "predict_mcmaze_velocity_finetune.py"),
+            str(REPO_ROOT / "decoders/predict_mcmaze_velocity_finetune.py"),
             "--run",
             str(run_dir),
             "--epochs",

@@ -6,9 +6,9 @@ explicit results CSV. Config indices are 1-based and follow first appearance in
 ``results.csv``.
 
 Examples:
-    python scripts/create_paired_ttests.py mcmaze/cca_sweep_constant_lambda
-    python scripts/create_paired_ttests.py mcmaze/cca_sweep_constant_lambda --baseline-index 2
-    python scripts/create_paired_ttests.py physionetmi/dim_train_finetune_sweep_v2 --list-configs
+    python scripts/create_paired_ttests.py sweep_results/hyperparam_sweep_paper_logs/mcmaze/cca_sweep_constant_lambda
+    python scripts/create_paired_ttests.py sweep_results/hyperparam_sweep_paper_logs/mcmaze/cca_sweep_constant_lambda --baseline-index 2
+    python scripts/create_paired_ttests.py sweep_results/hyperparam_sweep_paper_logs/physionetmi/dim_train_finetune_sweep_v2 --list-configs
 """
 
 from __future__ import annotations

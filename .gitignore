@@ -45,6 +45,12 @@ logs/
 slurm-*.out
 machine.file.*
 
+# Publication sweep logs curated for the paper.
+!sweep_results/
+!sweep_results/hyperparam_sweep_paper_logs/
+!sweep_results/hyperparam_sweep_paper_logs/**/
+!sweep_results/hyperparam_sweep_paper_logs/**/*.log
+
 # Notebook-generated metadata
 .ipynb_checkpoints/
 
@@ -53,3 +59,5 @@ physionetmi_raw/
 eeg-motor-movementimagery-dataset-*.zip
 
 misc_figures/
+obsolete/
+*.nwb

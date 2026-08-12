@@ -1,24 +1,72 @@
 # Non-Reversibility as a Pretraining Objective for Spatio-Temporal Foundation Models
 
-This project trains neural embeddings with non-reversibility and redundancy-control objectives, then evaluates whether those embeddings preserve behaviourally useful information. The main datasets are MC Maze neural activity and Physionet motor-imagery EEG.
+This repository trains maximally non-reversible embeddings of neural data (embedding), then evaluates whether those embeddings preserve behaviourally useful information (decoding). The main report datasets are MC Maze neural activity and PhysioNet motor-imagery EEG. 
 
-The main training entry points are `main.py` for MC Maze and `main_synth.py` for `.npy` window datasets such as Physionet. Core model code is in `model.py`, objective terms are in `loss.py`, the training loop is in `train.py`, data/cache helpers are in `data.py`, `synth_data.py`, and `cache_data.py`, and diagnostic plotting is handled by `visualize.py` and `visualize_synth.py`.
+The core training entry points remain at the repository root:
 
-## Prereqs
+- `main.py`: MC Maze embedding pretraining.
+- `main_synth.py`: `.npy` window pretraining, used for PhysioNetMI and synthetic data which are saved as shape (K,N,T) arrays.
+- `visualize.py` and `visualize_synth.py`: standard diagnostic plots.
 
-MC Maze data should be cached with `cache_data.py`.
+Supporting scripts are grouped by role:
 
-Physionet should be converted to `.npy` shape `K,N,T`. The current
-`physionetmi_config.sh` uses an all-splits padded cache: the center 800 samples
-are copied exactly from the old LMDB-derived cache, 30 samples of raw EDF
-context are added on each side, and end-of-run trials without full real context
-are removed. The default Physionet training split is `SYNTH_SPLIT=subject_random`
-over the exported subjects.
-Set `SYNTH_NORMALIZE=train_zscore` to fit per-channel z-score statistics on the
-embedding training split only, then apply those statistics to validation/test.
+- `configs/`: shell configs for datasets and environments.
+- `data_prep/`: cache and dataset conversion scripts.
+- `decoders/`: downstream MC Maze velocity and PhysioNet condition decoders.
+- `plotting/`: report and diagnostic plotting scripts.
+- `sweep_scripts/`: MC Maze and PhysioNet sweep launchers -- the statistical analysis experiments in the dissertation
+- `docs/`: workflow notes and repo map.
 
-To hold out test subjects only while mixing the remaining participants between
-train and validation trials:
+See `docs/repo_map.md`, `docs/workflows.md`, `docs/sweeps.md`, and `docs/plotting.md` for the expanded guide.
+
+## Setup
+
+Install the project dependencies in your Python environment. `requirements.txt` records the Python packages used by the scripts. 
+
+
+## MC Maze
+
+MC Maze data should be cached before repeated runs:
+
+```bash
+python data_prep/cache_data.py
+```
+
+Train an embedding and run the standard decoder/visualization workflow:
+
+```bash
+source configs/mcmaze_config.sh
+python main.py
+python decoders/predict_mcmaze_velocity.py --run mcmaze/runs/<run>
+python visualize.py --run mcmaze/runs/<run>
+```
+
+## PhysioNetMI
+
+PhysioNetMI is converted to `.npy` windows with shape `K,N,T`. The current config uses the all-splits padded cache described in `configs/physionetmi_config.sh`.
+
+To regenerate the padded PhysioNetMI cache after unpacking the PhysioNet ZIP into `physionetmi_raw/files`:
+
+```bash
+micromamba run -n nonrev python data_prep/prepare_physionetmi_context.py \
+  --out cache/physionetmi_all_context30_noedge.npy \
+  --labels-out cache/physionetmi_all_context30_noedge_labels.npy \
+  --subjects-out cache/physionetmi_all_context30_noedge_subjects.npy \
+  --keys-out cache/physionetmi_all_context30_noedge_keys.txt \
+  --splits train,val,test \
+  --drop-edge-padded
+```
+
+Train an embedding and run the standard decoder/visualization workflow:
+
+```bash
+source configs/physionetmi_config.sh
+python main_synth.py
+python decoders/predict_physionet_condition.py --run physionetmi/synth_runs/<run>
+python visualize_synth.py --run physionetmi/synth_runs/<run>
+```
+
+The default PhysioNet training split is `SYNTH_SPLIT=subject_random` over exported subjects. To hold out test subjects while mixing the remaining participants between train and validation trials:
 
 ```bash
 export SYNTH_SPLIT="subject_random"
@@ -34,45 +82,12 @@ export SYNTH_VAL_SUBJECT_COUNT="19"
 export SYNTH_HOLDOUT_SUBJECT_COUNT="20"
 ```
 
-In `subject_holdout`, all loaded trials from the selected validation subjects
-go to validation, and all loaded trials from the selected held-out subjects go
-to the test-only split. `SYNTH_MAX_TRIALS` and cache construction still determine
-which trials are loaded before splitting.
+In `subject_holdout`, all loaded trials from selected validation subjects go to validation, and all loaded trials from held-out subjects go to the test-only split.
 
-To regenerate the padded Physionet cache after unpacking the PhysioNet ZIP into
-`physionetmi_raw/files`:
+## Common Plots
 
 ```bash
-micromamba run -n nonrev python prepare_physionetmi_context.py \
-  --out cache/physionetmi_all_context30_noedge.npy \
-  --labels-out cache/physionetmi_all_context30_noedge_labels.npy \
-  --subjects-out cache/physionetmi_all_context30_noedge_subjects.npy \
-  --keys-out cache/physionetmi_all_context30_noedge_keys.txt \
-  --splits train,val,test \
-  --drop-edge-padded
-```
-
-## Pre-training Embeddings
-
-### MC Maze
-
-```bash
-source mcmaze_config.sh
-python main.py
-```
-
-`mcmaze_config.sh` has comments explaining model/training hyperparams.
-
-### Physionet
-
-```bash
-source physionetmi_config.sh
-python main_synth.py
-```
-
-## Training Decoder
-
-```bash
-python predict_mcmaze_velocity.py
-python predict_physionet_condition.py
+python plotting/embedding/plot_embedding_plane_timeseries_fft.py --run mcmaze/runs/<run>
+python plotting/mcmaze/plot_mcmaze_conv_kernels.py --run mcmaze/runs/<run>
+python plotting/physionet/visualize_physionet_participant_split.py --run physionetmi/synth_runs/<run>
 ```

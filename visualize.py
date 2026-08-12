@@ -1222,12 +1222,12 @@ def plot_block_cca_plane_heatmap(
     im = ax.imshow(C_plot, cmap=cmap, vmin=0, vmax=vmax,
                    interpolation="nearest", aspect="equal")
     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04,
-                 label=r"$\|C_{pq}\|_F^2$")
+                 label=r"$\|R_{pq}\|_F^2$")
 
     off_diag_mean = float(finite_vals.mean()) if finite_vals.size else float("nan")
     ax.set_title(
         "Cross-plane Regularisation Metric\n"
-        rf"off-diagonal mean $\|C_{{pq}}\|_F^2$ = {off_diag_mean:.4f}",
+        rf"off-diagonal mean $\|R_{{pq}}\|_F^2$ = {off_diag_mean:.4f}",
         fontsize=10,
     )
     ax.set_xlabel("Plane", fontsize=9)

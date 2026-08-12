@@ -1,0 +1,71 @@
+Using run: /home/omo26/Non-Rev-Owen/physionetmi/synth_runs/20260806_044159_d128_h256_dep2_bs128_ep75_lr3e-04_lxp0.0_lbt0.0_lcca2.0_sig10.0_s3
+Embedder initialization: random
+Loaded checkpoint from epoch 55
+Loading data from /home/omo26/Non-Rev-Owen/cache/physionetmi_all_context30_noedge.npy...
+Decoder split: subject_random  train=6716 val=1678 test=838
+Decoder train/val subjects: [1, 2, 3, 4, 6, 7, 8, 10, 12, 13, 14, 15, 16, 17, 18, 20, 21, 22, 23, 24, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 83, 84, 86, 87, 88, 89, 90, 91, 92, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 105, 106, 107, 108, 109]
+Decoder held-out subjects: [5, 9, 11, 19, 25, 63, 82, 85, 93, 104]
+Classes: {'imagined left fist': 1683, 'imagined right fist': 1670, 'imagined both fists': 1655, 'imagined both feet': 1708} train
+Computing random-init frozen hidden features on cuda...
+Decoder features: train=(6716, 409600) val=(1678, 409600)  raw features=(512, 800) per trial
+Temporal-conv features: train=(6716, 512, 800) val=(1678, 512, 800)
+Held-out test features: flat=(838, 409600) temporal=(838, 512, 800)
+Skipping frozen decoder baseline for random embedder init.
+Training embedder and decoder end-to-end from random initialization.
+Fine-tune epoch   1/50  train ce=1.2825 acc=42.6%  val ce=1.1645 acc=49.4%
+Fine-tune epoch   2/50  train ce=1.1572 acc=50.9%  val ce=1.1554 acc=49.0%
+Fine-tune epoch   3/50  train ce=1.0968 acc=54.2%  val ce=1.1279 acc=50.5%
+Fine-tune epoch   4/50  train ce=1.0148 acc=58.6%  val ce=1.0578 acc=54.9%
+Fine-tune epoch   5/50  train ce=0.9537 acc=61.9%  val ce=1.0817 acc=55.2%
+Fine-tune epoch   6/50  train ce=0.8891 acc=64.5%  val ce=1.0659 acc=56.1%
+Fine-tune epoch   7/50  train ce=0.8395 acc=66.8%  val ce=1.0619 acc=57.4%
+Fine-tune epoch   8/50  train ce=0.7782 acc=69.6%  val ce=1.0728 acc=56.6%
+Fine-tune epoch   9/50  train ce=0.7250 acc=71.4%  val ce=1.1416 acc=56.7%
+Fine-tune epoch  10/50  train ce=0.6655 acc=73.7%  val ce=1.0892 acc=57.9%
+Fine-tune epoch  11/50  train ce=0.6098 acc=75.9%  val ce=1.2150 acc=57.2%
+Fine-tune epoch  12/50  train ce=0.5480 acc=78.9%  val ce=1.1875 acc=58.2%
+Fine-tune epoch  13/50  train ce=0.5080 acc=80.7%  val ce=1.2472 acc=56.3%
+Fine-tune epoch  14/50  train ce=0.4475 acc=83.0%  val ce=1.3192 acc=57.1%
+Fine-tune epoch  15/50  train ce=0.4029 acc=84.7%  val ce=1.4261 acc=55.7%
+Fine-tune epoch  16/50  train ce=0.3790 acc=85.9%  val ce=1.5672 acc=55.3%
+Fine-tune epoch  17/50  train ce=0.3706 acc=86.3%  val ce=1.4752 acc=57.6%
+Fine-tune epoch  18/50  train ce=0.2845 acc=89.7%  val ce=1.5975 acc=57.3%
+Fine-tune epoch  19/50  train ce=0.2479 acc=91.5%  val ce=1.5993 acc=58.0%
+Fine-tune epoch  20/50  train ce=0.2375 acc=91.2%  val ce=1.7218 acc=57.3%
+Fine-tune epoch  21/50  train ce=0.2092 acc=92.5%  val ce=1.6952 acc=57.9%
+Fine-tune epoch  22/50  train ce=0.1815 acc=93.6%  val ce=2.0958 acc=56.6%
+Fine-tune epoch  23/50  train ce=0.2191 acc=92.0%  val ce=1.7790 acc=56.3%
+Fine-tune epoch  24/50  train ce=0.1672 acc=94.0%  val ce=2.0139 acc=57.8%
+Fine-tune epoch  25/50  train ce=0.1198 acc=95.8%  val ce=2.2966 acc=57.2%
+Fine-tune epoch  26/50  train ce=0.1265 acc=95.6%  val ce=2.1293 acc=58.3%
+Fine-tune epoch  27/50  train ce=0.1202 acc=96.0%  val ce=2.2176 acc=56.9%
+Fine-tune epoch  28/50  train ce=0.1378 acc=95.4%  val ce=2.3117 acc=58.0%
+Fine-tune epoch  29/50  train ce=0.1050 acc=96.4%  val ce=2.2952 acc=56.7%
+Fine-tune epoch  30/50  train ce=0.0837 acc=97.3%  val ce=2.2608 acc=56.3%
+Fine-tune epoch  31/50  train ce=0.1102 acc=96.4%  val ce=2.3226 acc=58.4%
+Fine-tune epoch  32/50  train ce=0.1134 acc=96.3%  val ce=2.7019 acc=55.3%
+Fine-tune epoch  33/50  train ce=0.0878 acc=97.2%  val ce=2.6868 acc=57.1%
+Fine-tune epoch  34/50  train ce=0.0686 acc=97.7%  val ce=2.5437 acc=57.7%
+Fine-tune epoch  35/50  train ce=0.1026 acc=96.8%  val ce=2.3866 acc=56.6%
+Fine-tune epoch  36/50  train ce=0.0894 acc=97.1%  val ce=2.6130 acc=57.0%
+Fine-tune epoch  37/50  train ce=0.0906 acc=96.7%  val ce=2.7691 acc=53.5%
+Fine-tune epoch  38/50  train ce=0.1183 acc=96.0%  val ce=2.3342 acc=56.2%
+Fine-tune epoch  39/50  train ce=0.0745 acc=97.5%  val ce=2.6330 acc=55.8%
+Fine-tune epoch  40/50  train ce=0.0685 acc=97.8%  val ce=2.6434 acc=57.7%
+Fine-tune epoch  41/50  train ce=0.0424 acc=98.6%  val ce=2.8033 acc=57.0%
+Fine-tune epoch  42/50  train ce=0.0475 acc=98.5%  val ce=2.9240 acc=55.7%
+Fine-tune epoch  43/50  train ce=0.0741 acc=97.6%  val ce=2.6582 acc=57.7%
+Fine-tune epoch  44/50  train ce=0.0811 acc=97.4%  val ce=2.6070 acc=55.9%
+Fine-tune epoch  45/50  train ce=0.0584 acc=98.2%  val ce=2.8586 acc=57.2%
+Fine-tune epoch  46/50  train ce=0.0696 acc=97.8%  val ce=2.9937 acc=57.2%
+Fine-tune epoch  47/50  train ce=0.0871 acc=97.2%  val ce=2.8024 acc=56.7%
+Fine-tune epoch  48/50  train ce=0.0825 acc=97.3%  val ce=3.1134 acc=55.2%
+Fine-tune epoch  49/50  train ce=0.0842 acc=97.4%  val ce=3.0940 acc=56.3%
+Fine-tune epoch  50/50  train ce=0.0441 acc=98.5%  val ce=3.2204 acc=57.3%
+Saved metrics: /home/omo26/Non-Rev-Owen/physionetmi/synth_runs/20260806_044159_d128_h256_dep2_bs128_ep75_lr3e-04_lxp0.0_lbt0.0_lcca2.0_sig10.0_s3/outputs/condition_prediction_finetune_initcmp_c2_s3_e2e_random_init_hidden/metrics.csv
+Saved fine-tune log: /home/omo26/Non-Rev-Owen/physionetmi/synth_runs/20260806_044159_d128_h256_dep2_bs128_ep75_lr3e-04_lxp0.0_lbt0.0_lcca2.0_sig10.0_s3/outputs/condition_prediction_finetune_initcmp_c2_s3_e2e_random_init_hidden/finetune_train_log.csv
+Saved plot: /home/omo26/Non-Rev-Owen/physionetmi/synth_runs/20260806_044159_d128_h256_dep2_bs128_ep75_lr3e-04_lxp0.0_lbt0.0_lcca2.0_sig10.0_s3/outputs/condition_prediction_finetune_initcmp_c2_s3_e2e_random_init_hidden/confusion_matrices.png
+Saved fine-tuned decoder checkpoint: /home/omo26/Non-Rev-Owen/physionetmi/synth_runs/20260806_044159_d128_h256_dep2_bs128_ep75_lr3e-04_lxp0.0_lbt0.0_lcca2.0_sig10.0_s3/outputs/condition_prediction_finetune_initcmp_c2_s3_e2e_random_init_hidden/finetuned_condition_decoder.pt
+
+Validation metrics:
+  finetuned_temporal_conv  acc=58.4%  balanced_acc=58.3%  macro_f1=0.585  |  heldout_test_acc=47.6%  test_balanced_acc=47.6%  test_macro_f1=0.475

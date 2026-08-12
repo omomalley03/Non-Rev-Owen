@@ -1,0 +1,70 @@
+Using run: /home/omo26/Non-Rev-Owen/physionetmi/synth_runs/20260805_230555_d128_h256_dep2_bs128_ep75_lr3e-04_lxp0.0_lbt0.0_lcca2.0_sig10.0_s1
+Embedder initialization: pretrained
+Loaded checkpoint from epoch 71
+Loading data from /home/omo26/Non-Rev-Owen/cache/physionetmi_all_context30_noedge.npy...
+Decoder split: subject_random  train=6688 val=1672 test=872
+Decoder train/val subjects: [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49, 50, 51, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 79, 80, 81, 82, 83, 84, 85, 86, 87, 89, 90, 91, 92, 93, 94, 95, 96, 97, 99, 100, 101, 103, 104, 105, 106, 107, 108, 109]
+Decoder held-out subjects: [4, 16, 27, 34, 48, 52, 78, 88, 98, 102]
+Classes: {'imagined left fist': 1678, 'imagined right fist': 1657, 'imagined both fists': 1686, 'imagined both feet': 1667} train
+Computing pretrained-init frozen hidden features on cuda...
+Decoder features: train=(6688, 409600) val=(1672, 409600)  raw features=(512, 800) per trial
+Temporal-conv features: train=(6688, 512, 800) val=(1672, 512, 800)
+Held-out test features: flat=(872, 409600) temporal=(872, 512, 800)
+Training frozen temporal-conv condition decoder baseline...
+TemporalConv epoch   1/50  train ce=1.3819 acc=37.6%  val ce=1.3440 acc=39.1%
+TemporalConv epoch   2/50  train ce=1.2154 acc=45.8%  val ce=1.2665 acc=45.7%
+TemporalConv epoch   3/50  train ce=1.1774 acc=49.1%  val ce=1.2562 acc=45.6%
+TemporalConv epoch   4/50  train ce=1.1428 acc=50.8%  val ce=1.2513 acc=47.0%
+TemporalConv epoch   5/50  train ce=1.1179 acc=53.1%  val ce=1.2184 acc=48.5%
+TemporalConv epoch   6/50  train ce=1.0838 acc=54.2%  val ce=1.2496 acc=48.8%
+TemporalConv epoch   7/50  train ce=1.0644 acc=55.4%  val ce=1.2700 acc=46.1%
+TemporalConv epoch   8/50  train ce=1.0372 acc=56.1%  val ce=1.2094 acc=50.5%
+TemporalConv epoch   9/50  train ce=1.0079 acc=57.6%  val ce=1.2301 acc=49.6%
+TemporalConv epoch  10/50  train ce=0.9918 acc=59.4%  val ce=1.2106 acc=49.8%
+TemporalConv epoch  11/50  train ce=0.9759 acc=60.0%  val ce=1.2733 acc=49.8%
+TemporalConv epoch  12/50  train ce=0.9633 acc=59.7%  val ce=1.2565 acc=49.6%
+TemporalConv epoch  13/50  train ce=0.9189 acc=62.4%  val ce=1.2739 acc=49.8%
+TemporalConv epoch  14/50  train ce=0.8994 acc=64.0%  val ce=1.2952 acc=48.9%
+TemporalConv epoch  15/50  train ce=0.8792 acc=64.3%  val ce=1.3319 acc=51.6%
+TemporalConv epoch  16/50  train ce=0.8732 acc=64.2%  val ce=1.2977 acc=51.5%
+TemporalConv epoch  17/50  train ce=0.8288 acc=66.3%  val ce=1.3630 acc=49.9%
+TemporalConv epoch  18/50  train ce=0.8063 acc=66.6%  val ce=1.3424 acc=51.0%
+TemporalConv epoch  19/50  train ce=0.7697 acc=68.7%  val ce=1.3587 acc=49.9%
+TemporalConv epoch  20/50  train ce=0.7672 acc=68.9%  val ce=1.4456 acc=48.1%
+TemporalConv epoch  21/50  train ce=0.7419 acc=69.8%  val ce=1.5402 acc=50.2%
+TemporalConv epoch  22/50  train ce=0.7070 acc=71.9%  val ce=1.4525 acc=51.6%
+TemporalConv epoch  23/50  train ce=0.6798 acc=72.5%  val ce=1.5358 acc=49.5%
+TemporalConv epoch  24/50  train ce=0.6769 acc=73.0%  val ce=1.5122 acc=50.0%
+TemporalConv epoch  25/50  train ce=0.6405 acc=74.4%  val ce=1.4650 acc=50.2%
+TemporalConv epoch  26/50  train ce=0.6512 acc=74.2%  val ce=1.6799 acc=49.9%
+TemporalConv epoch  27/50  train ce=0.6260 acc=75.3%  val ce=1.5673 acc=49.6%
+TemporalConv epoch  28/50  train ce=0.5817 acc=76.8%  val ce=1.5662 acc=51.2%
+TemporalConv epoch  29/50  train ce=0.5731 acc=77.3%  val ce=1.7038 acc=49.0%
+TemporalConv epoch  30/50  train ce=0.5504 acc=78.2%  val ce=1.7412 acc=50.4%
+TemporalConv epoch  31/50  train ce=0.5330 acc=78.5%  val ce=1.7067 acc=49.9%
+TemporalConv epoch  32/50  train ce=0.4957 acc=80.2%  val ce=1.7902 acc=49.7%
+TemporalConv epoch  33/50  train ce=0.4821 acc=81.6%  val ce=1.7330 acc=50.4%
+TemporalConv epoch  34/50  train ce=0.4578 acc=82.2%  val ce=1.8846 acc=49.2%
+TemporalConv epoch  35/50  train ce=0.4509 acc=82.3%  val ce=1.9174 acc=49.6%
+TemporalConv epoch  36/50  train ce=0.4289 acc=83.3%  val ce=1.9625 acc=49.9%
+TemporalConv epoch  37/50  train ce=0.4283 acc=83.2%  val ce=1.9608 acc=51.1%
+TemporalConv epoch  38/50  train ce=0.4007 acc=84.7%  val ce=1.9731 acc=49.9%
+TemporalConv epoch  39/50  train ce=0.4238 acc=83.9%  val ce=2.1207 acc=50.4%
+TemporalConv epoch  40/50  train ce=0.3482 acc=86.5%  val ce=2.1217 acc=49.9%
+TemporalConv epoch  41/50  train ce=0.3675 acc=85.5%  val ce=2.2480 acc=48.1%
+TemporalConv epoch  42/50  train ce=0.3744 acc=85.8%  val ce=2.1908 acc=48.6%
+TemporalConv epoch  43/50  train ce=0.3203 acc=87.8%  val ce=2.2651 acc=50.4%
+TemporalConv epoch  44/50  train ce=0.3048 acc=88.4%  val ce=2.2848 acc=48.9%
+TemporalConv epoch  45/50  train ce=0.3040 acc=88.7%  val ce=2.2280 acc=49.9%
+TemporalConv epoch  46/50  train ce=0.3323 acc=87.2%  val ce=2.3311 acc=49.3%
+TemporalConv epoch  47/50  train ce=0.3103 acc=88.6%  val ce=2.5080 acc=49.7%
+TemporalConv epoch  48/50  train ce=0.2897 acc=89.3%  val ce=2.3974 acc=48.7%
+TemporalConv epoch  49/50  train ce=0.2906 acc=88.8%  val ce=2.4329 acc=50.9%
+TemporalConv epoch  50/50  train ce=0.2661 acc=90.2%  val ce=2.6864 acc=46.2%
+Saved metrics: /home/omo26/Non-Rev-Owen/physionetmi/synth_runs/20260805_230555_d128_h256_dep2_bs128_ep75_lr3e-04_lxp0.0_lbt0.0_lcca2.0_sig10.0_s1/outputs/condition_prediction_finetune_dual_symmetric_d128_h256_ap0_s1_hidden/metrics.csv
+Saved plot: /home/omo26/Non-Rev-Owen/physionetmi/synth_runs/20260805_230555_d128_h256_dep2_bs128_ep75_lr3e-04_lxp0.0_lbt0.0_lcca2.0_sig10.0_s1/outputs/condition_prediction_finetune_dual_symmetric_d128_h256_ap0_s1_hidden/confusion_matrices.png
+Saved plot: /home/omo26/Non-Rev-Owen/physionetmi/synth_runs/20260805_230555_d128_h256_dep2_bs128_ep75_lr3e-04_lxp0.0_lbt0.0_lcca2.0_sig10.0_s1/outputs/condition_prediction_finetune_dual_symmetric_d128_h256_ap0_s1_hidden/confusion_matrices_holdout.png
+Saved frozen decoder checkpoint: /home/omo26/Non-Rev-Owen/physionetmi/synth_runs/20260805_230555_d128_h256_dep2_bs128_ep75_lr3e-04_lxp0.0_lbt0.0_lcca2.0_sig10.0_s1/outputs/condition_prediction_finetune_dual_symmetric_d128_h256_ap0_s1_hidden/frozen_condition_decoder.pt
+
+Validation metrics:
+  frozen_temporal_conv     acc=51.6%  balanced_acc=51.5%  macro_f1=0.516  |  heldout_test_acc=42.9%  test_balanced_acc=42.9%  test_macro_f1=0.427

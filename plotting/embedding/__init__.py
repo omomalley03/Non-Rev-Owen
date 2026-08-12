@@ -1,0 +1,1 @@
+"""Embedding diagnostic plots."""

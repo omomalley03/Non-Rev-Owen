@@ -1,0 +1,222 @@
+Using run: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260805_172632_d128_h256_dep2_bs64_ep150_lr5e-04_lxp0.0_lbt0.0_lcca10.0_sig10.0_s4
+Using checkpoint: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260805_172632_d128_h256_dep2_bs64_ep150_lr5e-04_lxp0.0_lbt0.0_lcca10.0_sig10.0_s4/checkpoints/best.pt
+Embedder initialization: random
+Loaded checkpoint from epoch 110
+Loading MC Maze data and computing neural windows...
+Trials: train=1722 val=573  channels=137  input_window=150 bins  target_window=90 bins  context=30 bins/side
+Loading hand velocity and building future targets...
+Target: hand_vel +100 ms (10 bins), units=stored NWB values
+Valid future samples: 206,550/206,550
+Computing random-init frozen hidden features on cuda for feature statistics...
+Decoder samples: train=154,980 val=51,570  features=d512
+Skipping frozen decoder baseline for random embedder init.
+Training embedder and decoder end-to-end from random initialization.
+Fine-tuning random-init embedder + MLP decoder...
+Fine-tune epoch   1/200  train mse(z)=0.5080  val mse(z)=0.2258
+Fine-tune epoch   2/200  train mse(z)=0.2240  val mse(z)=0.1703
+Fine-tune epoch   3/200  train mse(z)=0.1703  val mse(z)=0.1464
+Fine-tune epoch   4/200  train mse(z)=0.1486  val mse(z)=0.1305
+Fine-tune epoch   5/200  train mse(z)=0.1338  val mse(z)=0.1249
+Fine-tune epoch   6/200  train mse(z)=0.1246  val mse(z)=0.1178
+Fine-tune epoch   7/200  train mse(z)=0.1159  val mse(z)=0.1142
+Fine-tune epoch   8/200  train mse(z)=0.1089  val mse(z)=0.1148
+Fine-tune epoch   9/200  train mse(z)=0.1032  val mse(z)=0.1105
+Fine-tune epoch  10/200  train mse(z)=0.0952  val mse(z)=0.1074
+Fine-tune epoch  11/200  train mse(z)=0.0899  val mse(z)=0.1071
+Fine-tune epoch  12/200  train mse(z)=0.0868  val mse(z)=0.1062
+Fine-tune epoch  13/200  train mse(z)=0.0827  val mse(z)=0.1086
+Fine-tune epoch  14/200  train mse(z)=0.0793  val mse(z)=0.1067
+Fine-tune epoch  15/200  train mse(z)=0.0763  val mse(z)=0.1051
+Fine-tune epoch  16/200  train mse(z)=0.0730  val mse(z)=0.1054
+Fine-tune epoch  17/200  train mse(z)=0.0699  val mse(z)=0.1047
+Fine-tune epoch  18/200  train mse(z)=0.0672  val mse(z)=0.1040
+Fine-tune epoch  19/200  train mse(z)=0.0649  val mse(z)=0.1061
+Fine-tune epoch  20/200  train mse(z)=0.0632  val mse(z)=0.1058
+Fine-tune epoch  21/200  train mse(z)=0.0612  val mse(z)=0.1067
+Fine-tune epoch  22/200  train mse(z)=0.0587  val mse(z)=0.1039
+Fine-tune epoch  23/200  train mse(z)=0.0577  val mse(z)=0.1060
+Fine-tune epoch  24/200  train mse(z)=0.0554  val mse(z)=0.1045
+Fine-tune epoch  25/200  train mse(z)=0.0539  val mse(z)=0.1054
+Fine-tune epoch  26/200  train mse(z)=0.0530  val mse(z)=0.1076
+Fine-tune epoch  27/200  train mse(z)=0.0521  val mse(z)=0.1048
+Fine-tune epoch  28/200  train mse(z)=0.0507  val mse(z)=0.1047
+Fine-tune epoch  29/200  train mse(z)=0.0503  val mse(z)=0.1053
+Fine-tune epoch  30/200  train mse(z)=0.0486  val mse(z)=0.1047
+Fine-tune epoch  31/200  train mse(z)=0.0479  val mse(z)=0.1075
+Fine-tune epoch  32/200  train mse(z)=0.0470  val mse(z)=0.1046
+Fine-tune epoch  33/200  train mse(z)=0.0462  val mse(z)=0.1038
+Fine-tune epoch  34/200  train mse(z)=0.0458  val mse(z)=0.1056
+Fine-tune epoch  35/200  train mse(z)=0.0458  val mse(z)=0.1048
+Fine-tune epoch  36/200  train mse(z)=0.0452  val mse(z)=0.1037
+Fine-tune epoch  37/200  train mse(z)=0.0442  val mse(z)=0.1052
+Fine-tune epoch  38/200  train mse(z)=0.0439  val mse(z)=0.1049
+Fine-tune epoch  39/200  train mse(z)=0.0442  val mse(z)=0.1070
+Fine-tune epoch  40/200  train mse(z)=0.0436  val mse(z)=0.1060
+Fine-tune epoch  41/200  train mse(z)=0.0425  val mse(z)=0.1055
+Fine-tune epoch  42/200  train mse(z)=0.0423  val mse(z)=0.1055
+Fine-tune epoch  43/200  train mse(z)=0.0413  val mse(z)=0.1044
+Fine-tune epoch  44/200  train mse(z)=0.0416  val mse(z)=0.1046
+Fine-tune epoch  45/200  train mse(z)=0.0417  val mse(z)=0.1081
+Fine-tune epoch  46/200  train mse(z)=0.0411  val mse(z)=0.1050
+Fine-tune epoch  47/200  train mse(z)=0.0412  val mse(z)=0.1053
+Fine-tune epoch  48/200  train mse(z)=0.0408  val mse(z)=0.1059
+Fine-tune epoch  49/200  train mse(z)=0.0401  val mse(z)=0.1049
+Fine-tune epoch  50/200  train mse(z)=0.0391  val mse(z)=0.1057
+Fine-tune epoch  51/200  train mse(z)=0.0396  val mse(z)=0.1059
+Fine-tune epoch  52/200  train mse(z)=0.0394  val mse(z)=0.1054
+Fine-tune epoch  53/200  train mse(z)=0.0390  val mse(z)=0.1049
+Fine-tune epoch  54/200  train mse(z)=0.0389  val mse(z)=0.1055
+Fine-tune epoch  55/200  train mse(z)=0.0380  val mse(z)=0.1065
+Fine-tune epoch  56/200  train mse(z)=0.0383  val mse(z)=0.1065
+Fine-tune epoch  57/200  train mse(z)=0.0377  val mse(z)=0.1044
+Fine-tune epoch  58/200  train mse(z)=0.0378  val mse(z)=0.1065
+Fine-tune epoch  59/200  train mse(z)=0.0378  val mse(z)=0.1039
+Fine-tune epoch  60/200  train mse(z)=0.0372  val mse(z)=0.1060
+Fine-tune epoch  61/200  train mse(z)=0.0375  val mse(z)=0.1080
+Fine-tune epoch  62/200  train mse(z)=0.0373  val mse(z)=0.1054
+Fine-tune epoch  63/200  train mse(z)=0.0378  val mse(z)=0.1057
+Fine-tune epoch  64/200  train mse(z)=0.0379  val mse(z)=0.1058
+Fine-tune epoch  65/200  train mse(z)=0.0368  val mse(z)=0.1056
+Fine-tune epoch  66/200  train mse(z)=0.0369  val mse(z)=0.1055
+Fine-tune epoch  67/200  train mse(z)=0.0358  val mse(z)=0.1055
+Fine-tune epoch  68/200  train mse(z)=0.0354  val mse(z)=0.1066
+Fine-tune epoch  69/200  train mse(z)=0.0360  val mse(z)=0.1078
+Fine-tune epoch  70/200  train mse(z)=0.0365  val mse(z)=0.1066
+Fine-tune epoch  71/200  train mse(z)=0.0357  val mse(z)=0.1063
+Fine-tune epoch  72/200  train mse(z)=0.0354  val mse(z)=0.1069
+Fine-tune epoch  73/200  train mse(z)=0.0353  val mse(z)=0.1071
+Fine-tune epoch  74/200  train mse(z)=0.0348  val mse(z)=0.1077
+Fine-tune epoch  75/200  train mse(z)=0.0352  val mse(z)=0.1064
+Fine-tune epoch  76/200  train mse(z)=0.0347  val mse(z)=0.1068
+Fine-tune epoch  77/200  train mse(z)=0.0348  val mse(z)=0.1052
+Fine-tune epoch  78/200  train mse(z)=0.0347  val mse(z)=0.1072
+Fine-tune epoch  79/200  train mse(z)=0.0341  val mse(z)=0.1069
+Fine-tune epoch  80/200  train mse(z)=0.0343  val mse(z)=0.1056
+Fine-tune epoch  81/200  train mse(z)=0.0350  val mse(z)=0.1095
+Fine-tune epoch  82/200  train mse(z)=0.0356  val mse(z)=0.1101
+Fine-tune epoch  83/200  train mse(z)=0.0343  val mse(z)=0.1074
+Fine-tune epoch  84/200  train mse(z)=0.0346  val mse(z)=0.1079
+Fine-tune epoch  85/200  train mse(z)=0.0343  val mse(z)=0.1064
+Fine-tune epoch  86/200  train mse(z)=0.0336  val mse(z)=0.1064
+Fine-tune epoch  87/200  train mse(z)=0.0335  val mse(z)=0.1067
+Fine-tune epoch  88/200  train mse(z)=0.0343  val mse(z)=0.1069
+Fine-tune epoch  89/200  train mse(z)=0.0342  val mse(z)=0.1094
+Fine-tune epoch  90/200  train mse(z)=0.0338  val mse(z)=0.1067
+Fine-tune epoch  91/200  train mse(z)=0.0334  val mse(z)=0.1067
+Fine-tune epoch  92/200  train mse(z)=0.0335  val mse(z)=0.1062
+Fine-tune epoch  93/200  train mse(z)=0.0329  val mse(z)=0.1077
+Fine-tune epoch  94/200  train mse(z)=0.0336  val mse(z)=0.1067
+Fine-tune epoch  95/200  train mse(z)=0.0338  val mse(z)=0.1086
+Fine-tune epoch  96/200  train mse(z)=0.0332  val mse(z)=0.1075
+Fine-tune epoch  97/200  train mse(z)=0.0328  val mse(z)=0.1093
+Fine-tune epoch  98/200  train mse(z)=0.0327  val mse(z)=0.1078
+Fine-tune epoch  99/200  train mse(z)=0.0334  val mse(z)=0.1074
+Fine-tune epoch 100/200  train mse(z)=0.0332  val mse(z)=0.1067
+Fine-tune epoch 101/200  train mse(z)=0.0333  val mse(z)=0.1073
+Fine-tune epoch 102/200  train mse(z)=0.0329  val mse(z)=0.1076
+Fine-tune epoch 103/200  train mse(z)=0.0330  val mse(z)=0.1077
+Fine-tune epoch 104/200  train mse(z)=0.0325  val mse(z)=0.1081
+Fine-tune epoch 105/200  train mse(z)=0.0327  val mse(z)=0.1086
+Fine-tune epoch 106/200  train mse(z)=0.0326  val mse(z)=0.1097
+Fine-tune epoch 107/200  train mse(z)=0.0326  val mse(z)=0.1083
+Fine-tune epoch 108/200  train mse(z)=0.0319  val mse(z)=0.1061
+Fine-tune epoch 109/200  train mse(z)=0.0321  val mse(z)=0.1092
+Fine-tune epoch 110/200  train mse(z)=0.0326  val mse(z)=0.1080
+Fine-tune epoch 111/200  train mse(z)=0.0319  val mse(z)=0.1087
+Fine-tune epoch 112/200  train mse(z)=0.0318  val mse(z)=0.1099
+Fine-tune epoch 113/200  train mse(z)=0.0323  val mse(z)=0.1090
+Fine-tune epoch 114/200  train mse(z)=0.0321  val mse(z)=0.1064
+Fine-tune epoch 115/200  train mse(z)=0.0321  val mse(z)=0.1088
+Fine-tune epoch 116/200  train mse(z)=0.0325  val mse(z)=0.1066
+Fine-tune epoch 117/200  train mse(z)=0.0325  val mse(z)=0.1074
+Fine-tune epoch 118/200  train mse(z)=0.0321  val mse(z)=0.1085
+Fine-tune epoch 119/200  train mse(z)=0.0316  val mse(z)=0.1077
+Fine-tune epoch 120/200  train mse(z)=0.0312  val mse(z)=0.1080
+Fine-tune epoch 121/200  train mse(z)=0.0314  val mse(z)=0.1099
+Fine-tune epoch 122/200  train mse(z)=0.0317  val mse(z)=0.1081
+Fine-tune epoch 123/200  train mse(z)=0.0313  val mse(z)=0.1071
+Fine-tune epoch 124/200  train mse(z)=0.0313  val mse(z)=0.1078
+Fine-tune epoch 125/200  train mse(z)=0.0317  val mse(z)=0.1093
+Fine-tune epoch 126/200  train mse(z)=0.0320  val mse(z)=0.1086
+Fine-tune epoch 127/200  train mse(z)=0.0311  val mse(z)=0.1085
+Fine-tune epoch 128/200  train mse(z)=0.0312  val mse(z)=0.1070
+Fine-tune epoch 129/200  train mse(z)=0.0313  val mse(z)=0.1083
+Fine-tune epoch 130/200  train mse(z)=0.0311  val mse(z)=0.1087
+Fine-tune epoch 131/200  train mse(z)=0.0314  val mse(z)=0.1101
+Fine-tune epoch 132/200  train mse(z)=0.0307  val mse(z)=0.1078
+Fine-tune epoch 133/200  train mse(z)=0.0308  val mse(z)=0.1097
+Fine-tune epoch 134/200  train mse(z)=0.0309  val mse(z)=0.1096
+Fine-tune epoch 135/200  train mse(z)=0.0311  val mse(z)=0.1105
+Fine-tune epoch 136/200  train mse(z)=0.0313  val mse(z)=0.1102
+Fine-tune epoch 137/200  train mse(z)=0.0311  val mse(z)=0.1094
+Fine-tune epoch 138/200  train mse(z)=0.0314  val mse(z)=0.1099
+Fine-tune epoch 139/200  train mse(z)=0.0309  val mse(z)=0.1095
+Fine-tune epoch 140/200  train mse(z)=0.0310  val mse(z)=0.1099
+Fine-tune epoch 141/200  train mse(z)=0.0313  val mse(z)=0.1082
+Fine-tune epoch 142/200  train mse(z)=0.0306  val mse(z)=0.1089
+Fine-tune epoch 143/200  train mse(z)=0.0303  val mse(z)=0.1112
+Fine-tune epoch 144/200  train mse(z)=0.0310  val mse(z)=0.1083
+Fine-tune epoch 145/200  train mse(z)=0.0302  val mse(z)=0.1111
+Fine-tune epoch 146/200  train mse(z)=0.0311  val mse(z)=0.1098
+Fine-tune epoch 147/200  train mse(z)=0.0313  val mse(z)=0.1130
+Fine-tune epoch 148/200  train mse(z)=0.0318  val mse(z)=0.1107
+Fine-tune epoch 149/200  train mse(z)=0.0303  val mse(z)=0.1094
+Fine-tune epoch 150/200  train mse(z)=0.0301  val mse(z)=0.1096
+Fine-tune epoch 151/200  train mse(z)=0.0297  val mse(z)=0.1072
+Fine-tune epoch 152/200  train mse(z)=0.0306  val mse(z)=0.1086
+Fine-tune epoch 153/200  train mse(z)=0.0302  val mse(z)=0.1117
+Fine-tune epoch 154/200  train mse(z)=0.0298  val mse(z)=0.1107
+Fine-tune epoch 155/200  train mse(z)=0.0302  val mse(z)=0.1109
+Fine-tune epoch 156/200  train mse(z)=0.0297  val mse(z)=0.1097
+Fine-tune epoch 157/200  train mse(z)=0.0302  val mse(z)=0.1088
+Fine-tune epoch 158/200  train mse(z)=0.0303  val mse(z)=0.1092
+Fine-tune epoch 159/200  train mse(z)=0.0299  val mse(z)=0.1108
+Fine-tune epoch 160/200  train mse(z)=0.0296  val mse(z)=0.1096
+Fine-tune epoch 161/200  train mse(z)=0.0298  val mse(z)=0.1096
+Fine-tune epoch 162/200  train mse(z)=0.0298  val mse(z)=0.1127
+Fine-tune epoch 163/200  train mse(z)=0.0299  val mse(z)=0.1101
+Fine-tune epoch 164/200  train mse(z)=0.0297  val mse(z)=0.1099
+Fine-tune epoch 165/200  train mse(z)=0.0292  val mse(z)=0.1103
+Fine-tune epoch 166/200  train mse(z)=0.0292  val mse(z)=0.1106
+Fine-tune epoch 167/200  train mse(z)=0.0293  val mse(z)=0.1102
+Fine-tune epoch 168/200  train mse(z)=0.0298  val mse(z)=0.1108
+Fine-tune epoch 169/200  train mse(z)=0.0295  val mse(z)=0.1109
+Fine-tune epoch 170/200  train mse(z)=0.0295  val mse(z)=0.1101
+Fine-tune epoch 171/200  train mse(z)=0.0298  val mse(z)=0.1103
+Fine-tune epoch 172/200  train mse(z)=0.0298  val mse(z)=0.1108
+Fine-tune epoch 173/200  train mse(z)=0.0300  val mse(z)=0.1104
+Fine-tune epoch 174/200  train mse(z)=0.0290  val mse(z)=0.1094
+Fine-tune epoch 175/200  train mse(z)=0.0296  val mse(z)=0.1097
+Fine-tune epoch 176/200  train mse(z)=0.0297  val mse(z)=0.1118
+Fine-tune epoch 177/200  train mse(z)=0.0316  val mse(z)=0.1099
+Fine-tune epoch 178/200  train mse(z)=0.0303  val mse(z)=0.1108
+Fine-tune epoch 179/200  train mse(z)=0.0303  val mse(z)=0.1132
+Fine-tune epoch 180/200  train mse(z)=0.0304  val mse(z)=0.1099
+Fine-tune epoch 181/200  train mse(z)=0.0296  val mse(z)=0.1099
+Fine-tune epoch 182/200  train mse(z)=0.0299  val mse(z)=0.1118
+Fine-tune epoch 183/200  train mse(z)=0.0301  val mse(z)=0.1114
+Fine-tune epoch 184/200  train mse(z)=0.0296  val mse(z)=0.1112
+Fine-tune epoch 185/200  train mse(z)=0.0293  val mse(z)=0.1097
+Fine-tune epoch 186/200  train mse(z)=0.0291  val mse(z)=0.1100
+Fine-tune epoch 187/200  train mse(z)=0.0290  val mse(z)=0.1113
+Fine-tune epoch 188/200  train mse(z)=0.0291  val mse(z)=0.1119
+Fine-tune epoch 189/200  train mse(z)=0.0288  val mse(z)=0.1113
+Fine-tune epoch 190/200  train mse(z)=0.0285  val mse(z)=0.1094
+Fine-tune epoch 191/200  train mse(z)=0.0296  val mse(z)=0.1118
+Fine-tune epoch 192/200  train mse(z)=0.0289  val mse(z)=0.1134
+Fine-tune epoch 193/200  train mse(z)=0.0293  val mse(z)=0.1126
+Fine-tune epoch 194/200  train mse(z)=0.0293  val mse(z)=0.1104
+Fine-tune epoch 195/200  train mse(z)=0.0292  val mse(z)=0.1129
+Fine-tune epoch 196/200  train mse(z)=0.0286  val mse(z)=0.1098
+Fine-tune epoch 197/200  train mse(z)=0.0287  val mse(z)=0.1110
+Fine-tune epoch 198/200  train mse(z)=0.0289  val mse(z)=0.1118
+Fine-tune epoch 199/200  train mse(z)=0.0285  val mse(z)=0.1121
+Fine-tune epoch 200/200  train mse(z)=0.0288  val mse(z)=0.1120
+Saved decoder loss curve: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260805_172632_d128_h256_dep2_bs64_ep150_lr5e-04_lxp0.0_lbt0.0_lcca10.0_sig10.0_s4/outputs/velocity_prediction_finetune_initcmp_c2_s4_random_100ms_hidden/finetuned_mlp_loss_curve.png
+Saved decoder loss log: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260805_172632_d128_h256_dep2_bs64_ep150_lr5e-04_lxp0.0_lbt0.0_lcca10.0_sig10.0_s4/outputs/velocity_prediction_finetune_initcmp_c2_s4_random_100ms_hidden/finetuned_mlp_loss_curve.csv
+Saved metrics: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260805_172632_d128_h256_dep2_bs64_ep150_lr5e-04_lxp0.0_lbt0.0_lcca10.0_sig10.0_s4/outputs/velocity_prediction_finetune_initcmp_c2_s4_random_100ms_hidden/metrics.csv
+Saved plot: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260805_172632_d128_h256_dep2_bs64_ep150_lr5e-04_lxp0.0_lbt0.0_lcca10.0_sig10.0_s4/outputs/velocity_prediction_finetune_initcmp_c2_s4_random_100ms_hidden/prediction_scatter.png
+Saved fine-tuned model: /home/omo26/Non-Rev-Owen/mcmaze/runs/20260805_172632_d128_h256_dep2_bs64_ep150_lr5e-04_lxp0.0_lbt0.0_lcca10.0_sig10.0_s4/outputs/velocity_prediction_finetune_initcmp_c2_s4_random_100ms_hidden/finetuned_model.pt
+
+Validation metrics:
+  finetuned_mlp      R2 mean=0.8944  RMSE mean=77.8092  corr x/y=0.953/0.938

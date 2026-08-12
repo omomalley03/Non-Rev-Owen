@@ -19,7 +19,7 @@ for path in (REPO_ROOT, SWEEP_DIR):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from mcmaze_train_finetune_common import (  # noqa: E402
+from sweep_scripts.common.mcmaze_train_finetune_common import (  # noqa: E402
     TRIAL_SUMMARY_METRIC_FIELDS,
     compute_whole_validation_mean_plane_zeta,
     write_ci95_summary,
@@ -27,7 +27,7 @@ from mcmaze_train_finetune_common import (  # noqa: E402
 
 
 CI_GROUPS = {
-    "mcmaze/cca_sweep_constant_lambda": (
+    "sweep_results/hyperparam_sweep_paper_logs/mcmaze/cca_sweep_constant_lambda": (
         "lambda_start_frac",
         "lambda_block_cca",
         "dimension",
@@ -47,7 +47,7 @@ CI_GROUPS = {
         "lambda_start_frac",
         "lambda_block_cca",
     ),
-    "mcmaze/dim_train_finetune_sweep_mean_plane_zeta": (
+    "sweep_results/hyperparam_sweep_paper_logs/mcmaze/dim_train_finetune_sweep_mean_plane_zeta": (
         "dimension",
         "lambda_start_frac",
         "lambda_block_cca",

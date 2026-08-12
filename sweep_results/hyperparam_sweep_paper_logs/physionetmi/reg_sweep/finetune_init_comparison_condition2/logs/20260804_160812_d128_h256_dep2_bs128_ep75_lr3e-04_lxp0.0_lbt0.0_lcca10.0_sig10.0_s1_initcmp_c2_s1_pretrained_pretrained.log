@@ -1,0 +1,45 @@
+Using run: /home/omo26/Non-Rev-Owen/physionetmi/synth_runs/20260804_160812_d128_h256_dep2_bs128_ep75_lr3e-04_lxp0.0_lbt0.0_lcca10.0_sig10.0_s1
+Embedder initialization: pretrained
+Loaded checkpoint from epoch 61
+Loading data from /home/omo26/Non-Rev-Owen/cache/physionetmi_all_context30_noedge.npy...
+Decoder split: subject_random  train=6688 val=1672 test=872
+Decoder train/val subjects: [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 49, 50, 51, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 79, 80, 81, 82, 83, 84, 85, 86, 87, 89, 90, 91, 92, 93, 94, 95, 96, 97, 99, 100, 101, 103, 104, 105, 106, 107, 108, 109]
+Decoder held-out subjects: [4, 16, 27, 34, 48, 52, 78, 88, 98, 102]
+Classes: {'imagined left fist': 1678, 'imagined right fist': 1657, 'imagined both fists': 1686, 'imagined both feet': 1667} train
+Computing pretrained-init frozen hidden features on cuda...
+Decoder features: train=(6688, 409600) val=(1672, 409600)  raw features=(512, 800) per trial
+Temporal-conv features: train=(6688, 512, 800) val=(1672, 512, 800)
+Held-out test features: flat=(872, 409600) temporal=(872, 512, 800)
+Training frozen temporal-conv condition decoder baseline...
+TemporalConv epoch   1/50  train ce=1.4872 acc=26.6%  val ce=1.3850 acc=26.1%
+TemporalConv epoch   2/50  train ce=1.3769 acc=28.1%  val ce=1.3756 acc=26.6%
+TemporalConv epoch   3/50  train ce=1.3603 acc=31.8%  val ce=1.3418 acc=32.3%
+TemporalConv epoch   4/50  train ce=1.3028 acc=37.2%  val ce=1.3316 acc=35.5%
+TemporalConv epoch   5/50  train ce=1.2522 acc=42.6%  val ce=1.3393 acc=37.6%
+TemporalConv epoch   6/50  train ce=1.2198 acc=45.3%  val ce=1.2597 acc=43.4%
+TemporalConv epoch   7/50  train ce=1.1744 acc=48.9%  val ce=1.2354 acc=47.0%
+TemporalConv epoch   8/50  train ce=1.1422 acc=49.9%  val ce=1.2169 acc=47.9%
+TemporalConv epoch   9/50  train ce=1.1159 acc=51.5%  val ce=1.3025 acc=42.3%
+TemporalConv epoch  10/50  train ce=1.0991 acc=53.2%  val ce=1.2544 acc=47.9%
+TemporalConv epoch  11/50  train ce=1.0518 acc=55.6%  val ce=1.2313 acc=48.7%
+TemporalConv epoch  12/50  train ce=1.0405 acc=56.1%  val ce=1.1770 acc=51.6%
+TemporalConv epoch  13/50  train ce=1.0132 acc=58.4%  val ce=1.3055 acc=46.1%
+TemporalConv epoch  14/50  train ce=0.9964 acc=58.5%  val ce=1.2128 acc=50.5%
+TemporalConv epoch  15/50  train ce=0.9839 acc=59.2%  val ce=1.1775 acc=52.2%
+TemporalConv epoch  16/50  train ce=0.9700 acc=59.9%  val ce=1.2268 acc=51.1%
+TemporalConv epoch  17/50  train ce=0.9416 acc=61.3%  val ce=1.1991 acc=52.6%
+TemporalConv epoch  18/50  train ce=0.9095 acc=62.2%  val ce=1.1895 acc=52.8%
+TemporalConv epoch  19/50  train ce=0.8813 acc=63.9%  val ce=1.1654 acc=54.4%
+TemporalConv epoch  20/50  train ce=0.8558 acc=64.9%  val ce=1.2803 acc=51.1%
+TemporalConv epoch  21/50  train ce=0.8547 acc=64.9%  val ce=1.2228 acc=52.5%
+TemporalConv epoch  22/50  train ce=0.8186 acc=67.1%  val ce=1.2546 acc=53.7%
+TemporalConv epoch  23/50  train ce=0.7816 acc=68.7%  val ce=1.2868 acc=51.7%
+TemporalConv epoch  24/50  train ce=0.7729 acc=69.0%  val ce=1.2678 acc=53.9%
+TemporalConv epoch  25/50  train ce=0.7921 acc=67.6%  val ce=1.2292 acc=53.7%
+TemporalConv epoch  26/50  train ce=0.7503 acc=70.1%  val ce=1.2994 acc=54.5%
+TemporalConv epoch  27/50  train ce=0.7198 acc=71.0%  val ce=1.2631 acc=53.9%
+TemporalConv epoch  28/50  train ce=0.6994 acc=72.5%  val ce=1.2648 acc=54.2%
+TemporalConv epoch  29/50  train ce=0.6752 acc=72.8%  val ce=1.4264 acc=48.4%
+TemporalConv epoch  30/50  train ce=0.6987 acc=72.4%  val ce=1.4069 acc=52.7%
+TemporalConv epoch  31/50  train ce=0.7046 acc=72.5%  val ce=1.3585 acc=54.3%
+TemporalConv epoch  32/50  train ce=0.6571 acc=74.3%  val ce=1.3656 acc=53.4%

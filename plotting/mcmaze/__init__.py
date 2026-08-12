@@ -1,0 +1,1 @@
+"""MC Maze plotting scripts."""
