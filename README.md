@@ -1,4 +1,4 @@
-# Non-Reversibility as a Pretraining Objective for Spatio-Temporal Foundation Models
+# Non-Reversibility as a Pretraining Objective for Learning Foundation Models of Spatio-Temporal Time Series
 
 This repository trains maximally non-reversible embeddings of neural data (encoding), then evaluates whether those embeddings preserve behaviourally useful information (decoding). The main report datasets are MC Maze neural activity and PhysioNet Motor Movement/Imagery EEG. 
 
