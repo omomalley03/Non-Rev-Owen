@@ -1,6 +1,6 @@
 # Non-Reversibility as a Pretraining Objective for Learning Foundation Models of Spatio-Temporal Time Series
 
-This repository trains maximally non-reversible embeddings of neural data (encoding), then evaluates whether those embeddings preserve behaviourally useful information (decoding). The main report datasets are MC Maze neural activity and PhysioNet Motor Movement/Imagery EEG. Corresponding author: Owen O'Malley (owen.m.omalley@gmail.com).
+This repository trains maximally non-reversible embeddings of neural data (encoding), then evaluates whether those embeddings preserve behaviourally useful information (decoding). The main report datasets are MC Maze neural activity and PhysioNet Motor Movement/Imagery EEG. Corresponding author: Owen O'Malley (omo26@cam.ac.uk [until October 2027] / owen.m.omalley@gmail.com [forever]).
 
 The core training entry points remain at the repository root:
 
