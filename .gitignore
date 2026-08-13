@@ -59,5 +59,6 @@ physionetmi_raw/
 eeg-motor-movementimagery-dataset-*.zip
 
 misc_figures/
+misc/
 obsolete/
 *.nwb
